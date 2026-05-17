@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+[ -f .env ] && . ./.env
+[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
 WORLD_IMAGE_TAG="${DUNE_WORLD_IMAGE_TAG:-1960494-0-shipping}"
 IMAGE="registry.funcom.com/funcom/self-hosting/seabass-server:${WORLD_IMAGE_TAG}"

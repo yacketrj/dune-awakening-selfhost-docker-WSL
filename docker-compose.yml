@@ -28,6 +28,14 @@ services:
 
 volumes:
   dune-server:
+    name: dune-docker-lab_dune-server
+    external: true
   dune-steam:
+    name: dune-docker-lab_dune-steam
+    external: true
   dune-cache:
+    name: dune-docker-lab_dune-cache
+    external: true
   dune-generated:
+    name: dune-docker-lab_dune-generated
+    external: true

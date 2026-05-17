@@ -7,6 +7,10 @@ cmd="${1:-help}"
 target="${2:-}"
 
 case "$cmd" in
+  init)
+    runtime/scripts/init.sh
+    ;;
+
   start)
     runtime/scripts/start-all.sh
     ;;
@@ -95,6 +99,7 @@ case "$cmd" in
   help|--help|-h)
     cat <<'EOF'
 Usage:
+  runtime/scripts/dune init
   runtime/scripts/dune start
   runtime/scripts/dune stop
   runtime/scripts/dune status

@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+[ -f .env ] && . ./.env
+[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+
 set -a
 if [ -f .env ]; then
   . ./.env
