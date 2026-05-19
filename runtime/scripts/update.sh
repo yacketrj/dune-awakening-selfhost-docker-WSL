@@ -132,14 +132,19 @@ if [ "$cmd" = "check" ] || [ "$cmd" = "status" ]; then
   docker compose exec -T -e APP_ID="$APP_ID" orchestrator bash -lc '
 set -euo pipefail
 
-STEAMCMD=/srv/dune/steam/linux32/steamcmd
+STEAMCMD_SH=/srv/dune/steam/steamcmd.sh
+STEAMCMD_BIN=/srv/dune/steam/linux32/steamcmd
 INSTALL_DIR=/srv/dune/server
 APP_ID="${APP_ID:-3104830}"
 APPINFO="/tmp/dune-appinfo-${APP_ID}.txt"
 MANIFEST="${INSTALL_DIR}/steamapps/appmanifest_${APP_ID}.acf"
 
-if [ ! -x "$STEAMCMD" ]; then
-  echo "SteamCMD not found or not executable: $STEAMCMD"
+if [ -x "$STEAMCMD_SH" ]; then
+  STEAMCMD="$STEAMCMD_SH"
+elif [ -x "$STEAMCMD_BIN" ]; then
+  STEAMCMD="$STEAMCMD_BIN"
+else
+  echo "SteamCMD not found or not executable: $STEAMCMD_SH"
   exit 2
 fi
 
@@ -299,31 +304,7 @@ while [ "$steam_attempt" -le "$steam_max_attempts" ]; do
   echo "SteamCMD install attempt $steam_attempt/$steam_max_attempts..."
 
   set +e
-  docker compose exec -T -e APP_ID="$APP_ID" orchestrator bash -lc '
-set -euo pipefail
-
-STEAMCMD=/srv/dune/steam/linux32/steamcmd
-APP_ID="${APP_ID:-3104830}"
-
-if [ ! -x "$STEAMCMD" ]; then
-  echo "SteamCMD not found or not executable: $STEAMCMD"
-  exit 1
-fi
-
-install -d -o dune -g dune /home/dune/Steam /home/dune/.steam /srv/dune/server
-chown -R dune:dune /home/dune/Steam /home/dune/.steam /srv/dune/server/steamapps 2>/dev/null || true
-
-su -s /bin/bash dune -c "
-  set -euo pipefail
-
-  \"$STEAMCMD\" \
-    +@sSteamCmdForcePlatformType linux \
-    +force_install_dir /srv/dune/server \
-    +login anonymous \
-    +app_update \"$APP_ID\" validate \
-    +quit
-"
-'
+  docker compose exec -T -e APP_ID="$APP_ID" orchestrator dune download
   steam_rc=$?
   set -e
 
