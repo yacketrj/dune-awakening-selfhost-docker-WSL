@@ -104,11 +104,25 @@ print_versions() {
 }
 
 check_dirty_git_tree() {
+  local changed_files=""
+
   if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if ! git diff --quiet --ignore-submodules -- 2>/dev/null || ! git diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
-      echo "Local repo has uncommitted changes."
-      echo "Commit or back up your local edits before installing a stack release."
-      exit 3
+      changed_files="$(
+        {
+          git diff --name-only --ignore-submodules -- 2>/dev/null || true
+          git diff --cached --name-only --ignore-submodules -- 2>/dev/null || true
+        } | sed '/^$/d' | sort -u
+      )"
+
+      echo "Local repo has uncommitted tracked changes."
+      echo "The stack update will continue and back up the current project files first."
+      if [ -n "$changed_files" ]; then
+        echo
+        echo "Tracked files with local changes:"
+        printf '%s\n' "$changed_files" | sed 's/^/  /'
+      fi
+      echo
     fi
   fi
 }
