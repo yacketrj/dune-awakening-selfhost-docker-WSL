@@ -37,13 +37,14 @@ SERVER_TITLE="${SERVER_TITLE:-My Dune Server}"
 SERVER_REGION="${SERVER_REGION:-Europe}"
 SERVER_IP="${SERVER_IP:-auto}"
 BATTLEGROUP_ID="${BATTLEGROUP_ID:-dune-docker}"
+FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-/tmp/dune-fake-k8s-serviceaccount}"
 
 if [ "$SERVER_IP" = "auto" ]; then
   SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
 fi
 
 mkdir -p runtime/director/config
-mkdir -p runtime/fake-k8s-serviceaccount
+mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 
 cat > runtime/director/config/director.ini <<'EOF'
 [ Battlegroup ]
@@ -116,19 +117,19 @@ NumExtraServers = 0
 NumExtraServers = 0
 EOF
 
-cat > runtime/fake-k8s-serviceaccount/namespace <<'EOF'
+cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/namespace" <<'EOF'
 funcom-seabass-dune-docker
 EOF
 
-cat > runtime/fake-k8s-serviceaccount/token <<'EOF'
+cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/token" <<'EOF'
 fake-token
 EOF
 
 # Same intentional trick as TextRouter for now:
 # invalid CA makes IGWO init fail non-fatally instead of trying to call a missing API server.
-: > runtime/fake-k8s-serviceaccount/ca.crt
+: > "$FAKE_K8S_SERVICEACCOUNT_DIR/ca.crt"
 
-chmod -R 755 runtime/fake-k8s-serviceaccount
+chmod -R 755 "$FAKE_K8S_SERVICEACCOUNT_DIR"
 chmod -R 755 runtime/director/config
 
 docker network create dune-net 2>/dev/null || true
@@ -140,7 +141,7 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:11717:11717/tcp \
   -v "$PWD/runtime/director/config:/etc/app/conf.d:ro" \
-  -v "$PWD/runtime/fake-k8s-serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "KUBERNETES_SERVICE_HOST=igwo.local" \
   -e "KUBERNETES_SERVICE_PORT=6443" \
   -e "KUBERNETES_SERVICE_PORT_HTTPS=6443" \

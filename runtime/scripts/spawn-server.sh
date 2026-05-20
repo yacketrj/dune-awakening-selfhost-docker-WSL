@@ -53,6 +53,7 @@ SERVER_TITLE="${SERVER_TITLE:-My Dune Server}"
 SERVER_REGION="${SERVER_REGION:-Europe}"
 SERVER_IP="${SERVER_IP:-auto}"
 BATTLEGROUP_ID="${BATTLEGROUP_ID:-dune-docker}"
+FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-/tmp/dune-fake-k8s-serviceaccount}"
 
 if [ "$SERVER_IP" = "auto" ]; then
   SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
@@ -210,17 +211,17 @@ echo
 
 mkdir -p "runtime/game/$safe_name/Saved"
 mkdir -p runtime/game/artifacts
-mkdir -p runtime/fake-k8s-serviceaccount
+mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 mkdir -p runtime/container
 
-cat > runtime/fake-k8s-serviceaccount/namespace <<EOF
+cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/namespace" <<EOF
 funcom-seabass-$BATTLEGROUP_ID
 EOF
-cat > runtime/fake-k8s-serviceaccount/token <<'EOF'
+cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/token" <<'EOF'
 fake-token
 EOF
-: > runtime/fake-k8s-serviceaccount/ca.crt
-chmod -R 755 runtime/fake-k8s-serviceaccount
+: > "$FAKE_K8S_SERVICEACCOUNT_DIR/ca.crt"
+chmod -R 755 "$FAKE_K8S_SERVICEACCOUNT_DIR"
 
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
@@ -236,7 +237,7 @@ docker run -d \
   -v "$PWD/runtime/game/$safe_name/Saved:/home/dune/server/DuneSandbox/Saved" \
   -v "$PWD/runtime/game/artifacts:/home/dune/artifacts" \
   -v "$PWD/runtime/container:/opt/dune-local:ro" \
-  -v "$PWD/runtime/fake-k8s-serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "POD_UID=docker-$safe_name" \
   -e "POD_NAME=${BATTLEGROUP_ID}-sg-${safe_name}-pod-${PARTITION_ID}" \
   -e "POD_IP=$MULTIHOME_IP" \
