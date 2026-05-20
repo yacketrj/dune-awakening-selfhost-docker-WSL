@@ -167,7 +167,7 @@ dune update auto status
 
 For stack updates, publish a GitHub Release from the same commit that contains the matching `VERSION` value. The updater validates that the downloaded release tag and extracted `VERSION` file agree.
 
-In the manager, `Updates` also includes `Runtime Files Status` and `Repair Runtime Files`. Use these when generated map catalogs are missing and `Edit Map` cannot open the picker. The repair action rebuilds the generated catalogs from the installed server files without running `dune init`.
+In the manager, `Updates` also includes `Runtime Files Status` and `Repair Runtime Files`. Use these when generated map catalogs are missing and `Edit Map` cannot open the picker. The repair action rebuilds the generated catalogs from the installed server files without running `dune init`, and if the battlegroup services are not running it starts them automatically afterward.
 
 ## Autoscaler And Dynamic Maps
 
@@ -270,7 +270,7 @@ If a map setting fails validation or cannot be saved, the manager does not ask t
 
 These paths are ignored by git.
 
-If `runtime/generated/partition-catalog.json` and `runtime/generated/server-catalog.json` are missing, map-selection flows in the manager cannot build the map picker. Use `dune manager` -> `Updates` -> `Runtime Files Status` to verify, then `Repair Runtime Files` to rebuild them non-destructively.
+If `runtime/generated/partition-catalog.json` and `runtime/generated/server-catalog.json` are missing, map-selection flows in the manager cannot build the map picker. Use `dune manager` -> `Updates` -> `Runtime Files Status` to verify, then `Repair Runtime Files` to rebuild them non-destructively. If the battlegroup is currently stopped, the repair action also starts it afterward.
 
 ## Security
 

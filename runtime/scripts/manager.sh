@@ -130,6 +130,10 @@ runtime_catalogs_available() {
   [ -s "$(runtime_partition_catalog_path)" ] || [ -s "$(runtime_server_catalog_path)" ]
 }
 
+battlegroup_services_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -Eq '^(dune-rmq-admin|dune-rmq-game|dune-text-router|dune-director|dune-server-gateway|dune-server-survival-1|dune-server-overmap)$'
+}
+
 show_runtime_files_status() {
   local partition_catalog server_catalog
   partition_catalog="$(runtime_partition_catalog_path)"
@@ -170,6 +174,14 @@ repair_runtime_files() {
   runtime/scripts/extract-partition-catalog.sh
   echo
   show_runtime_files_status
+
+  if ! battlegroup_services_running; then
+    echo
+    echo "Battlegroup services are not running."
+    echo "Starting the battlegroup now so the repaired runtime files can be used."
+    echo
+    "$DUNE" start
+  fi
 }
 
 read_choice() {
