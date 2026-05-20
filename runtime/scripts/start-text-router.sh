@@ -79,7 +79,7 @@ docker run -d \
   --network dune-net \
   --restart unless-stopped \
   -p 127.0.0.1:5059:5059/tcp \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "KUBERNETES_SERVICE_HOST=igwo.local" \
   -e "KUBERNETES_SERVICE_PORT=6443" \
   -e "KUBERNETES_SERVICE_PORT_HTTPS=6443" \

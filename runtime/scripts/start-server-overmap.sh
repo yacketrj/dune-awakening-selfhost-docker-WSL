@@ -65,7 +65,7 @@ docker run -d \
   -v "$PWD/runtime/game/overmap/Saved:/home/dune/server/DuneSandbox/Saved" \
   -v "$PWD/runtime/game/artifacts:/home/dune/artifacts" \
   -v "$PWD/runtime/container:/opt/dune-local:ro" \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "POD_UID=docker-overmap" \
   -e "POD_NAME=${BATTLEGROUP_ID}-sg-overmap-pod-2" \
   -e "POD_IP=$MULTIHOME_IP" \

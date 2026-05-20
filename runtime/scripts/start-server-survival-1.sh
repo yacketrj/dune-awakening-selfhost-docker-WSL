@@ -66,7 +66,7 @@ docker run -d \
   -v "$PWD/runtime/game/survival-1/Saved:/home/dune/server/DuneSandbox/Saved" \
   -v "$PWD/runtime/game/artifacts:/home/dune/artifacts" \
   -v "$PWD/runtime/container:/opt/dune-local:ro" \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "POD_UID=docker-survival-1" \
   -e "POD_NAME=${BATTLEGROUP_ID}-sg-survival-1-pod-1" \
   -e "POD_IP=$MULTIHOME_IP" \

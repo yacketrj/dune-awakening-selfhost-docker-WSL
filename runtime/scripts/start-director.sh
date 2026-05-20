@@ -141,11 +141,11 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:11717:11717/tcp \
   -v "$PWD/runtime/director/config:/etc/app/conf.d:ro" \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/var/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "KUBERNETES_SERVICE_HOST=igwo.local" \
   -e "KUBERNETES_SERVICE_PORT=6443" \
   -e "KUBERNETES_SERVICE_PORT_HTTPS=6443" \
-  -e "KUBERNETES_SERVICE_PATH=/var/run/secrets/kubernetes.io/serviceaccount" \
+  -e "KUBERNETES_SERVICE_PATH=/run/secrets/kubernetes.io/serviceaccount" \
   -e "BATTLEGROUP=$BATTLEGROUP_ID" \
   -e "BATTLEGROUP_DISPLAY_NAME=$BATTLEGROUP_ID" \
   -e "BATTLEGROUP_TITLE=$SERVER_TITLE" \
