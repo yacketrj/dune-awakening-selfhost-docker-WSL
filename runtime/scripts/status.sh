@@ -116,6 +116,31 @@ signal_state() {
   fi
 }
 
+logs_have_runtime_partition_mismatch() {
+  local logs="$1"
+
+  grep -Eiq \
+    'Invalid PartitionId|has no partition definition|thinks farm size is|waiting for persistence to finish initial load' \
+    <<< "$logs"
+}
+
+runtime_partition_repair_hint_needed() {
+  local survival_logs overmap_logs
+
+  if ! is_running dune-server-survival-1 || ! is_running dune-server-overmap; then
+    return 1
+  fi
+
+  survival_logs="$(docker logs dune-server-survival-1 2>&1 || true)"
+  overmap_logs="$(docker logs dune-server-overmap 2>&1 || true)"
+
+  if logs_have_runtime_partition_mismatch "$survival_logs" || logs_have_runtime_partition_mismatch "$overmap_logs"; then
+    return 0
+  fi
+
+  return 1
+}
+
 autoscaler_state() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx dune-autoscaler; then
     echo "RUNNING"
@@ -311,3 +336,8 @@ echo "Gateway DB monitoring:    $gateway_db_state"
 echo
 echo "Tip: use 'dune ready' for pass/wait/fail readiness checks."
 echo "Tip: use 'dune doctor' for troubleshooting suggestions."
+if [ "$overall" = "WARMING" ] && runtime_partition_repair_hint_needed; then
+  echo
+  echo "Hint: runtime partition data may be out of sync with the installed server files."
+  echo "If this happened after an update, run: Updates -> Repair Runtime Files"
+fi

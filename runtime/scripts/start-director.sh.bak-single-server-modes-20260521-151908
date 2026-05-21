@@ -52,36 +52,27 @@ cat > runtime/director/config/director_config.ini <<'EOF'
 AuthorizationPreset=BattlegroupInternal
 
 [InstancingModes]
-# LIVE official behavior:
-# Overmap is a single always-on server.
-# Survival_1 is a dimension map, not SingleServer.
-# DeepDesert_1 is also a dimension map.
-Overmap=SingleServer
-Survival_1=Dimension
-DeepDesert_1=Dimension
+DeepDesert_1=ClassicalInstancing
 
-[Server]
+[DefaultPartitionSettings]
 PlayerHardCap=40
 ShouldUpdatePlayerCountOnFls=false
-ForceLock=false
-DauCap=1000000
-WauCap=3360
-HbsCap=1000000
 AllowGroupTravel=false
-ScalingResourceTarget=ServerSetScale
-
-[Overmap]
-PlayerHardCap=1000
 
 [Survival_1]
 PlayerHardCap=60
 ShouldUpdatePlayerCountOnFls=true
-NpeGrantDurationInMinutes=90
+AllowGroupTravel=false
+
+[Overmap]
+PlayerHardCap=1000
+ShouldUpdatePlayerCountOnFls=false
+AllowGroupTravel=false
 
 [DeepDesert_1]
 PlayerHardCap=80
-QueueFailMap=Overmap
-QueueFailLocation=-32289.657183, -138433.689956, 500.000000
+ShouldUpdatePlayerCountOnFls=false
+AllowGroupTravel=false
 
 [CB_Dungeon_Hephaestus]
 NumExtraServers=0

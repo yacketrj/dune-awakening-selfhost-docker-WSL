@@ -162,47 +162,15 @@ runtime_partition_repair_hint_needed() {
   return 1
 }
 
-director_fls_ready() {
-  local logs
-
-  if ! is_running dune-director; then
-    return 1
-  fi
-
-  logs="$(docker logs --tail 3000 dune-director 2>&1 || true)"
-
-  # Avoid `printf ... | grep -q` here because this script uses pipefail.
-  # With large Docker logs, grep -q can exit early and make printf hit SIGPIPE,
-  # causing the whole pipeline to look like a failure even when a match exists.
-
-  # Old debug-style success line.
-  if grep -q 'Battlegroups_SendBattlegroupHeartbeat.*Request successful' <<< "$logs"; then
-    return 0
-  fi
-
-  # LIVE useful success signal: Director is declaring a non-zero unlocked population.
-  if grep -Eq 'Population declaration: .*"BattlegroupMaxPlayerCapacity":[1-9][0-9]*.*"IsLocked":false' <<< "$logs"; then
-    return 0
-  fi
-
-  # Startup heartbeat wording used by newer logs.
-  if grep -q 'RMQ connection successful.*Initiating heartbeat' <<< "$logs"; then
-    return 0
-  fi
-
-  return 1
-}
-
 game_server_rmq_connections_ready() {
   local attempt
 
-  for attempt in 1 2 3 4 5; do
-    if docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
-      | awk '$1 ~ /^sg[.]/ && $2 == "running" { found=1 } END { exit(found ? 0 : 1) }'; then
+  for attempt in 1 2 3; do
+    if docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null | grep -q '^sg\..*running'; then
       return 0
     fi
 
-    if [ "$attempt" -lt 5 ]; then
+    if [ "$attempt" -lt 3 ]; then
       sleep 2
     fi
   done
@@ -262,14 +230,12 @@ echo "=== Readiness log checks ==="
 check_game_server_ready dune-server-survival-1 "Survival_1" "Server farm is READY .*partition 1"
 check_game_server_ready dune-server-overmap "Overmap" "Server farm is READY .*partition 2"
 
-if director_fls_ready; then
-  mark_ok "Director FLS population"
-elif is_running dune-director; then
-  mark_wait "Director FLS heartbeat pending"
-  echo "     Director is running, but FLS population/heartbeat confirmation has not appeared yet."
-else
-  mark_fail "Director FLS heartbeat"
-fi
+check_log_ready \
+  dune-director \
+  "Battlegroups_SendBattlegroupHeartbeat.*Request successful" \
+  "Director FLS heartbeat" \
+  "Director FLS heartbeat pending" \
+  "Director is running, but the FLS heartbeat has not appeared yet."
 
 check_log_ready \
   dune-server-gateway \

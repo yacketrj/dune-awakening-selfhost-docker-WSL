@@ -30,12 +30,13 @@ SERVER_TITLE="${SERVER_TITLE:-My Dune Server}"
 SERVER_REGION="${SERVER_REGION:-Europe}"
 SERVER_IP="${SERVER_IP:-auto}"
 BATTLEGROUP_ID="${BATTLEGROUP_ID:-dune-docker}"
-FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-/tmp/dune-fake-k8s-serviceaccount}"
+FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-$PWD/runtime/generated/dune-fake-k8s-serviceaccount}"
 
 if [ "$SERVER_IP" = "auto" ]; then
   SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
 fi
 
+rm -rf "$FAKE_K8S_SERVICEACCOUNT_DIR"
 mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 
 cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/namespace" <<'EOF'

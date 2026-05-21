@@ -47,6 +47,9 @@ Usage:
   dune sietches
   dune sietches list
   dune sietches show <map-name>
+  dune sietches --picker-labels
+  dune sietches --picker-tsv
+  dune sietches --picker-raw-tsv
   dune sietches dimensions <map-name> [--numbered|--labels|--ids|--partition-at=N]
   dune sietches set-max <map-name> <count>
   dune sietches set-active <map-name> <count>
@@ -213,6 +216,32 @@ for name in order:
 if mode == "--names":
     for row in rows:
         print(row[0])
+elif mode == "--picker-labels":
+    for name, max_dimensions, active_dimensions, memory, kind in rows:
+        details = []
+        if kind == "Dedicated Scaling":
+            details.append("dedicatedScaling")
+        elif kind == "Always-On":
+            details.append("always-on")
+        elif kind == "Dynamic":
+            details.append("dynamic")
+        suffix = f"  {' '.join(details)}" if details else ""
+        print(f"{name}  max: {max_dimensions}  active: {active_dimensions}  memory: {memory}{suffix}")
+elif mode == "--picker-tsv":
+    for name, max_dimensions, active_dimensions, memory, kind in rows:
+        details = []
+        if kind == "Dedicated Scaling":
+            details.append("dedicatedScaling")
+        elif kind == "Always-On":
+            details.append("always-on")
+        elif kind == "Dynamic":
+            details.append("dynamic")
+        suffix = f"  {' '.join(details)}" if details else ""
+        label = f"{name}  max: {max_dimensions}  active: {active_dimensions}  memory: {memory}{suffix}"
+        print(f"{name}\t{label}")
+elif mode == "--picker-raw-tsv":
+    for name, max_dimensions, active_dimensions, memory, kind in rows:
+        print(f"{name}\t{max_dimensions}\t{active_dimensions}\t{memory}\t{kind}")
 elif mode == "--numbered":
     print(f"{'#':>3}  {'MAP':<28} {'MAX DIMENSIONS':<14} {'ACTIVE DIMENSIONS':<18} {'MEMORY':<10} TYPE")
     for idx, (name, max_dimensions, active_dimensions, memory, kind) in enumerate(rows, 1):
@@ -765,7 +794,7 @@ case "$cmd" in
     [ "$#" -eq 2 ] || { usage; exit 2; }
     reconcile_map_dimensions "$2"
     ;;
-  --names|--numbered)
+  --names|--numbered|--picker-labels|--picker-tsv|--picker-raw-tsv)
     list_sietches "$cmd"
     ;;
   --map-at=*)

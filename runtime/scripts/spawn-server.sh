@@ -53,7 +53,7 @@ SERVER_TITLE="${SERVER_TITLE:-My Dune Server}"
 SERVER_REGION="${SERVER_REGION:-Europe}"
 SERVER_IP="${SERVER_IP:-auto}"
 BATTLEGROUP_ID="${BATTLEGROUP_ID:-dune-docker}"
-FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-/tmp/dune-fake-k8s-serviceaccount}"
+FAKE_K8S_SERVICEACCOUNT_DIR="${DUNE_FAKE_K8S_SERVICEACCOUNT_DIR:-$PWD/runtime/generated/dune-fake-k8s-serviceaccount}"
 
 if [ "$SERVER_IP" = "auto" ]; then
   SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
@@ -213,6 +213,7 @@ mkdir -p "runtime/game/$safe_name/Saved"
 mkdir -p runtime/game/artifacts
 mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 mkdir -p runtime/container
+python3 runtime/scripts/usersettings.py materialize "$MAP_NAME" "$PWD/runtime/game/$safe_name/Saved"
 
 cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/namespace" <<EOF
 funcom-seabass-$BATTLEGROUP_ID
@@ -229,6 +230,8 @@ docker run -d \
   --name "$CONTAINER_NAME" \
   --network host \
   --restart unless-stopped \
+  --add-host dune-rmq-game:127.0.0.1 \
+  --add-host dune-rmq-admin:127.0.0.1 \
   --privileged \
   --cap-add SYS_ADMIN \
   --security-opt seccomp=unconfined \
@@ -270,9 +273,9 @@ docker run -d \
   "-ini:engine:[URL]:Port=$GAME_PORT" \
   "-ini:engine:[URL]:IGWPort=$IGW_PORT" \
   -battlegroup-director-url=127.0.0.1:11717 \
-  --RMQGameHostname=127.0.0.1 \
+  --RMQGameHostname=dune-rmq-game \
   --RMQGamePort=31982 \
-  --RMQAdminHostname=127.0.0.1 \
+  --RMQAdminHostname=dune-rmq-admin \
   --RMQAdminPort=32573 \
   "${SIETCH_RUNTIME_ARGS[@]}" \
   -stdout \
