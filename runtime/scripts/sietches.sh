@@ -11,6 +11,37 @@ set_config_permissions() {
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
+normalize_config_defaults() {
+  python3 - "$CONFIG_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+if not config_path.exists():
+    raise SystemExit
+
+config = json.loads(config_path.read_text())
+maps_cfg = config.setdefault("maps", {})
+survival = maps_cfg.setdefault("Survival_1", {})
+changed = False
+
+explicit = survival.get("active_dimensions_explicit")
+if explicit is None:
+    survival["active_dimensions_explicit"] = False
+    explicit = False
+    changed = True
+
+explicit = str(explicit).strip().lower() in {"1", "true", "yes", "on"}
+if not explicit and int(survival.get("active_dimensions") or 1) != 1:
+    survival["active_dimensions"] = 1
+    changed = True
+
+if changed:
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+PY
+}
+
 generate_partition_catalog_from_server_catalog() {
   [ -s "$SERVER_CATALOG" ] || return 1
 
@@ -105,6 +136,7 @@ ensure_config() {
     mv -f "$tmp" "$CONFIG_FILE"
   fi
 
+  normalize_config_defaults
   set_config_permissions
 }
 
@@ -502,6 +534,7 @@ if key == "active_dimensions":
     if value > max_dimensions:
         print(f"Active dimensions must be less than or equal to max dimensions ({max_dimensions}).", file=sys.stderr)
         raise SystemExit(1)
+    entry["active_dimensions_explicit"] = True
 entry[key] = value
 if key == "max_dimensions":
     active = int(entry.get("active_dimensions") or min(value, catalog_max))
@@ -620,6 +653,8 @@ select dune.update_partition_labels(true);
 reconcile_map_dimensions() {
   local map="$1"
   local safe_map target available base_partition assigned_count
+
+  ensure_config
 
   case "$map" in
     Overmap)
@@ -813,7 +848,9 @@ display_name = entry.get("display_name") or default_display_name(row)
 if display_name:
     args.append(f"-ServerDisplayName={ini_quote(display_name)}")
 if entry.get("password"):
-    args.append(f"-ServerLoginPassword={ini_quote(entry['password'])}")
+    password = ini_quote(entry['password'])
+    args.append(f"-ServerLoginPassword={password}")
+    args.append(f"-ServerPassword={password}")
 
 for arg in args:
     print(arg)

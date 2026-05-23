@@ -6,6 +6,15 @@ value_is_known() {
   [ -n "$value" ] && [ "$value" != "unknown" ]
 }
 
+is_ipv4() {
+  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+is_private_ipv4() {
+  local ip="$1"
+  printf '%s' "$ip" | grep -Eq '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)'
+}
+
 config_value() {
   local file="$1"
   local key="$2"
@@ -115,8 +124,157 @@ resolve_server_region() {
   first_known_value     "$(config_value .env SERVER_REGION 2>/dev/null || true)"     "${SERVER_REGION:-}"     "$(container_env_value_any_state dune-director BATTLEGROUP_REGION_NAME 2>/dev/null || true)"     "$(container_env_value_any_state dune-server-gateway OnlineSubsystem_DatacenterId 2>/dev/null || true)"     "Europe"
 }
 
+detect_public_ip() {
+  local ip=""
+
+  if command -v curl >/dev/null 2>&1; then
+    for url in       "https://api.ipify.org"       "https://ipv4.icanhazip.com"       "https://ifconfig.me/ip"
+    do
+      ip="$(curl -fsS4 --max-time 8 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+      if is_ipv4 "$ip"; then
+        printf '%s' "$ip"
+        return 0
+      fi
+    done
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    for url in       "https://api.ipify.org"       "https://ipv4.icanhazip.com"
+    do
+      ip="$(wget -qO- -T 8 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+      if is_ipv4 "$ip"; then
+        printf '%s' "$ip"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+detect_local_ip() {
+  local ip=""
+
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i == "src") {
+            print $(i + 1)
+            exit
+          }
+        }
+      }
+    ' | tr -d '[:space:]' || true)"
+
+    if is_private_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | tr ' ' '
+' | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)"
+    if is_private_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+detect_bind_ip() {
+  local ip=""
+
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -o -4 addr show up scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ { sub(/\/.*/, "", $4); print $4; exit }' | tr -d '[:space:]' || true)"
+    if is_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' | tr -d '[:space:]' || true)"
+    if is_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | tr ' ' '
+' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+    if is_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+bind_ip_is_assigned() {
+  local requested="$1"
+  [ -n "$requested" ] || return 1
+  command -v ip >/dev/null 2>&1 || return 1
+  ip -o -4 addr show up scope global 2>/dev/null     | awk '$2 !~ /^(docker|br-|veth)/ { sub(/\/.*/, "", $4); print $4 }'     | grep -qx "$requested"
+}
+
+resolve_server_ip_mode() {
+  local mode configured
+
+  mode="$(first_known_value "$(config_value .env SERVER_IP_MODE 2>/dev/null || true)" "${SERVER_IP_MODE:-}" || true)"
+  if [ -n "$mode" ]; then
+    printf '%s' "$mode"
+    return 0
+  fi
+
+  configured="$(first_known_value "${SERVER_IP:-}" "$(config_value .env SERVER_IP 2>/dev/null || true)" || true)"
+  if is_private_ipv4 "$configured"; then
+    printf '%s' "local"
+    return 0
+  fi
+  if is_ipv4 "$configured"; then
+    printf '%s' "public"
+    return 0
+  fi
+
+  printf '%s' "public"
+}
+
 resolve_server_ip() {
-  first_known_value     "$(config_value .env SERVER_IP 2>/dev/null || true)"     "${SERVER_IP:-}"     "$(container_env_value_any_state dune-director HOST_DATACENTER_IP_ADDRESS 2>/dev/null || true)"     "$(container_env_value_any_state dune-server-gateway HOST_DATACENTER_IP_ADDRESS 2>/dev/null || true)"     "auto"
+  local mode detected
+
+  mode="$(resolve_server_ip_mode 2>/dev/null || true)"
+  case "$mode" in
+    local)
+      detected="$(detect_local_ip 2>/dev/null || true)"
+      ;;
+    public|*)
+      detected="$(detect_public_ip 2>/dev/null || true)"
+      ;;
+  esac
+
+  first_known_value     "$detected"     "${SERVER_IP:-}"     "$(config_value .env SERVER_IP 2>/dev/null || true)"     "$(container_env_value_any_state dune-director HOST_DATACENTER_IP_ADDRESS 2>/dev/null || true)"     "$(container_env_value_any_state dune-server-gateway HOST_DATACENTER_IP_ADDRESS 2>/dev/null || true)"     "$(detect_bind_ip 2>/dev/null || true)"     "auto"
+}
+
+resolve_bind_ip() {
+  local requested detected
+
+  requested="$(first_known_value "${SERVER_BIND_IP:-}" "$(config_value .env SERVER_BIND_IP 2>/dev/null || true)" || true)"
+  if bind_ip_is_assigned "$requested"; then
+    printf '%s' "$requested"
+    return 0
+  fi
+
+  detected="$(detect_bind_ip 2>/dev/null || true)"
+  if is_ipv4 "$detected"; then
+    printf '%s' "$detected"
+    return 0
+  fi
+
+  printf '%s' "127.0.0.1"
 }
 
 usersettings_engine_value() {
@@ -151,6 +309,36 @@ resolve_client_port_base() {
 
 resolve_igw_port_base() {
   usersettings_engine_value igw_port 7888
+}
+
+ensure_secret_file() {
+  local path="$1"
+  local bytes="$2"
+
+  if [ ! -s "$path" ]; then
+    mkdir -p "$(dirname "$path")"
+    openssl rand -hex "$bytes" > "$path"
+    chmod 600 "$path"
+  fi
+}
+
+resolve_server_login_password_secret() {
+  local path="runtime/secrets/server-login-password-secret.txt"
+  ensure_secret_file "$path" 32
+  tr -d '\r\n' < "$path"
+}
+
+resolve_username_server_login_secret() {
+  local path="runtime/secrets/username-server-login-secret.txt"
+  ensure_secret_file "$path" 32
+  tr -d '\r\n' < "$path"
+}
+
+resolve_login_password_skew_seconds() {
+  first_known_value \
+    "${DUNE_LOGIN_PASSWORD_SKEW_SECONDS:-}" \
+    "$(config_value .env DUNE_LOGIN_PASSWORD_SKEW_SECONDS 2>/dev/null || true)" \
+    "300"
 }
 
 resolve_battlegroup_id() {

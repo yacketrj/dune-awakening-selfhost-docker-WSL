@@ -40,9 +40,6 @@ SERVER_REGION="$(resolve_server_region)"
 SERVER_IP="$(resolve_server_ip)"
 BATTLEGROUP_ID="$(resolve_battlegroup_id)"
 
-if [ "$SERVER_IP" = "auto" ]; then
-  SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
-fi
 
 mkdir -p runtime/server-gateway/config
 

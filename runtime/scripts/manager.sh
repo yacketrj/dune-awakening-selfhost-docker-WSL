@@ -693,14 +693,10 @@ Current IP:    $current_ip
 Mode:          $mode
 EOF
 
-  if confirm "Update .env and use the new IP before starting"; then
-    set_env_value SERVER_IP "$current_ip"
-    echo "Updated SERVER_IP=$current_ip"
-    return 0
-  fi
-
-  echo "Cancelled. Battlegroup was not started."
-  return 1
+  set_env_value SERVER_IP "$current_ip"
+  echo "Updated SERVER_IP=$current_ip"
+  echo "Continuing with the detected player-facing IP."
+  return 0
 }
 
 persist_runtime_identity_snapshot() {

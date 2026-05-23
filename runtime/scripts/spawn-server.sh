@@ -50,6 +50,10 @@ FUNCOM_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
 RMQ_HTTP_TOKEN_AUTH_SECRET="$(tr -d '\r\n' < "$RMQ_SECRET_FILE")"
 FLS_APIKEY="$(tr -d '\r\n' < "$FLS_APIKEY_FILE")"
 
+SERVER_LOGIN_PASSWORD_SECRET="$(resolve_server_login_password_secret)"
+USERNAME_SERVER_LOGIN_SECRET="$(resolve_username_server_login_secret)"
+LOGIN_PASSWORD_SKEW_SECONDS="$(resolve_login_password_skew_seconds)"
+
 SERVER_TITLE="$(resolve_server_title)"
 SERVER_REGION="$(resolve_server_region)"
 SERVER_IP="$(resolve_server_ip)"
@@ -57,30 +61,8 @@ BATTLEGROUP_ID="$(resolve_battlegroup_id)"
 CLIENT_PORT_BASE="$(resolve_client_port_base)"
 IGW_PORT_BASE="$(resolve_igw_port_base)"
 
-if [ "$SERVER_IP" = "auto" ]; then
-  SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
-fi
 
-resolve_multihome_ip() {
-  local requested="${SERVER_BIND_IP:-}"
-  local host_ip
-
-  if [ -n "$requested" ] && ip -o -4 addr show up scope global     | awk '$2 !~ /^(docker|br-|veth)/ { sub(/\/.*/, "", $4); print $4 }'     | grep -qx "$requested"; then
-    printf '%s' "$requested"
-    return 0
-  fi
-
-  host_ip="$(ip -o -4 addr show up scope global     | awk '$2 !~ /^(docker|br-|veth)/ { sub(/\/.*/, "", $4); print $4; exit }')"
-
-  if [ -n "$host_ip" ]; then
-    printf '%s' "$host_ip"
-    return 0
-  fi
-
-  ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}'
-}
-
-MULTIHOME_IP="$(resolve_multihome_ip)"
+MULTIHOME_IP="$(resolve_bind_ip)"
 
 if ! docker ps --format '{{.Names}}' | grep -qx dune-postgres; then
   echo "dune-postgres is not running."
@@ -302,6 +284,36 @@ docker run -d \
   -e "FuncomLiveServices__ServiceAuthToken=$FUNCOM_TOKEN" \
   -e "FuncomLiveServices__RmqTlsEnabled=true" \
   -e "RMQ_HTTP_TOKEN_AUTH_SECRET=$RMQ_HTTP_TOKEN_AUTH_SECRET" \
+  -e "DUNE_SERVER_LOGIN_PASSWORD_SECRET=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "DUNE_USERNAME_SERVER_LOGIN_SECRET=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "DUNE_LOGIN_PASSWORD_SKEW_SECONDS=$LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "ServerLoginPasswordSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "UsernameServerLoginSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "LoginPasswordSkew=$LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "BackendLoginConfiguration__ServerLoginPasswordSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "BackendLoginConfiguration__UsernameServerLoginSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "BackendLoginConfiguration__LoginPasswordSkew=$LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "BackendLoginConfiguration__ServerLoginPasswordSecretEnvironmentVariable=DUNE_SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "BackendLoginConfiguration__UsernameServerLoginSecretEnvironmentVariable=DUNE_USERNAME_SERVER_LOGIN_SECRET" \
+  -e "BackendLoginConfiguration__LoginPasswordSkewEnvironmentVariable=DUNE_LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__ServerLoginPasswordSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__UsernameServerLoginSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__LoginPasswordSkew=$LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__ServerLoginPasswordSecretEnvironmentVariable=DUNE_SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__UsernameServerLoginSecretEnvironmentVariable=DUNE_USERNAME_SERVER_LOGIN_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__LoginPasswordSkewEnvironmentVariable=DUNE_LOGIN_PASSWORD_SKEW_SECONDS" \
+  -e "Secret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "UsernameSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "ServerLoginSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "ChecksumSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "BackendLoginConfiguration__Secret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "BackendLoginConfiguration__UsernameSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "BackendLoginConfiguration__ServerLoginSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "BackendLoginConfiguration__ChecksumSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__Secret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__UsernameSecret=$USERNAME_SERVER_LOGIN_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__ServerLoginSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
+  -e "AuthenticationConfiguration__BackendLoginConfiguration__ChecksumSecret=$SERVER_LOGIN_PASSWORD_SECRET" \
   -e "fls-apikey=$FLS_APIKEY" \
   "$IMAGE" \
   /opt/dune-local/run-server.sh \

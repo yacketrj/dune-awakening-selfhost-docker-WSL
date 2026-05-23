@@ -200,13 +200,13 @@ for line in result.stdout.splitlines():
     display_name = cfg.get("display_name", "")
     if not display_name and label:
         display_name = f"Sietch {label}"
-    password = cfg.get("password", "")
+    if cfg.get("password"):
+        continue
     payload = {
         "reportTimestamp": int(time.time()),
         "partitionId": int(partition_id),
         "serverId": server_id,
         "ready": ready.lower() in ("t", "true", "1"),
-        "loginPassword": password,
         "displayName": display_name,
         "isStartingMap": is_starting_map.lower() in ("t", "true", "1"),
         "playerHardCapOverride": -1,
@@ -265,12 +265,15 @@ for message in messages:
             display_name = f"Sietch {label}"
     password = cfg.get("password", "")
     payload["displayName"] = display_name
-    payload["loginPassword"] = password
+    if password:
+        payload["loginPassword"] = password
     payload["isStartingMap"] = True
     gameplay = payload.setdefault("serverGameplaySettings", {})
     core = gameplay.setdefault("CoreSettings", {})
     core["serverDisplayName"] = display_name
-    payload["reportTimestamp"] = max(int(time.time()), int(payload.get("reportTimestamp", 0)))
+    # Director drops "out of order" state updates. Make the overlaid message
+    # strictly newer than the raw Survival_1 state it is replacing.
+    payload["reportTimestamp"] = max(int(time.time()), int(payload.get("reportTimestamp", 0)) + 1)
     print(json.dumps(payload, separators=(",", ":")))
 PY
 }
@@ -278,17 +281,12 @@ PY
 start_loop() {
   mkdir -p runtime/generated
   local route_refresh_at=0
-  local snapshot_refresh_at=0
   ensure_route
   publish_snapshot_once >>"$LOG_FILE" 2>&1 || true
   while true; do
     if [ "$(date +%s)" -ge "$route_refresh_at" ]; then
       ensure_route >>"$LOG_FILE" 2>&1 || true
       route_refresh_at=$(( $(date +%s) + 10 ))
-    fi
-    if [ "$(date +%s)" -ge "$snapshot_refresh_at" ]; then
-      publish_snapshot_once >>"$LOG_FILE" 2>&1 || true
-      snapshot_refresh_at=$(( $(date +%s) + 5 ))
     fi
     if rows="$(forward_batch_once)"; then
       while IFS= read -r payload; do

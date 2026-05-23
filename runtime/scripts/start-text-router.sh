@@ -38,9 +38,6 @@ else
   FAKE_K8S_SERVICEACCOUNT_DIR="$PWD/runtime/generated/dune-fake-k8s-serviceaccount-text-router-$$"
 fi
 
-if [ "$SERVER_IP" = "auto" ]; then
-  SERVER_IP="$(curl -4fsSL https://api.ipify.org || echo 127.0.0.1)"
-fi
 
 mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 
