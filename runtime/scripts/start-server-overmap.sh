@@ -47,7 +47,7 @@ mkdir -p runtime/game/overmap/Saved
 mkdir -p runtime/game/artifacts
 mkdir -p "$FAKE_K8S_SERVICEACCOUNT_DIR"
 mkdir -p runtime/container
-python3 runtime/scripts/usersettings.py materialize Overmap "$PWD/runtime/game/overmap/Saved"
+python3 runtime/scripts/usersettings.py materialize Overmap "$PWD/runtime/game/overmap/Saved" "$PARTITION_ID"
 
 cat > "$FAKE_K8S_SERVICEACCOUNT_DIR/namespace" <<'EOF'
 funcom-seabass-dune-docker

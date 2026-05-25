@@ -1160,17 +1160,20 @@ Global UserEngine settings apply to every map and server in the battlegroup.
 These values are the battlegroup-wide baseline.
 Map-specific UserGame settings can customize gameplay for a single map,
 but this menu controls the global defaults used everywhere.
+Display name and password are managed through the dedicated Sietch flows.
 EOF
 }
 
 usergame_about_text() {
   local map="$1"
   local partition_id="${2:-}"
+  local target="$map map defaults"
+  [ -n "$partition_id" ] && target="$map partition $partition_id"
   cat <<EOF
 Global UserEngine settings apply to every map and server in the battlegroup.
 These values are the battlegroup-wide baseline.
-Map-specific UserGame settings can customize gameplay for a single map,
-but this menu controls the gameplay overrides used for ${map}${partition_id:+ partition $partition_id}.
+UserGame settings can customize gameplay per map, with partition values
+overriding map defaults. This menu controls $target.
 EOF
 }
 
@@ -1318,6 +1321,22 @@ edit_usergame_numeric_field() {
   save_usergame_field "$map" "$field_id" "$USERSETTINGS_INPUT_VALUE" "$partition_id"
 }
 
+edit_usergame_text_field() {
+  local map="$1"
+  local field_id="$2"
+  local prompt="$3"
+  local partition_id="${4:-}"
+  local value=""
+
+  prompt_text "$prompt" value allow-empty || return
+  value="$(sanitize_prompt_value "$value")"
+  if [ -z "$value" ] || [ "$value" = "/back" ]; then
+    info "No changes made."
+    return
+  fi
+  save_usergame_field "$map" "$field_id" "$value" "$partition_id"
+}
+
 edit_userengine_boolean_field() {
   local field_id="$1"
   local title="$2"
@@ -1354,6 +1373,70 @@ edit_usergame_boolean_field() {
     return
   }
   save_usergame_field "$map" "$field_id" "$CHOSEN_BOOL_VALUE" "$partition_id"
+}
+
+edit_usergame_config_field() {
+  local map="$1"
+  local partition_id="$2"
+  local field_id="$3"
+  local label="$4"
+  local kind="$5"
+
+  case "$kind" in
+    bool)
+      edit_usergame_boolean_field "$map" "$field_id" "Set $label" "True" "False" "True" "False" "$partition_id"
+      ;;
+    bool-lower)
+      edit_usergame_boolean_field "$map" "$field_id" "Set $label" "true" "false" "true" "false" "$partition_id"
+      ;;
+    int)
+      edit_usergame_numeric_field "$map" "$field_id" "New $label (/back to cancel):" int "$partition_id"
+      ;;
+    float)
+      edit_usergame_numeric_field "$map" "$field_id" "New $label (/back to cancel):" float "$partition_id"
+      ;;
+    text)
+      edit_usergame_text_field "$map" "$field_id" "New $label (/back to cancel):" "$partition_id"
+      ;;
+  esac
+}
+
+edit_usergame_category_menu() {
+  local map="$1"
+  local partition_id="$2"
+  local title="$3"
+  shift 3
+  local entries=("$@")
+  local labels=()
+  local entry field_id label kind choice
+
+  while true; do
+    if [ -n "$partition_id" ]; then
+      load_usersettings_values partition "$map" "$partition_id"
+    else
+      load_usersettings_values map "$map"
+    fi
+
+    labels=()
+    for entry in "${entries[@]}"; do
+      IFS='|' read -r field_id label kind <<< "$entry"
+      labels+=("$label  Current: $(usersettings_value "$field_id")")
+    done
+    labels+=("Back")
+
+    MENU_CONTEXT_TEXT="$(usergame_about_text "$map" "$partition_id")"
+    menu_or_back "$title" "${labels[@]}" || return
+    MENU_CONTEXT_TEXT=""
+    choice="$MENU_CHOICE"
+    if [ "$choice" -gt "${#entries[@]}" ]; then
+      return
+    fi
+
+    entry="${entries[$((choice - 1))]}"
+    IFS='|' read -r field_id label kind <<< "$entry"
+    edit_usergame_config_field "$map" "$partition_id" "$field_id" "$label" "$kind"
+    pause
+  done
 }
 
 reset_all_usersettings() {
@@ -1401,44 +1484,127 @@ edit_usergame_menu() {
   local map="$1"
   local partition_id="${2:-}"
   local choice
+  local title_suffix
+
+  if [ -z "$partition_id" ]; then
+    error_msg "Select a dimension/partition before editing UserGame."
+    return 1
+  fi
 
   while true; do
-    if [ -n "$partition_id" ]; then
-      load_usersettings_values partition "$map" "$partition_id"
-      MENU_CONTEXT_TEXT="$(usergame_about_text "$map" "$partition_id")"
-      menu_or_back "Edit UserGame: $map${partition_id:+ (Dimension $partition_id)}"         "Partition PvP Enabled  Current: $(usersettings_value partition_pvp_enabled)"         "Security Zones Enabled  Current: $(usersettings_value security_zones_enabled)"         "Item Deterioration Rate  Current: $(usersettings_value item_deterioration_rate)"         "Coriolis Storm Enabled  Current: $(usersettings_value coriolis_auto_spawn_enabled)"         "Max Landclaim Segments  Current: $(usersettings_value max_landclaim_segments)"         "Building Blueprint Max Extensions  Current: $(usersettings_value building_blueprint_max_extensions)"         "Base Backup Max Extensions  Current: $(usersettings_value base_backup_max_extensions)"         "Building Restriction Limits Enabled  Current: $(usersettings_value building_restriction_limits_enabled)"         "Back" || return
-      MENU_CONTEXT_TEXT=""
-      choice="$MENU_CHOICE"
+    title_suffix="$map"
+    [ -n "$partition_id" ] && title_suffix="$map (Partition $partition_id)"
+    MENU_CONTEXT_TEXT="$(usergame_about_text "$map" "$partition_id")"
+    menu_or_back "Edit UserGame: $title_suffix" \
+      "PvP / Security" \
+      "Storms / Building" \
+      "Progression / Economy" \
+      "Harvesting / Crafting" \
+      "Survival / Combat" \
+      "World / Guilds / Vehicles" \
+      "Inventory / Sandworms / Patrol Ships" \
+      "Back" || return
+    MENU_CONTEXT_TEXT=""
+    choice="$MENU_CHOICE"
 
-      case "$choice" in
-        1) edit_usergame_boolean_field "$map" partition_pvp_enabled "Set Partition PvP" "Enabled" "Disabled" "True" "False" "$partition_id"; pause ;;
-        2) edit_usergame_boolean_field "$map" security_zones_enabled "Set Security Zones" "True" "False" "True" "False" "$partition_id"; pause ;;
-        3) edit_usergame_numeric_field "$map" item_deterioration_rate "New deterioration rate (0-10, 0 disables, /back to cancel):" float "$partition_id"; pause ;;
-        4) edit_usergame_boolean_field "$map" coriolis_auto_spawn_enabled "Set Coriolis Storm Auto Spawn" "True" "False" "True" "False" "$partition_id"; pause ;;
-        5) edit_usergame_numeric_field "$map" max_landclaim_segments "Maximum landclaim segments (/back to cancel):" int "$partition_id"; pause ;;
-        6) edit_usergame_numeric_field "$map" building_blueprint_max_extensions "Building blueprint max extensions (/back to cancel):" int "$partition_id"; pause ;;
-        7) edit_usergame_numeric_field "$map" base_backup_max_extensions "Base backup max extensions (/back to cancel):" int "$partition_id"; pause ;;
-        8) edit_usergame_boolean_field "$map" building_restriction_limits_enabled "Set Building Restriction Limits" "True" "False" "True" "False" "$partition_id"; pause ;;
-        9) return ;;
-      esac
-    else
-      load_usersettings_values map "$map"
-      MENU_CONTEXT_TEXT="$(usergame_about_text "$map" "$partition_id")"
-      menu_or_back "Edit UserGame: $map${partition_id:+ (Dimension $partition_id)}"         "Security Zones Enabled  Current: $(usersettings_value security_zones_enabled)"         "Item Deterioration Rate  Current: $(usersettings_value item_deterioration_rate)"         "Coriolis Storm Enabled  Current: $(usersettings_value coriolis_auto_spawn_enabled)"         "Max Landclaim Segments  Current: $(usersettings_value max_landclaim_segments)"         "Building Blueprint Max Extensions  Current: $(usersettings_value building_blueprint_max_extensions)"         "Base Backup Max Extensions  Current: $(usersettings_value base_backup_max_extensions)"         "Building Restriction Limits Enabled  Current: $(usersettings_value building_restriction_limits_enabled)"         "Back" || return
-      MENU_CONTEXT_TEXT=""
-      choice="$MENU_CHOICE"
+    case "$choice" in
+      1)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame PvP / Security: $title_suffix" \
+          "partition_pvp_enabled|Partition PvP Enabled|bool" \
+          "partition_pve_enabled|Partition PvE Enabled|bool" \
+          "security_zones_enabled|Security Zones Enabled|bool" \
+          "legacy_pvp_enabled|Legacy bPvPEnabled|bool" \
+          "server_pve|Server PvE|bool"
+        ;;
+      2)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame Storms / Building: $title_suffix" \
+          "coriolis_auto_spawn_enabled|Coriolis Storm Enabled|bool" \
+          "storm_cycle_duration|Storm Cycle Duration|int" \
+          "storm_duration|Storm Duration|int" \
+          "storm_warning_duration|Storm Warning Duration|int" \
+          "storm_cycle_wait|Storm Cycle Wait|int" \
+          "max_landclaim_segments|Max Landclaim Segments|int" \
+          "building_blueprint_max_extensions|Building Blueprint Max Extensions|int" \
+          "base_backup_max_extensions|Base Backup Max Extensions|int" \
+          "building_restriction_limits_enabled|Building Restriction Limits Enabled|bool"
+        ;;
+      3)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame Progression / Economy: $title_suffix" \
+          "global_xp_multiplier|Global XP Multiplier|float" \
+          "global_fame_multiplier|Global Fame Multiplier|float" \
+          "global_progression_speed_multiplier|Global Progression Speed Multiplier|float" \
+          "guild_creation_cost|Guild Creation Cost|int" \
+          "sell_order_price_percentage_fee|Sell Order Price Percentage Fee|float" \
+          "spice_tax_amount|Spice Tax Amount|float" \
+          "spice_tax_interval|Spice Tax Interval|int"
+        ;;
+      4)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame Harvesting / Crafting: $title_suffix" \
+          "global_harvest_amount_multiplier|Global Harvest Amount Multiplier|float" \
+          "global_harvest_health_multiplier|Global Harvest Health Multiplier|float" \
+          "cutteray_hem_multiplier_per_node_tier_table|Cutteray Hem Multiplier Per Node Tier Table|float" \
+          "minimum_augmentable_item_quality|Minimum Augmentable Item Quality|int" \
+          "item_durability_loss_multiplier|Item Durability Loss Multiplier|float" \
+          "item_deterioration_rate|Item Deterioration Rate|float"
+        ;;
+      5)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame Survival / Combat: $title_suffix" \
+          "water_consumption_rate|Water Consumption Rate|float" \
+          "water_consumption_in_storm_multiplier|Water Consumption In Storm Multiplier|float" \
+          "global_damage_to_npcs_multiplier|Global Damage To NPCs Multiplier|float" \
+          "global_damage_to_players_multiplier|Global Damage To Players Multiplier|float" \
+          "global_health_multiplier|Global Health Multiplier|float" \
+          "global_building_damage_multiplier|Global Building Damage Multiplier|float" \
+          "building_decay_rate_multiplier|Building Decay Rate Multiplier|float" \
+          "enable_building_stability|Enable Building Stability|bool" \
+          "inventory_weight_multiplier|Inventory Weight Multiplier|float" \
+          "player_starting_water|Player Starting Water|float" \
+          "default_reconnect_grace_period_seconds|Default Reconnect Grace Period Seconds|int"
+        ;;
+      6)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame World / Guilds / Vehicles: $title_suffix" \
+          "cycle_duration_in_days|Cycle Duration In Days|int" \
+          "db_wipe_enabled|DB Wipe Enabled|bool" \
+          "max_guild_members_allowed|Max Guild Members Allowed|int" \
+          "max_guilds_allowed|Max Guilds Allowed|int" \
+          "max_permissions_per_actor|Max Permissions Per Actor|int" \
+          "vehicle_quicksand_damage|Vehicle Quicksand Damage|float"
+        ;;
+      7)
+        edit_usergame_category_menu "$map" "$partition_id" "UserGame Inventory / Sandworms / Patrol Ships: $title_suffix" \
+          "player_inventory_starting_size|Player Inventory Starting Size|int" \
+          "player_inventory_starting_volume_capacity|Player Inventory Starting Volume Capacity|float" \
+          "sandworm_system|Sandworm System|text" \
+          "worm_detection_distance|Worm Detection Distance|float" \
+          "min_worm_spawn_interval|Min Worm Spawn Interval|float" \
+          "min_distance_between_sandworms|Min Distance Between Sandworms|float" \
+          "sandworm_quicksand_speed_modifier|Sandworm Quicksand Speed Modifier|float" \
+          "patrol_ship_spawn_time|Patrol Ship Spawn Time|float" \
+          "patrol_ship_despawn_time|Patrol Ship Despawn Time|float"
+        ;;
+      8) return ;;
+    esac
+  done
+}
 
-      case "$choice" in
-        1) edit_usergame_boolean_field "$map" security_zones_enabled "Set Security Zones" "True" "False" "True" "False"; pause ;;
-        2) edit_usergame_numeric_field "$map" item_deterioration_rate "New deterioration rate (0-10, 0 disables, /back to cancel):" float; pause ;;
-        3) edit_usergame_boolean_field "$map" coriolis_auto_spawn_enabled "Set Coriolis Storm Auto Spawn" "True" "False" "True" "False"; pause ;;
-        4) edit_usergame_numeric_field "$map" max_landclaim_segments "Maximum landclaim segments (/back to cancel):" int; pause ;;
-        5) edit_usergame_numeric_field "$map" building_blueprint_max_extensions "Building blueprint max extensions (/back to cancel):" int; pause ;;
-        6) edit_usergame_numeric_field "$map" base_backup_max_extensions "Base backup max extensions (/back to cancel):" int; pause ;;
-        7) edit_usergame_boolean_field "$map" building_restriction_limits_enabled "Set Building Restriction Limits" "True" "False" "True" "False"; pause ;;
-        8) return ;;
-      esac
-    fi
+edit_partition_pvp_only_menu() {
+  local map="$1"
+  local partition_id="$2"
+  local choice
+
+  while true; do
+    load_usersettings_values partition "$map" "$partition_id"
+    MENU_CONTEXT_TEXT="Only the selected partition's UserGame PvP list entry is editable here."
+    menu_or_back "Edit PvP: $map (Partition $partition_id)" \
+      "Partition PvP Enabled  Current: $(usersettings_value partition_pvp_enabled)" \
+      "Back" || return
+    MENU_CONTEXT_TEXT=""
+    choice="$MENU_CHOICE"
+
+    case "$choice" in
+      1) edit_usergame_boolean_field "$map" partition_pvp_enabled "Set Partition PvP" "Enabled" "Disabled" "True" "False" "$partition_id"; pause ;;
+      2) return ;;
+    esac
   done
 }
 
@@ -1531,10 +1697,7 @@ restart_partition_if_requested() {
 apply_survival_browser_change() {
   echo
   echo "Applying Survival_1 browser changes now."
-  echo "This restarts Survival_1, Director, Gateway, and the sietch override publisher so the new name/password is republished cleanly."
-  run_cmd "$DUNE" restart survival
-  run_cmd "$DUNE" restart director
-  run_cmd "$DUNE" restart gateway
+  echo "This republishes the browser-facing sietch state without respawning servers."
   run_cmd runtime/scripts/publish-sietch-overrides.sh restart
   run_cmd runtime/scripts/publish-sietch-overrides.sh once
 }
@@ -1549,9 +1712,7 @@ apply_survival_partition_change() {
 
   echo
   echo "Applying Survival_1 dimension browser changes now."
-  echo "This respawns the selected Survival_1 dimension and republishes the sietch overrides."
-  run_cmd "$DUNE" despawn "$partition_id"
-  run_cmd "$DUNE" spawn "$partition_id"
+  echo "This republishes the selected dimension without changing its server id."
   run_cmd runtime/scripts/publish-sietch-overrides.sh restart
   run_cmd runtime/scripts/publish-sietch-overrides.sh once
 }
@@ -2390,6 +2551,7 @@ edit_survival_menu() {
 edit_overmap_menu() {
   local choice
   local memory
+  local partition_id
   local memory_override=0
   while true; do
     memory="$(map_info_value Overmap "Memory")"
@@ -2401,6 +2563,7 @@ edit_overmap_menu() {
     menu_or_back "Overmap Actions" \
       "Memory Limit  Current: ${memory:-unknown}" \
       "Remove Memory Override" \
+      "Edit UserGame Partition" \
       "Show Dimension Details" \
       "Back To Map List" || return
     choice="$MENU_CHOICE"
@@ -2415,8 +2578,14 @@ edit_overmap_menu() {
         fi
         pause
         ;;
-      3) show_map_dimension_details Overmap; pause ;;
-      4) return ;;
+      3)
+        CHOSEN_PARTITION_ID=""
+        choose_dimension_for_map Overmap "Pick Partition To Edit On Overmap" || { pause; continue; }
+        partition_id="$CHOSEN_PARTITION_ID"
+        edit_usergame_menu Overmap "$partition_id"
+        ;;
+      4) show_map_dimension_details Overmap; pause ;;
+      5) return ;;
     esac
   done
 }
@@ -2446,6 +2615,7 @@ edit_dedicated_scaling_menu() {
       menu_or_back "Edit Map: $map" \
         "Memory Limit  Current: ${memory:-unknown}" \
         "Remove Memory Override" \
+        "Edit UserGame Partition" \
         "Show Dimension Details" \
         "Back To Map List" || return
       choice="$MENU_CHOICE"
@@ -2460,8 +2630,16 @@ edit_dedicated_scaling_menu() {
           fi
           pause
           ;;
-        3) show_map_dimension_details "$map"; pause ;;
-        4) return ;;
+        3)
+          CHOSEN_PARTITION_ID=""
+          choose_dimension_for_map "$map" "Pick Partition To Edit On $map" || { pause; continue; }
+          case "$map" in
+            DeepDesert|DeepDesert_1) edit_partition_pvp_only_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+            *) edit_usergame_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+          esac
+          ;;
+        4) show_map_dimension_details "$map"; pause ;;
+        5) return ;;
       esac
       continue
     fi
@@ -2472,6 +2650,7 @@ edit_dedicated_scaling_menu() {
         "Remove Memory Override" \
         "Max Dimensions  Current: ${max:-unknown}" \
         "Active Dimensions  Current: ${active:-unknown}" \
+        "Edit A Partition UserGame" \
         "Show Dimension Details" \
         "Back To Map List" || return
       choice="$MENU_CHOICE"
@@ -2485,11 +2664,19 @@ edit_dedicated_scaling_menu() {
             info "No memory override is currently set for $map."
           fi
           pause
-          ;;
+        ;;
         3) set_max_dimensions_for_map "$map"; pause ;;
         4) set_active_dimensions_for_map "$map"; pause ;;
-        5) show_map_dimension_details "$map"; pause ;;
-        6) return ;;
+        5)
+          CHOSEN_PARTITION_ID=""
+          choose_dimension_for_map "$map" "Pick Partition To Edit On $map" || { pause; continue; }
+          case "$map" in
+            DeepDesert|DeepDesert_1) edit_partition_pvp_only_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+            *) edit_usergame_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+          esac
+          ;;
+        6) show_map_dimension_details "$map"; pause ;;
+        7) return ;;
       esac
       continue
     fi
@@ -2498,6 +2685,7 @@ edit_dedicated_scaling_menu() {
       "Memory Limit  Current: ${memory:-unknown}" \
       "Remove Memory Override" \
       "Max Dimensions  Current: ${max:-unknown}" \
+      "Edit A Partition UserGame" \
       "Show Dimension Details" \
       "Back To Map List" || return
     choice="$MENU_CHOICE"
@@ -2513,8 +2701,16 @@ edit_dedicated_scaling_menu() {
         pause
         ;;
       3) set_max_dimensions_for_map "$map"; pause ;;
-      4) show_map_dimension_details "$map"; pause ;;
-      5) return ;;
+      4)
+        CHOSEN_PARTITION_ID=""
+        choose_dimension_for_map "$map" "Pick Partition To Edit On $map" || { pause; continue; }
+        case "$map" in
+          DeepDesert|DeepDesert_1) edit_partition_pvp_only_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+          *) edit_usergame_menu "$map" "$CHOSEN_PARTITION_ID" ;;
+        esac
+        ;;
+      5) show_map_dimension_details "$map"; pause ;;
+      6) return ;;
     esac
   done
 }

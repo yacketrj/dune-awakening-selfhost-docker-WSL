@@ -33,6 +33,37 @@ psql_value() {
   docker exec dune-postgres psql -U postgres -d dune -Atc "$1"
 }
 
+map_uses_dedicated_scaling() {
+  local map="$1"
+
+  python3 - "$map" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+target = sys.argv[1].lower()
+catalog_path = Path("runtime/generated/server-catalog.json")
+
+if not catalog_path.exists():
+    print("0")
+    raise SystemExit
+
+try:
+    catalog = json.loads(catalog_path.read_text())
+except Exception:
+    print("0")
+    raise SystemExit
+
+for item in catalog:
+    if str(item.get("map", "")).lower() != target:
+        continue
+    print("1" if bool((item.get("raw") or {}).get("dedicatedScaling")) else "0")
+    raise SystemExit
+
+print("0")
+PY
+}
+
 map_exists() {
   local map="$1"
   local safe
@@ -128,6 +159,7 @@ clear_idle_since() {
 handle_demand() {
   local map="$1"
   local num="$2"
+  local dedicated_scaling
 
   case "$map" in
     Survival_1|Overmap)
@@ -145,6 +177,22 @@ handle_demand() {
 
   local running
   running="$(container_count_for_map "$map")"
+
+  dedicated_scaling="$(map_uses_dedicated_scaling "$map")"
+
+  if [ "$dedicated_scaling" = "1" ]; then
+    if [ "$assigned" != "0" ] || [ "$running" != "0" ]; then
+      echo "OK   demand map=$map num=$num already running/assigned assigned=$assigned containers=$running"
+      return 0
+    fi
+
+    echo "SPAWN demand map=$map num=$num"
+    runtime/scripts/spawn-server.sh "$map" || {
+      echo "ERROR failed to spawn $map"
+      return 0
+    }
+    return 0
+  fi
 
   local max_dimensions
   max_dimensions="$(max_dimensions_for_map "$map")"

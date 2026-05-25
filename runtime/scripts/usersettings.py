@@ -12,33 +12,81 @@ CONFIG_PATH = ROOT / "runtime" / "generated" / "usersettings.json"
 SIETCH_CONFIG_PATH = ROOT / "runtime" / "generated" / "sietch-config.json"
 
 ENGINE_FIELDS = {
-    "port": (None, None, "7777"),
-    "igw_port": (None, None, "7888"),
-    "mining_output_multiplier": ("HarvestingSettings", "miningOutputMultiplier", "1.0"),
-    "vehicle_mining_output_multiplier": ("HarvestingSettings", "vehicleMiningOutputMultiplier", "1.0"),
-    "pvp_resource_multiplier": ("HarvestingSettings", "securityZonesPvpResourceMultiplier", "2.5"),
-    "vehicle_durability_damage_multiplier": ("CombatSettings", "vehicleDurabilityDamageMultiplier", "1.0"),
-    "sandstorm_enabled": ("SurvivalSettings", "sandstormEnabled", "1"),
-    "sandstorm_treasure_enabled": ("SurvivalSettings", "sandStormTreasureEnabled", "1"),
-    "sandworm_enabled": ("SurvivalSettings", "sandwormEnabled", "1"),
-    "sandworm_collision_interaction": ("SurvivalSettings", "vehicleSandwormCollisionInteraction", "false"),
-    "sandworm_danger_zones_enabled": ("SurvivalSettings", "sandwormDangerZonesEnabled", "true"),
-    "sandworm_invulnerability_on_exit": ("SurvivalSettings", "vehicleSandwormInvulnerabilitySecondsOnExit", "900.0"),
-    "sandworm_invulnerability_on_restart": ("SurvivalSettings", "vehicleSandwormInvulnerabilitySecondsOnServerRestart", "7200.0"),
+    "port": ("URL", "Port", "7777"),
+    "igw_port": ("URL", "IGWPort", "7888"),
+    "server_display_name": ("ConsoleVariables", "Bgd.ServerDisplayName", None),
+    "server_login_password": ("ConsoleVariables", "Bgd.ServerLoginPassword", None),
+    "mining_output_multiplier": ("ConsoleVariables", "Dune.GlobalMiningOutputMultiplier", "1.0"),
+    "vehicle_mining_output_multiplier": ("ConsoleVariables", "Dune.GlobalVehicleMiningOutputMultiplier", "1.0"),
+    "pvp_resource_multiplier": ("ConsoleVariables", "SecurityZones.PvpResourceMultiplier", "2.5"),
+    "vehicle_durability_damage_multiplier": ("ConsoleVariables", "dw.VehicleDurabilityDamageMultiplier", "1.0"),
+    "sandstorm_enabled": ("ConsoleVariables", "Sandstorm.Enabled", "1"),
+    "sandstorm_treasure_enabled": ("ConsoleVariables", "Sandstorm.Treasure.Enabled", "1"),
+    "sandworm_enabled": ("ConsoleVariables", "sandworm.dune.Enabled", "1"),
+    "sandworm_collision_interaction": ("ConsoleVariables", "Vehicle.SandwormCollisionInteraction", "false"),
+    "sandworm_danger_zones_enabled": ("ConsoleVariables", "Sandworm.SandwormDangerZonesEnabled", "true"),
+    "sandworm_invulnerability_on_exit": ("ConsoleVariables", "Vehicle.SandwormInvulnerabilitySecondsOnExit", "900.0"),
+    "sandworm_invulnerability_on_restart": ("ConsoleVariables", "Vehicle.SandwormInvulnerabilitySecondsOnServerRestart", "7200.0"),
 }
 
 MAP_FIELDS = {
+    "force_pvp_all_partitions": ("/Script/DuneSandbox.PvpPveSettings", "m_bShouldForceEnablePvpOnAllPartitions", "False"),
     "security_zones_enabled": ("/Script/DuneSandbox.SecurityZonesSubsystem", "m_bAreSecurityZonesEnabled", "True"),
-    "item_deterioration_rate": ("/Script/DuneSandbox.SecurityZonesSubsystem", "UpdateRateInSeconds", "1.0"),
+    "item_deterioration_rate": ("/DeteriorationSystem.ItemDeteriorationConstants", "UpdateRateInSeconds", "1.0"),
     "coriolis_auto_spawn_enabled": ("/Script/DuneSandbox.SandStormConfig", "m_bCoriolisAutoSpawnEnabled", "True"),
+    "storm_cycle_duration": ("/Script/DuneSandbox.SandStormConfig", "m_StormCycleDuration", "7200"),
+    "storm_duration": ("/Script/DuneSandbox.SandStormConfig", "m_StormDuration", "600"),
+    "storm_warning_duration": ("/Script/DuneSandbox.SandStormConfig", "m_StormWarningDuration", "120"),
+    "storm_cycle_wait": ("/Script/DuneSandbox.SandStormConfig", "m_StormCycleWait", "300"),
     "max_landclaim_segments": ("/Script/DuneSandbox.BuildingSettings", "m_MaxNumLandclaimSegments", "6"),
     "building_blueprint_max_extensions": ("/Script/DuneSandbox.BuildingSettings", "m_BuildingBlueprintMaxExtensions", "4"),
     "base_backup_max_extensions": ("/Script/DuneSandbox.BuildingSettings", "m_BaseBackupMaxExtensions", "8"),
     "building_restriction_limits_enabled": ("/Script/DuneSandbox.BuildingSettings", "m_bBuildingRestrictionLimitsEnabled", "True"),
+    "global_xp_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalXPMultiplier", "1.0"),
+    "global_fame_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalFameMultiplier", "1.0"),
+    "global_progression_speed_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalProgressionSpeedMultiplier", "1.0"),
+    "guild_creation_cost": ("/Script/DuneSandbox.DuneGameMode", "m_GuildCreationCost", "1000"),
+    "sell_order_price_percentage_fee": ("/Script/DuneSandbox.DuneGameMode", "SellOrderPricePercentageFee", "2.0"),
+    "spice_tax_amount": ("/Script/DuneSandbox.DuneGameMode", "SpiceTaxAmount", "0.1"),
+    "spice_tax_interval": ("/Script/DuneSandbox.DuneGameMode", "SpiceTaxInterval", "3600"),
+    "global_harvest_amount_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalHarvestAmountMultiplier", "1.0"),
+    "global_harvest_health_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalHarvestHealthMultiplier", "1.0"),
+    "cutteray_hem_multiplier_per_node_tier_table": ("/Script/DuneSandbox.DuneGameMode", "CutterayHemMultiplierPerNodeTierTable", "1.0"),
+    "minimum_augmentable_item_quality": ("/Script/DuneSandbox.DuneGameMode", "m_MinimumAugmentableItemQuality", "0"),
+    "item_durability_loss_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_ItemDurabilityLossMultiplier", "1.0"),
+    "legacy_pvp_enabled": ("/Script/DuneSandbox.DuneGameMode", "bPvPEnabled", "False"),
+    "server_pve": ("/Script/DuneSandbox.DuneGameMode", "bServerPVE", "True"),
+    "water_consumption_rate": ("/Script/DuneSandbox.DuneGameMode", "m_WaterConsumptionRate", "1.0"),
+    "water_consumption_in_storm_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_WaterConsumptionInStormMultiplier", "4.0"),
+    "global_damage_to_npcs_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalDamageToNpcsMultiplier", "1.0"),
+    "global_damage_to_players_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalDamageToPlayersMultiplier", "1.0"),
+    "global_health_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalHealthMultiplier", "1.0"),
+    "global_building_damage_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_GlobalBuildingDamageMultiplier", "1.0"),
+    "building_decay_rate_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_BuildingDecayRateMultiplier", "1.0"),
+    "enable_building_stability": ("/Script/DuneSandbox.DuneGameMode", "bEnableBuildingStability", "True"),
+    "inventory_weight_multiplier": ("/Script/DuneSandbox.DuneGameMode", "m_InventoryWeightMultiplier", "1.0"),
+    "player_starting_water": ("/Script/DuneSandbox.DuneGameMode", "m_PlayerStartingWater", "100.0"),
+    "default_reconnect_grace_period_seconds": ("/Script/DuneSandbox.DuneGameMode", "m_DefaultReconnectGracePeriodSeconds", "300"),
+    "cycle_duration_in_days": ("/Script/DuneSandbox.DuneGameMode", "m_CycleDurationInDays", "7"),
+    "db_wipe_enabled": ("/Script/DuneSandbox.DuneGameMode", "m_bIsDbWipeEnabled", "True"),
+    "max_guild_members_allowed": ("/Script/DuneSandbox.DuneGameMode", "m_MaxGuildMembersAllowed", "32"),
+    "max_guilds_allowed": ("/Script/DuneSandbox.DuneGameMode", "m_MaxGuildsAllowed", "3"),
+    "max_permissions_per_actor": ("/Script/DuneSandbox.DuneGameMode", "m_MaxPermissionsPerActor", "20"),
+    "vehicle_quicksand_damage": ("/Script/DuneSandbox.DuneGameMode", "m_VehicleQuicksandDamage", "10.0"),
+    "player_inventory_starting_size": ("/Script/DuneSandbox.InventorySystemSettings", "PlayerInventoryStartingSize", "40"),
+    "player_inventory_starting_volume_capacity": ("/Script/DuneSandbox.InventorySystemSettings", "PlayerInventoryStartingVolumeCapacity", "225.0"),
+    "sandworm_system": ("/Script/DuneSandbox.SandwormSettings", "m_EnableSandwormSystem", "UseAllowList"),
+    "worm_detection_distance": ("/Script/DuneSandbox.SandwormSettings", "WormDetectionDistance", "5000.0"),
+    "min_worm_spawn_interval": ("/Script/DuneSandbox.SandwormSettings", "m_MinWormSpawnInternal", "300.0"),
+    "min_distance_between_sandworms": ("/Script/DuneSandbox.SandwormSettings", "m_MinDistanceBetweenSandworms", "3000.0"),
+    "sandworm_quicksand_speed_modifier": ("/Script/DuneSandbox.SandwormSettings", "m_SandwormQuicksandSpeedModifier", "0.5"),
+    "patrol_ship_spawn_time": ("/Script/DuneSandbox.PatrolShipSettings", "m_TimeOfDayToSpawn", "18.0"),
+    "patrol_ship_despawn_time": ("/Script/DuneSandbox.PatrolShipSettings", "m_TimeOfDayToDespawn", "6.0"),
 }
 
 PARTITION_FIELDS = {
     "partition_pvp_enabled": (None, None, "False"),
+    "partition_pve_enabled": (None, None, "False"),
     **MAP_FIELDS,
 }
 
@@ -123,7 +171,7 @@ def validate_port_ranges(config: dict, field_id: str, value: str) -> None:
 
 
 def merged_engine_values(config: dict) -> dict[str, str]:
-    values = {key: spec[2] for key, spec in ENGINE_FIELDS.items()}
+    values = {key: spec[2] for key, spec in ENGINE_FIELDS.items() if spec[2] is not None}
     values.update(config.get("engine", {}))
     return values
 
@@ -182,56 +230,201 @@ def reset_all() -> int:
     return 0
 
 
-def write_userengine_ini(path: Path, values: dict[str, str]) -> None:
-    section_order = ["HarvestingSettings", "CombatSettings", "SurvivalSettings"]
-    section_lines: dict[str, list[str]] = {section: [] for section in section_order}
-    for field_id, (section, key, _) in ENGINE_FIELDS.items():
-        if section is None or key is None:
-            continue
-        value = values.get(field_id, "")
-        if value == "":
-            continue
-        section_lines.setdefault(section, []).append(f"{key}={value}")
-
-    lines: list[str] = []
-    for section in section_order:
-        entries = section_lines.get(section, [])
-        if not entries:
-            continue
-        if lines:
-            lines.append("")
-        lines.append(f"[{section}]")
-        lines.extend(entries)
-    atomic_write_text(path, "\n".join(lines) + "\n")
+def quote_ini_string(value: str) -> str:
+    raw = value.strip()
+    if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        return raw
+    escaped = raw.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def write_userengine_ini(path: Path, values: dict[str, str]) -> None:
+    lines = [
+        "; Settings in these config files will be applied to every server in the battlegroup",
+        "; If you need to override different settings for different servers, use the battlegroup editor instead",
+        "",
+        "[URL]",
+        "; The starting port that servers listen to for players. Each server",
+        "; will use the next available port in a sequence (7777, 7778 etc.). The range should",
+        "; not intersect with the IGWPort range bellow",
+        f"Port={values.get('port', ENGINE_FIELDS['port'][2])}",
+        "; The port that servers listen to for other servers. Each server",
+        "; will use the next available port in a sequence (7888, 7889 etc.). The range should",
+        "; not intersect with the Port range above",
+        f"IGWPort={values.get('igw_port', ENGINE_FIELDS['igw_port'][2])}",
+        "",
+        "[ConsoleVariables]",
+        "; Set the name of every Sietch in the battlegroup",
+        "; If Sietches should have different names use the battlegroup editor instead",
+        "; Special characters like ' and | are not allowed and double quotes should be used",
+    ]
+
+    display_name = values.get("server_display_name", "")
+    if display_name:
+        lines.append(f"Bgd.ServerDisplayName={quote_ini_string(display_name)}")
+    else:
+        lines.append(';Bgd.ServerDisplayName="My Arrakis, My Dune"')
+
+    lines.extend([
+        "",
+        "; Set a password for every Sietch in the battlegroup",
+        "; If Sietches should have different passwords use the battlegroup editor instead",
+        "; Special characters like ' and | are not allowed and double quotes should be used",
+    ])
+
+    login_password = values.get("server_login_password", "")
+    if login_password:
+        lines.append(f"Bgd.ServerLoginPassword={quote_ini_string(login_password)}")
+    else:
+        lines.append(';Bgd.ServerLoginPassword="Sandworm"')
+
+    lines.extend([
+        "",
+        "; Mining multipliers",
+        f"Dune.GlobalMiningOutputMultiplier={values.get('mining_output_multiplier', ENGINE_FIELDS['mining_output_multiplier'][2])}",
+        f"Dune.GlobalVehicleMiningOutputMultiplier={values.get('vehicle_mining_output_multiplier', ENGINE_FIELDS['vehicle_mining_output_multiplier'][2])}",
+        f"SecurityZones.PvpResourceMultiplier={values.get('pvp_resource_multiplier', ENGINE_FIELDS['pvp_resource_multiplier'][2])}",
+        "",
+        "; Durability damage multiplier for vehicles | (0 to 10)  0=off",
+        f"dw.VehicleDurabilityDamageMultiplier={values.get('vehicle_durability_damage_multiplier', ENGINE_FIELDS['vehicle_durability_damage_multiplier'][2])}",
+        "",
+        "; Sandstorm and sandstorm treasure spawning settings",
+        f"Sandstorm.Enabled={values.get('sandstorm_enabled', ENGINE_FIELDS['sandstorm_enabled'][2])}",
+        f"Sandstorm.Treasure.Enabled={values.get('sandstorm_treasure_enabled', ENGINE_FIELDS['sandstorm_treasure_enabled'][2])} ",
+        "",
+        "; Sandworm settings",
+        f"sandworm.dune.Enabled={values.get('sandworm_enabled', ENGINE_FIELDS['sandworm_enabled'][2])}",
+        "; Sandworm can push/damage vehicles",
+        f"Vehicle.SandwormCollisionInteraction={values.get('sandworm_collision_interaction', ENGINE_FIELDS['sandworm_collision_interaction'][2])}",
+        "; Enables dangerzones where the sandworm can attack",
+        f"Sandworm.SandwormDangerZonesEnabled={values.get('sandworm_danger_zones_enabled', ENGINE_FIELDS['sandworm_danger_zones_enabled'][2])}",
+        "; Seconds of invunerability from sandworm on specific situations",
+        f"Vehicle.SandwormInvulnerabilitySecondsOnExit={values.get('sandworm_invulnerability_on_exit', ENGINE_FIELDS['sandworm_invulnerability_on_exit'][2])}",
+        f"Vehicle.SandwormInvulnerabilitySecondsOnServerRestart={values.get('sandworm_invulnerability_on_restart', ENGINE_FIELDS['sandworm_invulnerability_on_restart'][2])}",
+    ])
+    atomic_write_text(path, "\n".join(lines) + "\n")
+
+
 def write_usergame_ini(path: Path, values: dict[str, str], partition_id: str | None = None) -> None:
-    lines = ["[/Script/DuneSandbox.PvpPveSettings]"]
+    def field(field_id: str) -> str:
+        section, key, default = MAP_FIELDS[field_id]
+        return f"{key}={values.get(field_id, default)}"
+
+    lines = [
+        "; Settings in these config files will be applied to every server in the battlegroup",
+        "; If you need to override different settings for different servers, use the battlegroup editor instead",
+        "; Advanced community-documented fields below are emitted for Docker Saved/UserSettings use.",
+        "",
+        "[/Script/DuneSandbox.PvpPveSettings]",
+        "; Enable PVP for all partitions",
+        field("force_pvp_all_partitions"),
+        "; Enable PVP for specific partitions. Example:",
+    ]
     if partition_id:
-        prefix = "" if truthy(values.get("partition_pvp_enabled", "False")) else ";"
-        lines.append(f"{prefix}+m_PvpEnabledPartitions={partition_id}")
+        if truthy(values.get("partition_pvp_enabled", "False")):
+            lines.append(f"+m_PvpEnabledPartitions={partition_id}")
+        else:
+            lines.append(";+m_PvpEnabledPartitions=1")
+            lines.append(";+m_PvpEnabledPartitions=2")
     else:
         lines.append(";+m_PvpEnabledPartitions=1")
         lines.append(";+m_PvpEnabledPartitions=2")
 
+    lines.append("; Explicitly enable PVE for specific partitions. Example:")
+    if partition_id and truthy(values.get("partition_pve_enabled", "False")):
+        lines.append(f"+m_PveEnabledPartitions={partition_id}")
+    else:
+        lines.append(";+m_PveEnabledPartitions=1")
+
     lines.extend([
         "",
         "[/Script/DuneSandbox.SecurityZonesSubsystem]",
-        f"m_bAreSecurityZonesEnabled={values.get('security_zones_enabled', MAP_FIELDS['security_zones_enabled'][2])}",
-        f"UpdateRateInSeconds={values.get('item_deterioration_rate', MAP_FIELDS['item_deterioration_rate'][2])}",
+        "; Disabling security zones across the board allows for PVP and ability usage everywhere",
+        field("security_zones_enabled"),
+        "",
+        "[/DeteriorationSystem.ItemDeteriorationConstants]",
+        "; Deterioration rate for items | (0 to 10)  0=off",
+        field("item_deterioration_rate"),
         "",
         "[/Script/DuneSandbox.SandStormConfig]",
-        f"m_bCoriolisAutoSpawnEnabled={values.get('coriolis_auto_spawn_enabled', MAP_FIELDS['coriolis_auto_spawn_enabled'][2])}",
+        "; Enable Coriolis storm",
+        field("coriolis_auto_spawn_enabled"),
+        "; Advanced storm timing settings from community documentation",
+        field("storm_cycle_duration"),
+        field("storm_duration"),
+        field("storm_warning_duration"),
+        field("storm_cycle_wait"),
         "",
         "[/Script/DuneSandbox.BuildingSettings]",
-        f"m_MaxNumLandclaimSegments={values.get('max_landclaim_segments', MAP_FIELDS['max_landclaim_segments'][2])}",
-        f"m_BuildingBlueprintMaxExtensions={values.get('building_blueprint_max_extensions', MAP_FIELDS['building_blueprint_max_extensions'][2])}",
-        f"m_BaseBackupMaxExtensions={values.get('base_backup_max_extensions', MAP_FIELDS['base_backup_max_extensions'][2])}",
-        f"m_bBuildingRestrictionLimitsEnabled={values.get('building_restriction_limits_enabled', MAP_FIELDS['building_restriction_limits_enabled'][2])}",
+        "; Max number of landclaims. !Needs to also be applied to each client!",
+        field("max_landclaim_segments"),
+        "; Number of times a landclaim can be expanded",
+        field("building_blueprint_max_extensions"),
+        field("base_backup_max_extensions"),
+        "; Enable building restriction limits !Needs to also be applied to each client!",
+        field("building_restriction_limits_enabled"),
+        "",
+        "[/Script/DuneSandbox.DuneGameMode]",
+        "; Advanced progression and economy settings from community documentation",
+        field("global_xp_multiplier"),
+        field("global_fame_multiplier"),
+        field("global_progression_speed_multiplier"),
+        field("guild_creation_cost"),
+        field("sell_order_price_percentage_fee"),
+        field("spice_tax_amount"),
+        field("spice_tax_interval"),
+        "",
+        "; Advanced harvesting and crafting settings from community documentation",
+        field("global_harvest_amount_multiplier"),
+        field("global_harvest_health_multiplier"),
+        field("cutteray_hem_multiplier_per_node_tier_table"),
+        field("minimum_augmentable_item_quality"),
+        field("item_durability_loss_multiplier"),
+        "",
+        "; Advanced survival and combat settings from community documentation",
+        field("legacy_pvp_enabled"),
+        field("server_pve"),
+        field("water_consumption_rate"),
+        field("water_consumption_in_storm_multiplier"),
+        field("global_damage_to_npcs_multiplier"),
+        field("global_damage_to_players_multiplier"),
+        field("global_health_multiplier"),
+        field("global_building_damage_multiplier"),
+        field("building_decay_rate_multiplier"),
+        field("enable_building_stability"),
+        field("inventory_weight_multiplier"),
+        field("player_starting_water"),
+        field("default_reconnect_grace_period_seconds"),
+        "",
+        "; Advanced world reset, clan, permission, and vehicle settings from community documentation",
+        field("cycle_duration_in_days"),
+        field("db_wipe_enabled"),
+        field("max_guild_members_allowed"),
+        field("max_guilds_allowed"),
+        field("max_permissions_per_actor"),
+        field("vehicle_quicksand_damage"),
+        "",
+        "[/Script/DuneSandbox.InventorySystemSettings]",
+        "; Advanced inventory settings from community documentation",
+        field("player_inventory_starting_size"),
+        field("player_inventory_starting_volume_capacity"),
+        "",
+        "[/Script/DuneSandbox.SandwormSettings]",
+        "; Advanced sandworm settings from community documentation",
+        field("sandworm_system"),
+        field("worm_detection_distance"),
+        field("min_worm_spawn_interval"),
+        field("min_distance_between_sandworms"),
+        field("sandworm_quicksand_speed_modifier"),
+        "",
+        "[/Script/DuneSandbox.PatrolShipSettings]",
+        "; Advanced patrol ship settings from community documentation",
+        field("patrol_ship_spawn_time"),
+        field("patrol_ship_despawn_time"),
     ])
     atomic_write_text(path, "\n".join(lines) + "\n")
 
@@ -262,7 +455,7 @@ def materialize_current_runtime_files() -> int:
 
     overmap_dir = game_root / "overmap" / "Saved"
     if overmap_dir.exists():
-        targets.append(("Overmap", overmap_dir, None))
+        targets.append(("Overmap", overmap_dir, "2"))
 
     survival_dir = game_root / "survival-1" / "Saved"
     if survival_dir.exists():

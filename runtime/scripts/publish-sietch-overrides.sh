@@ -200,8 +200,7 @@ for line in result.stdout.splitlines():
     display_name = cfg.get("display_name", "")
     if not display_name and label:
         display_name = f"Sietch {label}"
-    if cfg.get("password"):
-        continue
+    password = cfg.get("password", "")
     payload = {
         "reportTimestamp": int(time.time()),
         "partitionId": int(partition_id),
@@ -214,6 +213,8 @@ for line in result.stdout.splitlines():
         "players": [],
         "serverGameplaySettings": json.loads(json.dumps(defaults)),
     }
+    if password:
+        payload["loginPassword"] = password
     payload["serverGameplaySettings"]["CoreSettings"]["serverDisplayName"] = display_name
     print(json.dumps(payload, separators=(",", ":")))
 PY
@@ -286,6 +287,7 @@ start_loop() {
   while true; do
     if [ "$(date +%s)" -ge "$route_refresh_at" ]; then
       ensure_route >>"$LOG_FILE" 2>&1 || true
+      publish_snapshot_once >>"$LOG_FILE" 2>&1 || true
       route_refresh_at=$(( $(date +%s) + 10 ))
     fi
     if rows="$(forward_batch_once)"; then
@@ -316,7 +318,7 @@ case "${1:-start}" in
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       exit 0
     fi
-    pkill -f "bash runtime/scripts/publish-sietch-overrides.sh loop" 2>/dev/null || true
+    pkill -f "publish-sietch-overrides.sh loop" 2>/dev/null || true
     rm -f "$PID_FILE"
     prepare_runtime_generated_files
     setsid "$0" loop >>"$LOG_FILE" 2>&1 </dev/null &
@@ -331,7 +333,7 @@ case "${1:-start}" in
       kill "$(cat "$PID_FILE")" 2>/dev/null || true
       rm -f "$PID_FILE"
     fi
-    pkill -f "bash runtime/scripts/publish-sietch-overrides.sh loop" 2>/dev/null || true
+    pkill -f "publish-sietch-overrides.sh loop" 2>/dev/null || true
     restore_route || true
     ;;
   restart)
