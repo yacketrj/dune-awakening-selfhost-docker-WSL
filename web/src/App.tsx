@@ -6,8 +6,10 @@ import { serverApi } from "./api/server";
 import { playersApi } from "./api/players";
 import { logsApi } from "./api/logs";
 import { backupsApi } from "./api/backups";
+import { databaseApi } from "./api/database";
 import { mapsApi } from "./api/maps";
 import { updatesApi } from "./api/updates";
+import { worldDataApi } from "./api/worldData";
 import type { Task } from "./api/setup";
 import { SetupWizard } from "./components/SetupWizard";
 import { TaskProgress } from "./components/TaskProgress";
@@ -17,7 +19,7 @@ import { PortChecklist } from "./components/PortChecklist";
 import { ReadinessTimeline } from "./components/ReadinessTimeline";
 import { ServiceHealthCard } from "./components/ServiceHealthCard";
 
-type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Maps" | "Database" | "Backups" | "Logs" | "Updates" | "Settings";
+type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Maps" | "Database" | "Storage" | "Bases" | "Blueprints" | "Backups" | "Logs" | "Updates" | "Settings";
 
 const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Home", icon: <Home size={18} /> },
@@ -28,6 +30,9 @@ const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Admin Tools", icon: <PackagePlus size={18} /> },
   { tab: "Maps", icon: <Map size={18} /> },
   { tab: "Database", icon: <Database size={18} /> },
+  { tab: "Storage", icon: <Archive size={18} /> },
+  { tab: "Bases", icon: <Server size={18} /> },
+  { tab: "Blueprints", icon: <FileText size={18} /> },
   { tab: "Backups", icon: <Archive size={18} /> },
   { tab: "Logs", icon: <FileText size={18} /> },
   { tab: "Updates", icon: <RefreshCw size={18} /> },
@@ -44,7 +49,6 @@ export function App() {
   const [doctor, setDoctor] = useState("");
   const [services, setServices] = useState("");
   const [selectedLogService, setSelectedLogService] = useState("gateway");
-  const [players, setPlayers] = useState("");
   const [logs, setLogs] = useState("");
   const [task, setTask] = useState<Task | null>(null);
   const [error, setError] = useState("");
@@ -103,10 +107,13 @@ export function App() {
         {tab === "Setup" && <SetupWizard />}
         {tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} onError={setError} />}
         {tab === "Services" && <ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setSelectedLogService(service); setTab("Logs"); }} onError={setError} />}
-        {tab === "Players" && <OutputPanel title="Players" text={players} action="Load Players" onAction={() => safe(async () => setPlayers((await playersApi.list()).stdout))} />}
+        {tab === "Players" && <PlayersPanel setTask={setTask} onError={setError} />}
         {tab === "Admin Tools" && <AdminToolsPanel setTask={setTask} />}
         {tab === "Maps" && <MapsPanel />}
         {tab === "Database" && <DatabasePanel setTask={setTask} />}
+        {tab === "Storage" && <StoragePanel onError={setError} />}
+        {tab === "Bases" && <WorldListPanel title="Bases" load={worldDataApi.bases} exportUrl={(id) => worldDataApi.baseExportUrl(id)} onError={setError} />}
+        {tab === "Blueprints" && <WorldListPanel title="Blueprints" load={worldDataApi.blueprints} exportUrl={(id) => worldDataApi.blueprintExportUrl(id)} onError={setError} />}
         {tab === "Backups" && <BackupsPanel setTask={setTask} onError={setError} />}
         {tab === "Logs" && <LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} />}
         {tab === "Updates" && <UpdatesPanel setTask={setTask} />}
@@ -216,6 +223,66 @@ function AdminToolsPanel({ setTask }: { setTask: (task: Task) => void }) {
   );
 }
 
+function PlayersPanel({ setTask, onError }: { setTask: (task: Task) => void; onError: (text: string) => void }) {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [tab, setTab] = useState("inventory");
+  async function load(online = false) {
+    onError("");
+    try {
+      const result = online ? await playersApi.online() : await playersApi.list(q);
+      setRows(result.rows || []);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    }
+  }
+  async function open(row: Record<string, unknown>) {
+    const id = String(row.actor_id || row.id || "");
+    setSelected(row);
+    setDetail(await playersApi.profile(id));
+  }
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>Players</h2><div className="action-row"><button onClick={() => load(false)}>Load Players</button><button onClick={() => load(true)}>Online Only</button></div></div>
+      <div className="action-row"><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search character, FLS ID, or actor id" /><button onClick={() => load(false)}>Search</button></div>
+      <DataTable rows={rows} columns={["actor_id", "character_name", "account_id", "online_status", "map", "fls_id"]} onRowClick={open} />
+      {selected && <section className="drawer">
+        <div className="panel-title"><h3>{String(selected.character_name || selected.actor_id)}</h3><button onClick={() => setSelected(null)}>Close</button></div>
+        <pre className="mini-output">{JSON.stringify(detail, null, 2)}</pre>
+        <div className="action-row">{["inventory", "currency", "factions", "specs", "position", "progression", "events", "stats", "history"].map((name) => <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>{name}</button>)}</div>
+        <PlayerDetailTab playerId={String(selected.actor_id)} tab={tab} onError={onError} />
+        <div className="action-row">
+          <button onClick={async () => window.confirm("Add 1000 XP to this player?") && setTask((await playersApi.addXp(String(selected.actor_id), 1000)).task)}>Add XP</button>
+          <button onClick={async () => window.confirm("Refill water for this player?") && setTask((await playersApi.refillWater(String(selected.actor_id))).task)}>Refill Water</button>
+        </div>
+      </section>}
+    </section>
+  );
+}
+
+function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: string; onError: (text: string) => void }) {
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
+      inventory: () => playersApi.inventory(playerId),
+      currency: () => playersApi.currency(playerId),
+      factions: () => playersApi.factions(playerId),
+      specs: () => playersApi.specs(playerId),
+      position: () => playersApi.position(playerId),
+      progression: () => playersApi.progression(playerId),
+      events: () => playersApi.events(playerId),
+      stats: () => playersApi.stats(playerId),
+      history: () => playersApi.history(playerId)
+    };
+    setData(null);
+    loaders[tab]?.().then(setData).catch((error) => onError(error instanceof Error ? error.message : String(error)));
+  }, [playerId, tab]);
+  const rows = Array.isArray(data?.rows) ? data.rows as Record<string, unknown>[] : data?.position ? [data.position as Record<string, unknown>] : [];
+  return <div>{data?.reason ? <p className="danger-note">{String(data.reason)}</p> : null}<DataTable rows={rows} /></div>;
+}
+
 function LogsPanel({ selectedService, setSelectedService, text, setText, onError }: { selectedService: string; setSelectedService: (service: string) => void; text: string; setText: Dispatch<SetStateAction<string>>; onError: (text: string) => void }) {
   const [services, setServices] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -256,8 +323,76 @@ function LogsPanel({ selectedService, setSelectedService, text, setText, onError
 }
 
 function DatabasePanel({ setTask }: { setTask: (task: Task) => void }) {
-  const [text, setText] = useState("");
-  return <section className="panel"><h2>Database and Backups</h2><BackupRestorePanel onTask={setTask} /><button onClick={async () => setText((await backupsApi.list()).stdout)}>List Backups</button><pre className="mini-output">{text}</pre></section>;
+  const [schema, setSchema] = useState("dune");
+  const [tables, setTables] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState("");
+  const [preview, setPreview] = useState<{ columns?: { name: string }[]; rows?: Record<string, unknown>[] } | null>(null);
+  const [columns, setColumns] = useState<Record<string, unknown>[]>([]);
+  const [count, setCount] = useState("");
+  const [sql, setSql] = useState("select * from dune.player_state limit 25");
+  const [confirmation, setConfirmation] = useState("");
+  const [queryResult, setQueryResult] = useState<{ columns?: { name: string }[]; rows?: Record<string, unknown>[] } | null>(null);
+  const [search, setSearch] = useState("");
+  const [searchRows, setSearchRows] = useState<Record<string, unknown>[]>([]);
+  async function loadTables() { setTables(await databaseApi.tables(schema)); }
+  async function open(table: string) {
+    setSelected(table);
+    const [nextPreview, nextColumns, nextCount] = await Promise.all([
+      databaseApi.preview(schema, table, 50, 0),
+      databaseApi.columns(schema, table),
+      databaseApi.count(schema, table)
+    ]);
+    setPreview(nextPreview);
+    setColumns(nextColumns);
+    setCount(String(nextCount.count));
+  }
+  return <section className="panel">
+    <h2>Database Browser</h2>
+    <div className="action-row"><input value={schema} onChange={(event) => setSchema(event.target.value)} /><button onClick={loadTables}>Load Tables</button><button onClick={async () => setQueryResult(await databaseApi.status() as never)}>Status</button></div>
+    <DataTable rows={tables} columns={["schema", "name", "estimated_rows"]} onRowClick={(row) => open(String(row.name))} />
+    <h3>{selected ? `${schema}.${selected} (${count} rows)` : "Table Preview"}</h3>
+    <DataTable rows={columns} />
+    <DataTable rows={preview?.rows || []} columns={preview?.columns?.map((column) => column.name)} />
+    <h3>Search Columns</h3>
+    <div className="action-row"><input value={search} onChange={(event) => setSearch(event.target.value)} /><button onClick={async () => setSearchRows(await databaseApi.search(search))}>Search</button></div>
+    <DataTable rows={searchRows} />
+    <h3>Advanced SQL Console</h3>
+    <textarea value={sql} onChange={(event) => setSql(event.target.value)} rows={5} />
+    <input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="RUN DESTRUCTIVE SQL for write queries" />
+    <div className="action-row"><button onClick={async () => setQueryResult(await databaseApi.query(sql, confirmation))}>Run Query</button><button onClick={async () => setQueryResult(await databaseApi.export(sql))}>Export Query JSON</button><BackupRestorePanel onTask={setTask} /></div>
+    <DataTable rows={queryResult?.rows || []} columns={queryResult?.columns?.map((column) => column.name)} />
+  </section>;
+}
+
+function StoragePanel({ onError }: { onError: (text: string) => void }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [items, setItems] = useState<Record<string, unknown>[]>([]);
+  async function load() {
+    onError("");
+    try { setRows((await worldDataApi.storage()).rows || []); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+  }
+  async function open(row: Record<string, unknown>) {
+    setSelected(row);
+    setItems((await worldDataApi.storageItems(String(row.id))).rows || []);
+  }
+  return <section className="panel"><div className="panel-title"><h2>Storage</h2><button onClick={load}>Load Storage</button></div><DataTable rows={rows} onRowClick={open} />{selected && <section className="drawer"><h3>Storage {String(selected.id)}</h3><a className="button-link" href={worldDataApi.storageExportUrl(String(selected.id))}>Export JSON</a><DataTable rows={items} /></section>}</section>;
+}
+
+function WorldListPanel({ title, load, exportUrl, onError }: { title: string; load: () => Promise<{ rows: Record<string, unknown>[]; reason?: string }>; exportUrl: (id: string) => string; onError: (text: string) => void }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [reason, setReason] = useState("");
+  async function refresh() {
+    onError("");
+    try {
+      const result = await load();
+      setRows(result.rows || []);
+      setReason(result.reason || "");
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return <section className="panel"><div className="panel-title"><h2>{title}</h2><button onClick={refresh}>Load {title}</button></div>{reason && <p className="danger-note">{reason}</p>}<DataTable rows={rows} action={(row) => <a className="button-link" href={exportUrl(String(row.id))}>Export</a>} /></section>;
 }
 
 function BackupsPanel({ setTask, onError }: { setTask: (task: Task) => void; onError: (text: string) => void }) {
@@ -300,6 +435,18 @@ function SettingsPanel() {
 
 function OutputPanel({ title, text, action, onAction }: { title: string; text: string; action: string; onAction: () => void }) {
   return <section className="panel"><h2>{title}</h2><button onClick={onAction}>{action}</button><pre className="mini-output">{text}</pre></section>;
+}
+
+function DataTable({ rows, columns, onRowClick, action }: { rows: Record<string, unknown>[]; columns?: string[]; onRowClick?: (row: Record<string, unknown>) => void; action?: (row: Record<string, unknown>) => React.ReactNode }) {
+  const cols = columns?.length ? columns : Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 8);
+  if (!rows.length) return <div className="empty">No rows.</div>;
+  return <div className="table-wrap"><table><thead><tr>{cols.map((col) => <th key={col}>{col}</th>)}{action && <th>Actions</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} onClick={() => onRowClick?.(row)} className={onRowClick ? "clickable" : ""}>{cols.map((col) => <td key={col}>{formatCell(row[col])}</td>)}{action && <td>{action(row)}</td>}</tr>)}</tbody></table></div>;
+}
+
+function formatCell(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function parseServiceRows(text: string) {

@@ -42,11 +42,26 @@ Base path for the native RedBlink API: `/api`.
 | `/api/backups/create` | POST | Create backup task | `dune db backup` |
 | `/api/backups/restore` | POST | Restore backup task | `dune db restore <validated-backup>` |
 | `/api/backups/:name` | DELETE | Delete backup task | `dune db delete <validated-backup>` |
-| `/api/database/tables` | GET | Database tables | `dune database tables <schema>` |
-| `/api/database/table/:name` | GET | Preview table | `dune database preview <schema.table>` |
-| `/api/database/query` | POST | Advanced SQL execution | Read-only `dune database sql <query>`; destructive SQL requires confirmation phrase and pre-query `dune db backup` |
-| `/api/database/export` | POST | Export read-only query results | `dune database export <query>` |
-| `/api/players` | GET | Player list | `dune admin players` |
+| `/api/database/status` | GET | Direct DB health/config status | Direct PostgreSQL query using discovered RedBlink DB config |
+| `/api/database/schemas` | GET | List schemas | Direct PostgreSQL `information_schema` query |
+| `/api/database/tables` | GET | Database tables | Direct PostgreSQL `information_schema` / `pg_stat_user_tables` query |
+| `/api/database/tables/:schema/:table/columns` | GET | Table columns | Direct PostgreSQL `information_schema.columns` query |
+| `/api/database/tables/:schema/:table/preview` | GET | Preview rows | Direct PostgreSQL query with validated quoted identifiers and limit/offset parameters |
+| `/api/database/tables/:schema/:table/count` | GET | Count rows | Direct PostgreSQL query with validated quoted identifiers |
+| `/api/database/search` | GET | Search schemas/tables/columns | Direct PostgreSQL `information_schema.columns` query |
+| `/api/database/query` | POST | Advanced SQL execution | Direct PostgreSQL query; read-only by default, destructive SQL requires confirmation phrase and pre-query `dune db backup` |
+| `/api/database/export` | POST | Export read-only query results | Direct PostgreSQL read-only query returned as JSON |
+| `/api/players/online` | GET | Online player list | Direct PostgreSQL query filtered by `player_state.online_status` |
+| `/api/players/search` | GET | Player search | Direct PostgreSQL parameterized search over character/account/actor |
+| `/api/players/:id` | GET | Player profile | Direct PostgreSQL actor/player_state/accounts query |
+| `/api/players/:id/currency` | GET | Currency balances | Direct PostgreSQL `player_virtual_currency_balances` query where table exists |
+| `/api/players/:id/factions` | GET | Faction reputation | Direct PostgreSQL `player_faction_reputation` query where table exists |
+| `/api/players/:id/specs` | GET | Specialization tracks | Direct PostgreSQL `specialization_tracks` query |
+| `/api/players/:id/progression` | GET | Progression capability report | Returns unsupported reason until schema is mapped |
+| `/api/players/:id/position` | GET | Player position | Direct PostgreSQL actor transform query when transform composite is available |
+| `/api/players/:id/events` | GET | Events capability report | Returns unsupported reason until schema is mapped |
+| `/api/players/:id/stats` | GET | Stats capability report | Returns unsupported reason until schema is mapped |
+| `/api/players/:id/history` | GET | History capability report | Returns unsupported reason until schema is mapped |
 | `/api/players/:id/give-item` | POST | Give item task | `dune admin grant-item` |
 | `/api/players/:id/add-xp` | POST | Add XP task | `dune admin award-xp` |
 | `/api/players/:id/refill-water` | POST | Refill water task | `dune admin refill-water` |
@@ -57,11 +72,19 @@ Base path for the native RedBlink API: `/api`.
 | `/api/sietches` | GET | Sietch state | `dune sietches list` |
 | `/api/deepdesert` | GET | Deep Desert status | `dune deepdesert dual status` |
 | `/api/settings` | GET | Runtime settings state | Setup state/config summary |
+| `/api/storage/:id` | GET | Storage detail | Direct PostgreSQL storage list lookup |
+| `/api/storage/:id/items` | GET | Storage inventory | Direct PostgreSQL inventory query |
+| `/api/storage/:id/export` | GET | Export storage JSON | Direct PostgreSQL inventory query |
+| `/api/bases/:id` | GET | Base detail | Direct PostgreSQL base list lookup |
+| `/api/bases/:id/export` | GET | Export base summary JSON | Direct PostgreSQL base query summary |
+| `/api/blueprints/:id` | GET | Blueprint detail | Direct PostgreSQL blueprint list lookup |
+| `/api/blueprints/:id/export` | GET | Export blueprint summary JSON | Direct PostgreSQL blueprint query summary |
 
 ## Not Done Yet
 
 
 - `/api/players/:id/set-currency`
+- player progression/events/stats/history deep schema mapping
 - `/api/maps/update`
 - `/api/sietches/update`
 - `/api/deepdesert/update`

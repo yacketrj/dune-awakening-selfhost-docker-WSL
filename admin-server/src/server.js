@@ -6,12 +6,15 @@ import { createAuth, setSessionCookie, clearSessionCookie, json } from "./auth.j
 import { TaskManager, publicTask } from "./tasks.js";
 import { preflight } from "./preflight.js";
 import { buildDuneArgs, isDynamicServerService, isReadOnlySql, runDockerLogs, runDune, validateServiceName } from "./runner.js";
+import { createDb } from "./db.js";
+import * as duneDb from "./duneDb.js";
 import { audit } from "./audit.js";
 import { redact } from "./redact.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
 const tasks = new TaskManager(config);
+const db = createDb(config);
 
 const mime = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -104,18 +107,50 @@ async function handleApi(req, res) {
     const backup = decodeURIComponent(path.split("/").pop());
     return task(req, res, "backup", "backupDelete", { backup });
   }
-  if (path === "/api/database/tables") return commandJson(res, "databaseTables", { schema: url.searchParams.get("schema") || "dune" });
-  if (path.startsWith("/api/database/table/")) return commandJson(res, "databasePreview", { table: decodeURIComponent(path.split("/").pop()), limit: url.searchParams.get("limit") || 50 });
+  if (path === "/api/database/status") return dbJson(res, () => duneDb.dbStatus(db));
+  if (path === "/api/database/schemas") return dbJson(res, () => duneDb.listSchemas(db));
+  if (path === "/api/database/tables") return dbJson(res, () => duneDb.listTables(db, url.searchParams.get("schema") || "dune"));
+  if (path.match(/^\/api\/database\/tables\/[^/]+\/[^/]+\/columns$/)) return databaseTableRoute(req, res, path, "columns", url);
+  if (path.match(/^\/api\/database\/tables\/[^/]+\/[^/]+\/preview$/)) return databaseTableRoute(req, res, path, "preview", url);
+  if (path.match(/^\/api\/database\/tables\/[^/]+\/[^/]+\/count$/)) return databaseTableRoute(req, res, path, "count", url);
+  if (path === "/api/database/search") return dbJson(res, () => duneDb.searchDatabase(db, url.searchParams.get("q") || url.searchParams.get("term") || ""));
+  if (path.startsWith("/api/database/table/")) return dbJson(res, () => {
+    const [schema, table] = decodeURIComponent(path.split("/").pop()).split(".");
+    return duneDb.tablePreview(db, schema, table, url.searchParams.get("limit") || 50, url.searchParams.get("offset") || 0);
+  });
   if (path === "/api/database/query" && req.method === "POST") return databaseQuery(req, res);
   if (path === "/api/database/export" && req.method === "POST") return databaseExport(req, res);
 
-  if (path === "/api/players") return commandJson(res, "players");
+  if (path === "/api/players") return dbJson(res, () => duneDb.listPlayers(db, { q: url.searchParams.get("q") || "" }));
+  if (path === "/api/players/online") return dbJson(res, () => duneDb.listPlayers(db, { online: true }));
+  if (path === "/api/players/search") return dbJson(res, () => duneDb.listPlayers(db, { q: url.searchParams.get("q") || "" }));
   if (path === "/api/admin/history") return commandJson(res, "adminHistory");
   if (path.match(/^\/api\/players\/[^/]+\/give-item$/) && req.method === "POST") return playerTask(req, res, path, "adminGiveItem");
   if (path.match(/^\/api\/players\/[^/]+\/add-xp$/) && req.method === "POST") return playerTask(req, res, path, "adminAddXp");
   if (path.match(/^\/api\/players\/[^/]+\/refill-water$/) && req.method === "POST") return playerTask(req, res, path, "adminRefillWater");
   if (path.match(/^\/api\/players\/[^/]+\/kick$/) && req.method === "POST") return playerTask(req, res, path, "adminKick");
   if (path.match(/^\/api\/players\/[^/]+\/teleport$/) && req.method === "POST") return playerTask(req, res, path, "adminTeleport");
+  if (path.match(/^\/api\/players\/[^/]+\/inventory$/)) return dbPlayerRoute(res, path, duneDb.playerInventory);
+  if (path.match(/^\/api\/players\/[^/]+\/currency$/)) return dbPlayerRoute(res, path, duneDb.playerCurrency);
+  if (path.match(/^\/api\/players\/[^/]+\/factions$/)) return dbPlayerRoute(res, path, duneDb.playerFactions);
+  if (path.match(/^\/api\/players\/[^/]+\/specs$/)) return dbPlayerRoute(res, path, duneDb.playerSpecs);
+  if (path.match(/^\/api\/players\/[^/]+\/position$/)) return dbPlayerRoute(res, path, duneDb.playerPosition);
+  if (path.match(/^\/api\/players\/[^/]+\/progression$/)) return dbPlayerUnsupported(res, path, "progression");
+  if (path.match(/^\/api\/players\/[^/]+\/events$/)) return dbPlayerUnsupported(res, path, "events");
+  if (path.match(/^\/api\/players\/[^/]+\/stats$/)) return dbPlayerUnsupported(res, path, "stats");
+  if (path.match(/^\/api\/players\/[^/]+\/history$/)) return dbPlayerUnsupported(res, path, "history");
+  if (path.match(/^\/api\/players\/[^/]+$/)) return dbPlayerRoute(res, path, duneDb.playerProfile);
+
+  if (path === "/api/storage") return dbJson(res, () => duneDb.listStorage(db));
+  if (path.match(/^\/api\/storage\/[^/]+$/)) return dbJson(res, async () => ({ storage: (await duneDb.listStorage(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
+  if (path.match(/^\/api\/storage\/[^/]+\/items$/)) return dbJson(res, () => duneDb.storageItems(db, decodeURIComponent(path.split("/")[3])));
+  if (path.match(/^\/api\/storage\/[^/]+\/export$/)) return exportJson(res, `storage-${decodeURIComponent(path.split("/")[3])}.json`, () => duneDb.storageItems(db, decodeURIComponent(path.split("/")[3])));
+  if (path === "/api/bases") return dbJson(res, () => duneDb.listBases(db));
+  if (path.match(/^\/api\/bases\/[^/]+$/)) return dbJson(res, async () => ({ base: (await duneDb.listBases(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
+  if (path.match(/^\/api\/bases\/[^/]+\/export$/)) return exportJson(res, `base-${decodeURIComponent(path.split("/")[3])}.json`, async () => ({ base: (await duneDb.listBases(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
+  if (path === "/api/blueprints") return dbJson(res, () => duneDb.listBlueprints(db));
+  if (path.match(/^\/api\/blueprints\/[^/]+$/)) return dbJson(res, async () => ({ blueprint: (await duneDb.listBlueprints(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
+  if (path.match(/^\/api\/blueprints\/[^/]+\/export$/)) return exportJson(res, `blueprint-${decodeURIComponent(path.split("/")[3])}.json`, async () => ({ blueprint: (await duneDb.listBlueprints(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
 
   if (path === "/api/maps") return commandJson(res, "mapsList");
   if (path === "/api/sietches") return commandJson(res, "sietchesList");
@@ -183,12 +218,59 @@ async function databaseQuery(req, res) {
   if (!config.mockMode && !readOnly) {
     await runDune(config, buildDuneArgs("backupCreate"));
   }
-  return commandJson(res, "databaseQuery", { query, allowDestructive });
+  audit(config, req, "database.query", { readOnly, destructive: !readOnly });
+  return dbJson(res, () => duneDb.runSql(db, query, allowDestructive));
 }
 
 async function databaseExport(req, res) {
   const body = await readJson(req);
-  return commandJson(res, "databaseExport", { query: body.query });
+  audit(config, req, "database.export", {});
+  const content = await duneDb.exportRows(db, body.query);
+  res.writeHead(200, {
+    "content-type": "application/json; charset=utf-8",
+    "content-disposition": "attachment; filename=\"query-export.json\""
+  });
+  res.end(content);
+}
+
+async function dbJson(res, fn) {
+  try {
+    return json(res, 200, await fn());
+  } catch (error) {
+    return json(res, 500, { error: redact(error.message || error) });
+  }
+}
+
+async function exportJson(res, filename, fn) {
+  try {
+    const data = await fn();
+    res.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename.replace(/[^A-Za-z0-9._-]/g, "_")}"`
+    });
+    res.end(JSON.stringify(data, null, 2));
+  } catch (error) {
+    json(res, 500, { error: redact(error.message || error) });
+  }
+}
+
+function databaseTableRoute(req, res, path, action, url) {
+  const parts = path.split("/");
+  const schema = decodeURIComponent(parts[4]);
+  const table = decodeURIComponent(parts[5]);
+  if (action === "columns") return dbJson(res, () => duneDb.tableColumns(db, schema, table));
+  if (action === "count") return dbJson(res, () => duneDb.tableCount(db, schema, table));
+  return dbJson(res, () => duneDb.tablePreview(db, schema, table, url.searchParams.get("limit") || 50, url.searchParams.get("offset") || 0));
+}
+
+function dbPlayerRoute(res, path, fn) {
+  const id = decodeURIComponent(path.split("/")[3]);
+  return dbJson(res, () => fn(db, id));
+}
+
+function dbPlayerUnsupported(res, path, feature) {
+  const id = decodeURIComponent(path.split("/")[3]);
+  return dbJson(res, () => duneDb.unsupportedPlayerFeature(db, id, feature));
 }
 
 async function task(req, res, type, operation, payload) {

@@ -7,7 +7,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, rgba(170, 111, 45, .18), transparent 38%), #0d0f12; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, .button-link {
   border: 1px solid #4d4032;
   background: #25201b;
@@ -24,7 +24,7 @@ button:hover, .button-link:hover { border-color: #c68b4a; }
 button.active { background: #9b5f2a; border-color: #d49a5c; }
 button.danger { border-color: #8d3434; color: #ffc9c9; }
 button:disabled { opacity: .45; cursor: not-allowed; }
-input, select {
+input, select, textarea {
   width: 100%;
   border: 1px solid #4d4032;
   background: #151719;
@@ -32,6 +32,7 @@ input, select {
   padding: 10px 12px;
   border-radius: 6px;
 }
+textarea { resize: vertical; min-height: 120px; }
 label { display: grid; gap: 6px; color: #ceb894; }
 code { color: #ffd08a; }
 
@@ -85,6 +86,12 @@ main { padding: 22px; min-width: 0; }
 .gauge { display: grid; gap: 4px; background: #171a1d; border: 1px solid #302b25; border-radius: 8px; padding: 12px; }
 .service-table { display: grid; gap: 10px; margin-top: 14px; }
 .service-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.table-wrap { overflow: auto; border: 1px solid #302b25; border-radius: 8px; margin: 12px 0; }
+table { width: 100%; border-collapse: collapse; min-width: 720px; }
+th, td { border-bottom: 1px solid #302b25; padding: 9px 10px; text-align: left; vertical-align: top; max-width: 320px; overflow-wrap: anywhere; }
+th { color: #ffd08a; background: #171a1d; position: sticky; top: 0; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: rgba(198, 139, 74, .12); }
 
 @media (max-width: 900px) {
   .app-shell, .wizard { grid-template-columns: 1fr; }

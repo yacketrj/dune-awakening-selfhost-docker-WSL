@@ -35,7 +35,8 @@ Current verification:
 
 - `npm test` in `admin-server/` passes.
 - `npm run build` in `web/` passes.
-- Backend tests currently cover signed sessions, CSRF rejection/acceptance, service validation, command allowlist, lifecycle/status/doctor mappings, logs command validation, noninteractive update flags, backup restore/delete name validation, item validation, teleport argument validation, SQL read-only/destructive detection, task creation/completion, and secret redaction.
+- Backend tests currently cover signed sessions, CSRF rejection/acceptance, service validation, command allowlist, lifecycle/status/doctor mappings, logs command validation, noninteractive update flags, backup restore/delete name validation, item validation, teleport argument validation, SQL read-only/destructive detection, direct DB config discovery, identifier validation, table preview query building, player search parameterization, task creation/completion, and secret redaction.
+- Phase 3 live read-only DB smoke check connected to `127.0.0.1:15432` as `dune`, detected 179 Dune tables, listed 1 player, and verified storage/base/blueprint list queries plus actor `82` inventory/currency/faction/spec reads. No writes were run.
 - `docker compose -f docker-compose.web.yml config` passed previously.
 - HTTP bind smoke test could not run inside the sandbox because binding returned `EPERM`.
 

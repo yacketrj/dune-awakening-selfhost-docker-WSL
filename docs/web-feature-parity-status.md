@@ -8,6 +8,7 @@ This file is the working status ledger for the RedBlink web admin interface. A f
 |---|---|---|
 | Phase 1 foundation | Partial | Auth/session/CSRF/task/audit/safe-runner basics exist; several placeholder routes were removed or replaced with real validated operations; broader parity coverage and tests are still incomplete. |
 | Phase 2 server operations | Done | Server status/readiness/ports/services/doctor, lifecycle tasks, service restart, logs, backup list/create/restore/delete, and update tasks are wired to real RedBlink commands with frontend controls and task streaming. |
+| Phase 3 direct DB features | Partial | Direct Postgres access, database browser, player list/profile/inventory/currency/factions/specs/position capability, storage, bases, and blueprints are wired. Progression/events/stats/history and full blueprint/base export/import remain schema-dependent. |
 
 ## Feature Group Status
 
@@ -15,13 +16,9 @@ This file is the working status ledger for the RedBlink web admin interface. A f
 |---|---|---|---|
 | Server lifecycle / Server Control | Partial | Phase 2 server status/readiness/ports/services/doctor/start/stop/restart/restart-service are done through real RedBlink commands; broader parity items such as backup upload/download and scheduled restart controls remain. | Runner lifecycle mapping tests pass; frontend build passes. |
 | Server settings | Not Implemented | No full editor for `.env`, UserGame/UserEngine, sietch, memory, and restart impact metadata. | Needs tests. |
-| Players / profiles | Partial | CLI-backed player list exists; inventory, profile modules, history, vehicles, events, dungeons, stats require DB/RMQ port. | Needs tests. |
-| Database | Partial | Tables/preview wrappers exist; SQL/export now call real `dune database` commands, and destructive SQL requires confirmation plus backup; full browser/search/parity UI is still incomplete. | Runner SQL safety tests pass; more endpoint/UI tests needed. |
+| Players / profiles | Partial | Direct DB player list, online list, search, profile, inventory, currency, factions, specs, and position capability are wired. Progression/events/stats/history return explicit unsupported capability responses until the exact RedBlink schema mapping is completed. | DB query-builder tests, live read-only DB smoke check, and frontend build pass. |
 | Logs | Partial | Phase 2 service logs are wired through `/api/logs/services`, `/api/logs/:service`, `/stream`, and `/download`; known services use `dune logs`, safely discovered dynamic `dune-server-*` containers use validated Docker logs. Cheat/admin logs remain for later parity work. | Runner log validation tests pass; frontend build passes. |
 | Live map | Not Implemented | No marker/player/base query adapter or map UI parity yet. | Needs tests. |
-| Storage | Not Implemented | No storage DB logic or UI yet. | Needs tests. |
-| Blueprints | Not Implemented | No blueprint import/export logic or UI yet. | Needs tests. |
-| Bases | Not Implemented | No base query/export logic or UI yet. | Needs tests. |
 | Market | Not Implemented | No market DB query layer or UI yet. | Needs tests. |
 | Starter Kit | Not Implemented | No welcome package/starter kit backend or UI yet. | Needs tests. |
 | Notifications / broadcast / chat | Not Implemented | Broadcast, shutdown broadcast, whisper, and generic notify routes are not wired for RedBlink RMQ yet. | Needs tests. |
