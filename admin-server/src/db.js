@@ -36,9 +36,29 @@ export function createDb(config) {
     }
   }
 
+  async function transaction(fn) {
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const tx = {
+        config: publicDbConfig(dbConfig),
+        query: (text, values = []) => client.query(text, values)
+      };
+      const result = await fn(tx);
+      await client.query("commit");
+      return result;
+    } catch (error) {
+      try { await client.query("rollback"); } catch {}
+      throw new Error(redactDbError(error));
+    } finally {
+      client.release();
+    }
+  }
+
   return {
     config: publicDbConfig(dbConfig),
     query,
+    transaction,
     close: () => pool.end()
   };
 }

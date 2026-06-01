@@ -1,0 +1,102 @@
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { redact } from "./redact.js";
+
+const BUILTIN_COMMAND_AUTH_TOKEN = "Nu6VmPWUMvdPMeB7qErr";
+const RMQ_CONTAINER = "dune-rmq-game";
+
+export function validateBroadcastMessage(message) {
+  const raw = String(message || "").trim();
+  if (raw.length < 1 || raw.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(raw)) {
+    throw new Error("Message must be 1-500 printable characters");
+  }
+  return raw;
+}
+
+export function buildBroadcastCommand({ message, title = "Admin Broadcast", durationSec = 30 }) {
+  const body = validateBroadcastMessage(message);
+  const duration = validateInteger(durationSec, 1, 3600, "durationSec");
+  return {
+    ServerCommand: "ServiceBroadcast",
+    BroadcastType: "Generic",
+    BroadcastPayload: {
+      BroadcastDuration: duration,
+      LocalizedText: [{ Key: "AdminBroadcast", Title: String(title || "Admin Broadcast").slice(0, 80), Body: body }]
+    }
+  };
+}
+
+export function buildShutdownBroadcastCommand({ shutdownType = "Restart", delayMinutes = 15, frequency = 60, duration = 30, cancel = false }) {
+  const type = validateShutdownType(shutdownType);
+  const delay = validateInteger(delayMinutes, 0, 1440, "delayMinutes");
+  const freq = validateInteger(frequency, 1, 3600, "frequency");
+  const dur = validateInteger(duration, 1, 3600, "duration");
+  const timestamp = Math.floor(Date.now() / 1000) + delay * 60;
+  return {
+    ServerCommand: "ServiceBroadcast",
+    BroadcastType: "ServerShutdown",
+    BroadcastPayload: {
+      ShutdownType: type,
+      ShouldCancel: Boolean(cancel),
+      ShutdownTimestamp: timestamp,
+      BroadcastFrequency: freq,
+      ShutdownDuration: dur,
+      DateTimestamp: timestamp
+    }
+  };
+}
+
+export async function publishServerCommand(config, fields, label = "web-admin") {
+  const inner = JSON.stringify(fields);
+  const outer = JSON.stringify({
+    Version: 2,
+    AuthToken: commandAuthToken(config.repoRoot),
+    MessageContent: inner
+  });
+  const outerB64 = Buffer.from(outer, "utf8").toString("base64");
+  const evalCode = `Outer = base64:decode(<<"${outerB64}">>), XName = rabbit_misc:r(<<"/">>, exchange, <<"heartbeats">>), X = rabbit_exchange:lookup_or_die(XName), MsgId = list_to_binary("web-${label}-" ++ integer_to_list(erlang:system_time(millisecond))), P = {list_to_atom("P_basic"), <<"Content">>, undefined, [], undefined, undefined, undefined, undefined, undefined, MsgId, undefined, undefined, <<"fls">>, <<"fls_backend">>, undefined}, Content = rabbit_basic:build_content(P, Outer), {ok, Msg} = rabbit_basic:message(XName, <<"notifications">>, Content), Result = rabbit_queue_type:publish_at_most_once(X, Msg), io:format("publish=~p exchange=heartbeats routing=notifications app_id=fls_backend user_id=fls label=${label}~n", [Result]).`;
+  const output = await dockerExec(["exec", RMQ_CONTAINER, "rabbitmqctl", "eval", evalCode], config.commandTimeoutMs);
+  if (!/publish=ok/.test(output.stdout)) throw new Error("RabbitMQ publish did not report publish=ok");
+  return output;
+}
+
+function commandAuthToken(repoRoot) {
+  const file = resolve(repoRoot, "runtime/secrets/command-auth-token.txt");
+  if (process.env.DUNE_COMMAND_AUTH_TOKEN) return process.env.DUNE_COMMAND_AUTH_TOKEN;
+  if (existsSync(file)) {
+    const raw = readFileSync(file, "utf8").trim();
+    if (raw) return raw;
+  }
+  return BUILTIN_COMMAND_AUTH_TOKEN;
+}
+
+function dockerExec(args, timeoutMs = 30000) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn("docker", args, { shell: false, env: { ...process.env } });
+    const timeout = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += redact(chunk.toString()); });
+    child.stderr.on("data", (chunk) => { stderr += redact(chunk.toString()); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      const result = { code, stdout, stderr, args: ["docker", ...args] };
+      if (code === 0) resolvePromise(result);
+      else reject(Object.assign(new Error(`docker ${args.slice(0, 3).join(" ")} failed with exit ${code}: ${stderr || stdout}`), result));
+    });
+  });
+}
+
+function validateInteger(value, min, max, label) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${label} must be an integer ${min}-${max}`);
+  return n;
+}
+
+function validateShutdownType(value) {
+  const raw = String(value || "").trim();
+  if (["Restart", "Maintenance", "Update"].includes(raw)) return raw;
+  throw new Error("shutdownType must be Restart, Maintenance, or Update");
+}

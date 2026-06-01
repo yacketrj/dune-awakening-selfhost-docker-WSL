@@ -15,7 +15,8 @@ export const playersApi = {
   stats: (playerId: string) => api<Record<string, unknown>>(`/api/players/${encodeURIComponent(playerId)}/stats`),
   history: (playerId: string) => api<Record<string, unknown>>(`/api/players/${encodeURIComponent(playerId)}/history`),
   giveItem: (playerId: string, body: { itemName: string; quantity: number; durability: number }) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/give-item`, body),
-  giveItems: (playerId: string, template = "scout-ornithopter-mk6") => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/give-items`, { template }),
+  giveItems: (playerId: string, items: { itemName?: string; itemId?: string; quantity: number; durability?: number }[]) => post<{ ok: boolean; results: Record<string, unknown>[] }>(`/api/players/${encodeURIComponent(playerId)}/give-items`, { items }),
+  giveTemplate: (playerId: string, template = "scout-ornithopter-mk6") => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/give-items`, { template }),
   giveItemId: (playerId: string, body: { itemId: string; quantity: number; durability: number }) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/give-item-id`, body),
   addXp: (playerId: string, amount: number) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/add-xp`, { amount }),
   setSkillPoints: (playerId: string, points: number) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/set-skill-points`, { points }),
@@ -26,9 +27,9 @@ export const playersApi = {
   spawnVehicle: (playerId: string, body: { vehicleId: string; template: string; offset: number }) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/spawn-vehicle`, body),
   cleanInventory: (playerId: string, confirmation: string) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/clean-inventory`, { confirmation }),
   resetProgression: (playerId: string, confirmation: string) => post<{ task: Task }>(`/api/players/${encodeURIComponent(playerId)}/reset-progression`, { confirmation }),
-  addCurrency: (playerId: string, body: { currencyId: number; amount: number }) => post<{ supported: false; reason: string }>(`/api/players/${encodeURIComponent(playerId)}/add-currency`, body),
-  addFactionReputation: (playerId: string, body: { factionId: number; amount: number }) => post<{ supported: false; reason: string }>(`/api/players/${encodeURIComponent(playerId)}/add-faction-reputation`, body),
-  repairGear: (playerId: string) => post<{ supported: false; reason: string }>(`/api/players/${encodeURIComponent(playerId)}/repair-gear`),
-  refuelVehicle: (playerId: string) => post<{ supported: false; reason: string }>(`/api/players/${encodeURIComponent(playerId)}/refuel-vehicle`),
-  deleteInventoryItem: (playerId: string, itemId: string, confirmation: string) => api<{ supported: false; reason: string }>(`/api/players/${encodeURIComponent(playerId)}/inventory/${encodeURIComponent(itemId)}`, { method: "DELETE", body: JSON.stringify({ confirmation }) })
+  addCurrency: (playerId: string, body: { currencyId: number; amount: number; confirmation: string }) => post<{ supported: boolean; result?: Record<string, unknown>; reason?: string }>(`/api/players/${encodeURIComponent(playerId)}/add-currency`, body),
+  addFactionReputation: (playerId: string, body: { factionId: number; amount: number; confirmation: string }) => post<{ supported: boolean; result?: Record<string, unknown>; reason?: string }>(`/api/players/${encodeURIComponent(playerId)}/add-faction-reputation`, body),
+  repairGear: (playerId: string, confirmation: string) => post<{ supported: boolean; result?: Record<string, unknown>; reason?: string }>(`/api/players/${encodeURIComponent(playerId)}/repair-gear`, { confirmation }),
+  refuelVehicle: (playerId: string, body: { vehicleId: string; confirmation: string }) => post<{ supported: boolean; result?: Record<string, unknown>; reason?: string }>(`/api/players/${encodeURIComponent(playerId)}/refuel-vehicle`, body),
+  deleteInventoryItem: (playerId: string, itemId: string, confirmation: string) => api<{ supported: boolean; result?: Record<string, unknown>; reason?: string }>(`/api/players/${encodeURIComponent(playerId)}/inventory/${encodeURIComponent(itemId)}`, { method: "DELETE", body: JSON.stringify({ confirmation }) })
 };

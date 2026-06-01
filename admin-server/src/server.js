@@ -10,6 +10,8 @@ import { createDb } from "./db.js";
 import * as duneDb from "./duneDb.js";
 import { audit } from "./audit.js";
 import { redact } from "./redact.js";
+import { resolveCatalogItem } from "./adminCatalog.js";
+import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishServerCommand } from "./rmq.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
@@ -129,11 +131,11 @@ async function handleApi(req, res) {
   if (path === "/api/admin/vehicles") return commandJson(res, url.searchParams.get("q") ? "adminVehicleSearch" : "adminVehicleList", { q: url.searchParams.get("q") || "" });
   if (path === "/api/admin/skill-modules") return commandJson(res, url.searchParams.get("q") ? "adminSkillModulesSearch" : "adminSkillModules", { q: url.searchParams.get("q") || "" });
   if (path === "/api/admin/history") return commandJson(res, "adminHistory");
-  if (path === "/api/admin/broadcast" && req.method === "POST") return unsupportedMutation(req, res, "admin.broadcast", "Broadcast is blocked until the RedBlink RabbitMQ ServiceBroadcast wire path is implemented or exposed by the CLI.");
-  if (path === "/api/admin/broadcast-shutdown" && req.method === "POST") return unsupportedMutation(req, res, "admin.broadcast-shutdown", "Shutdown broadcast is blocked until the RedBlink RabbitMQ ServiceBroadcast wire path is implemented or exposed by the CLI.", "SHUTDOWN BROADCAST");
-  if (path === "/api/admin/whisper" && req.method === "POST") return unsupportedMutation(req, res, "admin.whisper", "Whisper is blocked until the GM chat persona and courier RabbitMQ publish path are ported and verified.");
+  if (path === "/api/admin/broadcast" && req.method === "POST") return broadcastRoute(req, res);
+  if (path === "/api/admin/broadcast-shutdown" && req.method === "POST") return shutdownBroadcastRoute(req, res);
+  if (path === "/api/admin/whisper" && req.method === "POST") return unsupportedMutation(req, res, "admin.whisper", "Whisper remains blocked: arrakis-admin publishes to chat.whispers with a GM courier persona and recipient Funcom ID, but RedBlink does not currently seed or verify that GM chat identity in the self-host stack.");
   if (path.match(/^\/api\/players\/[^/]+\/give-item$/) && req.method === "POST") return playerTask(req, res, path, "adminGiveItem");
-  if (path.match(/^\/api\/players\/[^/]+\/give-items$/) && req.method === "POST") return playerTask(req, res, path, "adminGiveItems");
+  if (path.match(/^\/api\/players\/[^/]+\/give-items$/) && req.method === "POST") return giveItemsRoute(req, res, path);
   if (path.match(/^\/api\/players\/[^/]+\/give-item-id$/) && req.method === "POST") return playerTask(req, res, path, "adminGiveItemId");
   if (path.match(/^\/api\/players\/[^/]+\/add-xp$/) && req.method === "POST") return playerTask(req, res, path, "adminAddXp");
   if (path.match(/^\/api\/players\/[^/]+\/set-skill-points$/) && req.method === "POST") return playerTask(req, res, path, "adminSetSkillPoints");
@@ -145,11 +147,11 @@ async function handleApi(req, res) {
   if (path.match(/^\/api\/players\/[^/]+\/spawn-vehicle$/) && req.method === "POST") return playerTask(req, res, path, "adminSpawnVehicle");
   if (path.match(/^\/api\/players\/[^/]+\/clean-inventory$/) && req.method === "POST") return playerTask(req, res, path, "adminCleanInventory", "CLEAN INVENTORY");
   if (path.match(/^\/api\/players\/[^/]+\/reset-progression$/) && req.method === "POST") return playerTask(req, res, path, "adminResetProgression", "RESET PROGRESSION");
-  if (path.match(/^\/api\/players\/[^/]+\/add-currency$/) && req.method === "POST") return unsupportedMutation(req, res, "players.add-currency", "Currency mutation is blocked until the RedBlink schema functions for Solaris/currency writes are verified with backup-before-write.");
-  if (path.match(/^\/api\/players\/[^/]+\/add-faction-reputation$/) && req.method === "POST") return unsupportedMutation(req, res, "players.add-faction-reputation", "Faction reputation mutation is blocked until set_player_faction_reputation/change_player_faction compatibility is verified for this schema.");
-  if (path.match(/^\/api\/players\/[^/]+\/repair-gear$/) && req.method === "POST") return unsupportedMutation(req, res, "players.repair-gear", "Repair gear is blocked until the item stats JSON update path is ported with backup-before-write.");
-  if (path.match(/^\/api\/players\/[^/]+\/refuel-vehicle$/) && req.method === "POST") return unsupportedMutation(req, res, "players.refuel-vehicle", "Refuel vehicle is blocked until vehicle ownership and fuel stat mappings are verified.");
-  if (path.match(/^\/api\/players\/[^/]+\/inventory\/[^/]+$/) && req.method === "DELETE") return unsupportedMutation(req, res, "players.inventory-delete", "Inventory delete is blocked until dune.delete_item availability and ownership checks are verified with backup-before-write.", "DELETE INVENTORY ITEM");
+  if (path.match(/^\/api\/players\/[^/]+\/add-currency$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.add-currency", "ADD CURRENCY", (playerId, body) => duneDb.addCurrency(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/add-faction-reputation$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.add-faction-reputation", "ADD FACTION REPUTATION", (playerId, body) => duneDb.addFactionReputation(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/repair-gear$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.repair-gear", "REPAIR GEAR", (playerId) => duneDb.repairGear(db, playerId));
+  if (path.match(/^\/api\/players\/[^/]+\/refuel-vehicle$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.refuel-vehicle", "REFUEL VEHICLE", (playerId, body) => duneDb.refuelVehicle(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/inventory\/[^/]+$/) && req.method === "DELETE") return inventoryDeleteRoute(req, res, path);
   if (path.match(/^\/api\/players\/[^/]+\/inventory$/)) return dbPlayerRoute(res, path, duneDb.playerInventory);
   if (path.match(/^\/api\/players\/[^/]+\/currency$/)) return dbPlayerRoute(res, path, duneDb.playerCurrency);
   if (path.match(/^\/api\/players\/[^/]+\/factions$/)) return dbPlayerRoute(res, path, duneDb.playerFactions);
@@ -164,7 +166,7 @@ async function handleApi(req, res) {
   if (path === "/api/storage") return dbJson(res, () => duneDb.listStorage(db));
   if (path.match(/^\/api\/storage\/[^/]+$/)) return dbJson(res, async () => ({ storage: (await duneDb.listStorage(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
   if (path.match(/^\/api\/storage\/[^/]+\/items$/)) return dbJson(res, () => duneDb.storageItems(db, decodeURIComponent(path.split("/")[3])));
-  if (path.match(/^\/api\/storage\/[^/]+\/give-item$/) && req.method === "POST") return unsupportedMutation(req, res, "storage.give-item", "Storage give-item is blocked until direct DB insert logic is ported with item template validation, slot selection, and backup-before-write.", "GIVE ITEM TO STORAGE");
+  if (path.match(/^\/api\/storage\/[^/]+\/give-item$/) && req.method === "POST") return storageGiveItemRoute(req, res, path);
   if (path.match(/^\/api\/storage\/[^/]+\/export$/)) return exportJson(res, `storage-${decodeURIComponent(path.split("/")[3])}.json`, () => duneDb.storageItems(db, decodeURIComponent(path.split("/")[3])));
   if (path === "/api/bases") return dbJson(res, () => duneDb.listBases(db));
   if (path.match(/^\/api\/bases\/[^/]+$/)) return dbJson(res, async () => ({ base: (await duneDb.listBases(db)).rows.find((row) => String(row.id) === decodeURIComponent(path.split("/")[3])) || null }));
@@ -328,6 +330,112 @@ async function unsupportedMutation(req, res, action, reason, phrase = "") {
   }
   audit(config, req, action, { supported: false, reason });
   return json(res, 501, { supported: false, reason, error: reason });
+}
+
+async function playerDbMutation(req, res, path, action, phrase, fn) {
+  const playerId = decodeURIComponent(path.split("/")[3]);
+  return directDbMutation(req, res, action, phrase, (body) => fn(playerId, body), { playerId });
+}
+
+async function inventoryDeleteRoute(req, res, path) {
+  const parts = path.split("/");
+  const playerId = decodeURIComponent(parts[3]);
+  const itemId = decodeURIComponent(parts[5]);
+  return directDbMutation(req, res, "players.inventory-delete", "DELETE ITEM", () => duneDb.deleteInventoryItem(db, playerId, itemId), { playerId, itemId });
+}
+
+async function storageGiveItemRoute(req, res, path) {
+  const storageId = decodeURIComponent(path.split("/")[3]);
+  return directDbMutation(req, res, "storage.give-item", "GIVE ITEM TO STORAGE", async (body) => {
+    const resolved = resolveCatalogItem(config.repoRoot, body);
+    return duneDb.giveItemToStorage(db, storageId, { ...body, templateId: resolved.itemId });
+  }, { storageId });
+}
+
+async function directDbMutation(req, res, action, phrase, fn, meta = {}) {
+  const body = await readJson(req);
+  if (phrase && body.confirmation !== phrase) {
+    return json(res, 400, { error: `Confirmation phrase required: ${phrase}` });
+  }
+  try {
+    let backup = null;
+    if (!config.mockMode) {
+      const backupResult = await runDune(config, buildDuneArgs("backupCreate"));
+      backup = { exitCode: backupResult.code, stdout: backupResult.stdout };
+    }
+    const result = config.mockMode ? { ok: true, mock: true } : await fn(body);
+    audit(config, req, action, { ...meta, supported: true, backup, result });
+    return json(res, 200, { supported: true, backupCreated: !config.mockMode, result });
+  } catch (error) {
+    const status = error.unsupported ? 501 : 400;
+    audit(config, req, action, { ...meta, supported: false, error: redact(error.message || error) });
+    return json(res, status, { supported: false, error: redact(error.message || error), reason: redact(error.message || error), details: error.details || undefined });
+  }
+}
+
+async function giveItemsRoute(req, res, path) {
+  const body = await readJson(req);
+  const playerId = decodeURIComponent(path.split("/")[3]);
+  if (!Array.isArray(body.items)) {
+    return task(req, res, "admin", "adminGiveItems", { ...body, playerId });
+  }
+  if (body.items.length < 1 || body.items.length > 25) return json(res, 400, { error: "Give Multiple Items requires 1-25 items" });
+
+  const results = [];
+  for (const [index, item] of body.items.entries()) {
+    try {
+      const resolved = item.itemId ? { itemId: item.itemId } : resolveCatalogItem(config.repoRoot, item);
+      const operation = resolved.itemId ? "adminGiveItemId" : "adminGiveItem";
+      const payload = {
+        playerId,
+        itemId: resolved.itemId,
+        itemName: item.itemName,
+        quantity: item.quantity ?? 1,
+        durability: item.durability ?? 1
+      };
+      const command = buildDuneArgs(operation, payload);
+      if (config.mockMode) {
+        results.push({ index, ok: true, operation, command });
+      } else {
+        const result = await runDune(config, command);
+        results.push({ index, ok: true, operation, item: payload, stdout: result.stdout, stderr: result.stderr, exitCode: result.code });
+      }
+    } catch (error) {
+      results.push({ index, ok: false, item, error: redact(error.message || error) });
+    }
+  }
+  const ok = results.every((result) => result.ok);
+  audit(config, req, "players.give-items", { playerId, count: body.items.length, ok, results });
+  return json(res, ok ? 200 : 207, { ok, results });
+}
+
+async function broadcastRoute(req, res) {
+  const body = await readJson(req);
+  try {
+    const command = buildBroadcastCommand(body);
+    const result = config.mockMode ? { code: 0, stdout: "mock broadcast\n", stderr: "", args: [] } : await publishServerCommand(config, command, "web-broadcast");
+    audit(config, req, "admin.broadcast", { supported: true, command });
+    return json(res, 200, { supported: true, ok: true, stdout: result.stdout, stderr: result.stderr });
+  } catch (error) {
+    audit(config, req, "admin.broadcast", { supported: false, error: redact(error.message || error) });
+    return json(res, 400, { supported: false, error: redact(error.message || error), reason: redact(error.message || error) });
+  }
+}
+
+async function shutdownBroadcastRoute(req, res) {
+  const body = await readJson(req);
+  if (body.confirmation !== "SHUTDOWN BROADCAST") {
+    return json(res, 400, { error: "Confirmation phrase required: SHUTDOWN BROADCAST" });
+  }
+  try {
+    const command = buildShutdownBroadcastCommand(body);
+    const result = config.mockMode ? { code: 0, stdout: "mock shutdown broadcast\n", stderr: "", args: [] } : await publishServerCommand(config, command, "web-shutdown-broadcast");
+    audit(config, req, "admin.broadcast-shutdown", { supported: true, command });
+    return json(res, 200, { supported: true, ok: true, stdout: result.stdout, stderr: result.stderr });
+  } catch (error) {
+    audit(config, req, "admin.broadcast-shutdown", { supported: false, error: redact(error.message || error) });
+    return json(res, 400, { supported: false, error: redact(error.message || error), reason: redact(error.message || error) });
+  }
 }
 
 function taskRoute(req, res, path) {

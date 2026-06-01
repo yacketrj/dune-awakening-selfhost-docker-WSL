@@ -35,6 +35,8 @@ Direct Postgres features must:
 - support read-only mode
 - redact secrets and sensitive tokens from logs
 
+Phase 5A direct DB admin mutations follow the same pattern: the API first verifies the backend confirmation phrase, creates a RedBlink DB backup with `dune db backup`, then runs a parameterized transaction. Supported write paths are Solaris/currency via `dune.adjust_player_virtual_currency_balance`, faction reputation via `dune.set_player_faction_reputation`, inventory delete via `dune.delete_item`, storage item insert into verified `dune.items`/`dune.inventories`, gear durability JSON repair, and owned vehicle fuel JSON update. If required tables/functions/columns are not detected, the endpoint returns a clear unsupported capability response instead of attempting a write.
+
 ## RabbitMQ Safety
 
 RabbitMQ live commands must:
@@ -44,16 +46,19 @@ RabbitMQ live commands must:
 - audit every broadcast, whisper, kick, item grant, teleport, or live command
 - avoid exposing a generic message publisher to the browser
 
-Phase 4 web actions use the existing RedBlink `dune admin` CLI for RabbitMQ-backed live commands. The web API does not expose a generic RabbitMQ publisher. Broadcast, shutdown broadcast, and whisper currently return explicit unsupported capability responses because their RedBlink RabbitMQ wire path is not yet implemented in the local CLI.
 
 Destructive live actions require backend confirmation phrases in addition to frontend confirmation:
 
 - kick all online: `KICK ALL ONLINE PLAYERS`
 - clean inventory: `CLEAN INVENTORY`
 - reset progression: `RESET PROGRESSION`
-- inventory delete: `DELETE INVENTORY ITEM` before returning its current unsupported response
-- storage give item: `GIVE ITEM TO STORAGE` before returning its current unsupported response
-- shutdown broadcast: `SHUTDOWN BROADCAST` before returning its current unsupported response
+- add currency: `ADD CURRENCY`
+- add faction reputation: `ADD FACTION REPUTATION`
+- repair gear: `REPAIR GEAR`
+- refuel vehicle: `REFUEL VEHICLE`
+- inventory delete: `DELETE ITEM`
+- storage give item: `GIVE ITEM TO STORAGE`
+- shutdown broadcast: `SHUTDOWN BROADCAST`
 
 ## Docker Socket Risk
 

@@ -11,7 +11,7 @@ import { mapsApi } from "./api/maps";
 import { updatesApi } from "./api/updates";
 import { worldDataApi } from "./api/worldData";
 import { adminApi } from "./api/admin";
-import type { Task } from "./api/setup";
+import { setupApi, type Task } from "./api/setup";
 import { SetupWizard } from "./components/SetupWizard";
 import { TaskProgress } from "./components/TaskProgress";
 import { LogViewer } from "./components/LogViewer";
@@ -229,7 +229,7 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
         <label>XP Amount<input value={xp} onChange={(event) => setXp(event.target.value)} /></label>
         <button onClick={() => run(async () => window.confirm(`Add ${xp} XP to ${playerId}?`) && setTask((await playersApi.addXp(playerId, Number(xp))).task))}>Add XP</button>
         <button onClick={() => run(async () => window.confirm(`Refill water for ${playerId}?`) && setTask((await playersApi.refillWater(playerId)).task))}>Refill Water</button>
-        <button onClick={() => run(async () => window.confirm(`Give Scout Ornithopter Mk6 parts to ${playerId}?`) && setTask((await playersApi.giveItems(playerId)).task))}>Give Multiple Items</button>
+        <button onClick={() => run(async () => window.confirm(`Give Scout Ornithopter Mk6 parts to ${playerId}?`) && setTask((await playersApi.giveTemplate(playerId)).task))}>Give Multiple Items</button>
         <button className="danger" onClick={() => run(async () => window.confirm(`Kick ${playerId} from the server?`) && setTask((await playersApi.kick(playerId)).task))}>Kick Player</button>
       </div>
       <h3>Catalogs</h3>
@@ -296,6 +296,7 @@ function PlayerActions({ playerId, setTask, onError, onRefresh }: { playerId: st
   const [itemName, setItemName] = useState("");
   const [itemId, setItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
+  const [multiItems, setMultiItems] = useState("");
   const [xp, setXp] = useState("1000");
   const [points, setPoints] = useState("0");
   const [module, setModule] = useState("");
@@ -303,15 +304,32 @@ function PlayerActions({ playerId, setTask, onError, onRefresh }: { playerId: st
   const [coords, setCoords] = useState({ x: "", y: "", z: "", yaw: "0" });
   const [vehicleId, setVehicleId] = useState("");
   const [vehicleTemplate, setVehicleTemplate] = useState("");
+  const [currency, setCurrency] = useState({ currencyId: "0", amount: "1" });
+  const [faction, setFaction] = useState({ factionId: "1", amount: "1" });
+  const [refuelVehicleId, setRefuelVehicleId] = useState("");
   const [result, setResult] = useState("");
   async function run(action: () => Promise<unknown>) {
     onError("");
     setResult("");
-    try { await action(); onRefresh(); } catch (error) { const text = error instanceof Error ? error.message : String(error); setResult(text); onError(text); }
+    try { await action(); } catch (error) { const text = error instanceof Error ? error.message : String(error); setResult(text); onError(text); }
   }
-  async function unsupported(action: () => Promise<{ reason: string }>) {
+  async function runTask(action: () => Promise<{ task: Task }>) {
     const response = await action();
-    setResult(response.reason);
+    const final = await waitForTask(response.task, setTask);
+    if (final.status === "succeeded") onRefresh();
+    else throw new Error(final.errorMessage || final.progressMessage || `Task ${final.status}`);
+  }
+  async function runDirect(action: () => Promise<unknown>) {
+    const response = await action();
+    setResult(JSON.stringify(response, null, 2));
+    onRefresh();
+  }
+  function parsedMultiItems() {
+    return multiItems.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [nameOrId, qty = "1", durability = "1"] = line.split(",").map((part) => part.trim());
+      const item = /^[A-Za-z0-9_./:-]{16,}$/.test(nameOrId) ? { itemId: nameOrId } : { itemName: nameOrId };
+      return { ...item, quantity: Number(qty), durability: Number(durability) };
+    });
   }
   return <section className="action-panel">
     <h3>Player Actions</h3>
@@ -319,40 +337,58 @@ function PlayerActions({ playerId, setTask, onError, onRefresh }: { playerId: st
     <div className="actions-grid">
       <label>Item Name<input value={itemName} onChange={(event) => setItemName(event.target.value)} /></label>
       <label>Quantity<input value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Give ${quantity} x ${itemName} to player ${playerId}?`) && setTask((await playersApi.giveItem(playerId, { itemName, quantity: Number(quantity), durability: 1 })).task))}>Give Item</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${playerId}?`)) await runTask(() => playersApi.giveItem(playerId, { itemName, quantity: Number(quantity), durability: 1 })); })}>Give Item</button>
       <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Give raw item id ${itemId} to player ${playerId}?`) && setTask((await playersApi.giveItemId(playerId, { itemId, quantity: Number(quantity), durability: 1 })).task))}>Give Item by ID</button>
-      <button onClick={() => run(async () => window.confirm(`Give Scout Ornithopter Mk6 parts to player ${playerId}?`) && setTask((await playersApi.giveItems(playerId)).task))}>Give Multiple Items</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Give raw item id ${itemId} to player ${playerId}?`)) await runTask(() => playersApi.giveItemId(playerId, { itemId, quantity: Number(quantity), durability: 1 })); })}>Give Item by ID</button>
+      <textarea value={multiItems} onChange={(event) => setMultiItems(event.target.value)} placeholder="One item per line: name or raw id, quantity, durability" rows={4} />
+      <button onClick={() => run(async () => { const items = parsedMultiItems(); if (window.confirm(`Give ${items.length} item entries to player ${playerId}?`)) await runDirect(() => playersApi.giveItems(playerId, items)); })}>Give Multiple Items</button>
       <label>XP Amount<input value={xp} onChange={(event) => setXp(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Add ${xp} XP to player ${playerId}?`) && setTask((await playersApi.addXp(playerId, Number(xp))).task))}>Add XP</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Add ${xp} XP to player ${playerId}?`)) await runTask(() => playersApi.addXp(playerId, Number(xp))); })}>Add XP</button>
       <label>Skill Points<input value={points} onChange={(event) => setPoints(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Set player ${playerId} to ${points} unspent skill points?`) && setTask((await playersApi.setSkillPoints(playerId, Number(points))).task))}>Set Skill Points</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Set player ${playerId} to ${points} unspent skill points?`)) await runTask(() => playersApi.setSkillPoints(playerId, Number(points))); })}>Set Skill Points</button>
       <label>Skill Module<input value={module} onChange={(event) => setModule(event.target.value)} /></label>
       <label>Level<input value={level} onChange={(event) => setLevel(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Set ${module} to level ${level} for player ${playerId}?`) && setTask((await playersApi.setSkillModule(playerId, { module, level: Number(level) })).task))}>Set Skill Module</button>
-      <button onClick={() => run(async () => window.confirm(`Refill water for player ${playerId}?`) && setTask((await playersApi.refillWater(playerId)).task))}>Refill Water</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Set ${module} to level ${level} for player ${playerId}?`)) await runTask(() => playersApi.setSkillModule(playerId, { module, level: Number(level) })); })}>Set Skill Module</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Refill water for player ${playerId}?`)) await runTask(() => playersApi.refillWater(playerId)); })}>Refill Water</button>
       <label>X<input value={coords.x} onChange={(event) => setCoords({ ...coords, x: event.target.value })} /></label>
       <label>Y<input value={coords.y} onChange={(event) => setCoords({ ...coords, y: event.target.value })} /></label>
       <label>Z<input value={coords.z} onChange={(event) => setCoords({ ...coords, z: event.target.value })} /></label>
       <label>Yaw<input value={coords.yaw} onChange={(event) => setCoords({ ...coords, yaw: event.target.value })} /></label>
-      <button onClick={() => run(async () => window.confirm(`Teleport player ${playerId} to X=${coords.x} Y=${coords.y} Z=${coords.z}?`) && setTask((await playersApi.teleport(playerId, { x: Number(coords.x), y: Number(coords.y), z: Number(coords.z), yaw: Number(coords.yaw) })).task))}>Teleport</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Teleport player ${playerId} to X=${coords.x} Y=${coords.y} Z=${coords.z}?`)) await runTask(() => playersApi.teleport(playerId, { x: Number(coords.x), y: Number(coords.y), z: Number(coords.z), yaw: Number(coords.yaw) })); })}>Teleport</button>
       <label>Vehicle ID<input value={vehicleId} onChange={(event) => setVehicleId(event.target.value)} /></label>
       <label>Vehicle Template<input value={vehicleTemplate} onChange={(event) => setVehicleTemplate(event.target.value)} /></label>
-      <button onClick={() => run(async () => window.confirm(`Spawn ${vehicleId}/${vehicleTemplate} in front of player ${playerId}?`) && setTask((await playersApi.spawnVehicle(playerId, { vehicleId, template: vehicleTemplate, offset: 400 })).task))}>Spawn Vehicle</button>
-      <button className="danger" onClick={() => run(async () => window.confirm(`Kick player ${playerId}?`) && setTask((await playersApi.kick(playerId)).task))}>Kick Player</button>
-      <button className="danger" onClick={() => run(async () => window.confirm(`Clean inventory for player ${playerId}? This removes carried items.`) && setTask((await playersApi.cleanInventory(playerId, "CLEAN INVENTORY")).task))}>Clean Inventory</button>
-      <button className="danger" onClick={() => run(async () => window.confirm(`Reset progression for player ${playerId}?`) && setTask((await playersApi.resetProgression(playerId, "RESET PROGRESSION")).task))}>Reset Progression</button>
-      <button onClick={() => run(() => unsupported(() => playersApi.addCurrency(playerId, { currencyId: 0, amount: 1 })))}>Add Currency</button>
-      <button onClick={() => run(() => unsupported(() => playersApi.addFactionReputation(playerId, { factionId: 1, amount: 1 })))}>Add Faction Reputation</button>
-      <button onClick={() => run(() => unsupported(() => playersApi.repairGear(playerId)))}>Repair Gear</button>
-      <button onClick={() => run(() => unsupported(() => playersApi.refuelVehicle(playerId)))}>Refuel Vehicle</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Spawn ${vehicleId}/${vehicleTemplate} in front of player ${playerId}?`)) await runTask(() => playersApi.spawnVehicle(playerId, { vehicleId, template: vehicleTemplate, offset: 400 })); })}>Spawn Vehicle</button>
+      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Kick player ${playerId}?`)) await runTask(() => playersApi.kick(playerId)); })}>Kick Player</button>
+      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Clean inventory for player ${playerId}? This removes carried items.`)) await runTask(() => playersApi.cleanInventory(playerId, "CLEAN INVENTORY")); })}>Clean Inventory</button>
+      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Reset progression for player ${playerId}?`)) await runTask(() => playersApi.resetProgression(playerId, "RESET PROGRESSION")); })}>Reset Progression</button>
+      <label>Currency ID<input value={currency.currencyId} onChange={(event) => setCurrency({ ...currency, currencyId: event.target.value })} /></label>
+      <label>Currency Amount<input value={currency.amount} onChange={(event) => setCurrency({ ...currency, amount: event.target.value })} /></label>
+      <button onClick={() => run(async () => { if (window.confirm(`Add ${currency.amount} currency ${currency.currencyId || "Solaris"} to player ${playerId}? A backup will be created first.`)) await runDirect(() => playersApi.addCurrency(playerId, { currencyId: Number(currency.currencyId || 0), amount: Number(currency.amount), confirmation: "ADD CURRENCY" })); })}>Add Currency</button>
+      <label>Faction ID<input value={faction.factionId} onChange={(event) => setFaction({ ...faction, factionId: event.target.value })} /></label>
+      <label>Reputation Amount<input value={faction.amount} onChange={(event) => setFaction({ ...faction, amount: event.target.value })} /></label>
+      <button onClick={() => run(async () => { if (window.confirm(`Add ${faction.amount} reputation for faction ${faction.factionId} to player ${playerId}? A backup will be created first.`)) await runDirect(() => playersApi.addFactionReputation(playerId, { factionId: Number(faction.factionId), amount: Number(faction.amount), confirmation: "ADD FACTION REPUTATION" })); })}>Add Faction Reputation</button>
+      <button onClick={() => run(async () => { if (window.confirm(`Repair gear for offline player ${playerId}? A backup will be created first.`)) await runDirect(() => playersApi.repairGear(playerId, "REPAIR GEAR")); })}>Repair Gear</button>
+      <label>Refuel Vehicle Actor ID<input value={refuelVehicleId} onChange={(event) => setRefuelVehicleId(event.target.value)} /></label>
+      <button onClick={() => run(async () => { if (window.confirm(`Refuel vehicle ${refuelVehicleId} owned by player ${playerId}? A backup will be created first.`)) await runDirect(() => playersApi.refuelVehicle(playerId, { vehicleId: refuelVehicleId, confirmation: "REFUEL VEHICLE" })); })}>Refuel Vehicle</button>
     </div>
   </section>;
 }
 
+async function waitForTask(task: Task, setTask: (task: Task) => void) {
+  let current = task;
+  setTask(current);
+  for (let i = 0; i < 180 && !["succeeded", "failed", "cancelled"].includes(current.status); i += 1) {
+    await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
+    current = (await setupApi.task(current.id)).task;
+    setTask(current);
+  }
+  return current;
+}
+
 function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: string; onError: (text: string) => void }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
-  useEffect(() => {
+  const [message, setMessage] = useState("");
+  async function loadTab() {
     const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
       inventory: () => playersApi.inventory(playerId),
       currency: () => playersApi.currency(playerId),
@@ -365,10 +401,27 @@ function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: st
       history: () => playersApi.history(playerId)
     };
     setData(null);
-    loaders[tab]?.().then(setData).catch((error) => onError(error instanceof Error ? error.message : String(error)));
+    setMessage("");
+    await loaders[tab]?.().then(setData).catch((error) => onError(error instanceof Error ? error.message : String(error)));
+  }
+  useEffect(() => {
+    loadTab();
   }, [playerId, tab]);
+  async function deleteItem(row: Record<string, unknown>) {
+    const itemId = String(row.id || "");
+    if (!window.confirm(`Delete item ${itemId} (${String(row.template_id || "")}) from player ${playerId}? A database backup will be created first.`)) return;
+    try {
+      const response = await playersApi.deleteInventoryItem(playerId, itemId, "DELETE ITEM");
+      setMessage(JSON.stringify(response, null, 2));
+      await loadTab();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      setMessage(text);
+      onError(text);
+    }
+  }
   const rows = Array.isArray(data?.rows) ? data.rows as Record<string, unknown>[] : data?.position ? [data.position as Record<string, unknown>] : [];
-  return <div>{data?.reason ? <p className="danger-note">{String(data.reason)}</p> : null}<DataTable rows={rows} /></div>;
+  return <div>{data?.reason ? <p className="danger-note">{String(data.reason)}</p> : null}{message && <p className="danger-note">{message}</p>}<DataTable rows={rows} action={tab === "inventory" ? (row) => <button className="danger" onClick={(event) => { event.stopPropagation(); deleteItem(row); }}>Delete Item</button> : undefined} /></div>;
 }
 
 function LogsPanel({ selectedService, setSelectedService, text, setText, onError }: { selectedService: string; setSelectedService: (service: string) => void; text: string; setText: Dispatch<SetStateAction<string>>; onError: (text: string) => void }) {
@@ -457,10 +510,16 @@ function StoragePanel({ onError }: { onError: (text: string) => void }) {
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [itemName, setItemName] = useState("");
-  const [storageResult, setStorageResult] = useState("Storage give-item is not enabled until the backend reports safe DB mutation capability.");
+  const [canGiveItem, setCanGiveItem] = useState(false);
+  const [storageResult, setStorageResult] = useState("Give Item to Storage creates a DB backup first and runs only when the backend verifies the storage schema.");
   async function load() {
     onError("");
-    try { setRows((await worldDataApi.storage()).rows || []); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+    try {
+      const result = await worldDataApi.storage();
+      setRows(result.rows || []);
+      setCanGiveItem(Boolean(result.capabilities?.storageGiveItem));
+      if (!result.capabilities?.storageGiveItem) setStorageResult("Storage give-item is unsupported until this database exposes compatible dune.inventories and dune.items insert columns.");
+    } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   }
   async function open(row: Record<string, unknown>) {
     setSelected(row);
@@ -470,15 +529,17 @@ function StoragePanel({ onError }: { onError: (text: string) => void }) {
     if (!selected) return;
     onError("");
     try {
+      if (!window.confirm(`Give 1 x ${itemName} to storage ${String(selected.id)}? A database backup will be created first.`)) return;
       const response = await worldDataApi.storageGiveItem(String(selected.id), { itemName, quantity: 1, confirmation: "GIVE ITEM TO STORAGE" });
-      setStorageResult(response.reason);
+      setStorageResult(JSON.stringify(response, null, 2));
+      setItems((await worldDataApi.storageItems(String(selected.id))).rows || []);
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       setStorageResult(text);
       onError(text);
     }
   }
-  return <section className="panel"><div className="panel-title"><h2>Storage</h2><button onClick={load}>Load Storage</button></div><p className="danger-note">{storageResult}</p><DataTable rows={rows} onRowClick={open} />{selected && <section className="drawer"><h3>Storage {String(selected.id)}</h3><div className="action-row"><a className="button-link" href={worldDataApi.storageExportUrl(String(selected.id))}>Export JSON</a><input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Item name" /><button disabled onClick={giveStorageItem}>Give Item to Storage</button></div><DataTable rows={items} /></section>}</section>;
+  return <section className="panel"><div className="panel-title"><h2>Storage</h2><button onClick={load}>Load Storage</button></div><p className="danger-note">{storageResult}</p><DataTable rows={rows} onRowClick={open} />{selected && <section className="drawer"><h3>Storage {String(selected.id)}</h3><div className="action-row"><a className="button-link" href={worldDataApi.storageExportUrl(String(selected.id))}>Export JSON</a><input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Item name" /><button disabled={!canGiveItem} onClick={giveStorageItem}>Give Item to Storage</button></div><DataTable rows={items} /></section>}</section>;
 }
 
 function WorldListPanel({ title, load, exportUrl, onError }: { title: string; load: () => Promise<{ rows: Record<string, unknown>[]; reason?: string }>; exportUrl: (id: string) => string; onError: (text: string) => void }) {

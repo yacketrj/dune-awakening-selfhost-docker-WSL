@@ -1,5 +1,14 @@
 import { assertIdentifier, intParam, isReadOnlySql, quoteQualified, rowsResult } from "./db.js";
 
+export class UnsupportedCapabilityError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "UnsupportedCapabilityError";
+    this.unsupported = true;
+    this.details = details;
+  }
+}
+
 export async function dbStatus(db) {
   const result = await db.query("select current_user, current_database(), version()");
   const tables = await db.query("select count(*)::int as count from information_schema.tables where table_schema = 'dune'");
@@ -227,11 +236,17 @@ export async function listStorage(db) {
       and p.is_hologram = false and p.owner_entity_id is not null and p.owner_entity_id != 0
     group by p.id, p.building_type, a.map
     order by p.id`);
-  return { capabilities: { storage: true }, rows: result.rows };
+  return { capabilities: { storage: true, storageGiveItem: await supportsStorageGiveItem(db) }, rows: result.rows };
 }
 
 export async function storageItems(db, id) {
   return playerInventory(db, id);
+}
+
+export async function storageCapabilities(db) {
+  return {
+    storageGiveItem: await supportsStorageGiveItem(db)
+  };
 }
 
 export async function listBases(db) {
@@ -293,17 +308,278 @@ export async function exportRows(db, query) {
   return JSON.stringify(result, null, 2);
 }
 
+export async function addCurrency(db, id, { currencyId = 0, amount }) {
+  await requireCapability(await supportsCurrencyMutation(db), "Currency mutation requires dune.player_virtual_currency_balances plus dune.adjust_player_virtual_currency_balance(bigint,smallint,bigint).");
+  const delta = intParam(amount, "currency amount", -1000000000000, 1000000000000);
+  if (delta === 0) throw new Error("Currency amount cannot be zero");
+  const resolvedCurrencyId = await resolveCurrencyId(db, currencyId);
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    await tx.query("select dune.adjust_player_virtual_currency_balance($1::bigint, $2::smallint, $3::bigint)", [player.controllerId, resolvedCurrencyId, delta]);
+    const balance = await tx.query(`
+      select currency_id, balance
+      from dune.player_virtual_currency_balances
+      where player_controller_id = $1 and currency_id = $2`, [player.controllerId, resolvedCurrencyId]);
+    return { ok: true, player, currencyId: resolvedCurrencyId, amount: delta, balance: balance.rows[0] || null };
+  });
+}
+
+export async function addFactionReputation(db, id, { factionId, amount }) {
+  await requireCapability(await supportsFactionMutation(db), "Faction reputation mutation requires dune.player_faction_reputation, dune.actors.properties, and dune.set_player_faction_reputation(bigint,smallint,integer).");
+  const faction = intParam(factionId, "faction id", 1, 32767);
+  const delta = intParam(amount, "faction reputation amount", -12474, 12474);
+  if (delta === 0) throw new Error("Faction reputation amount cannot be zero");
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    const current = await tx.query(`
+      select reputation_amount
+      from dune.player_faction_reputation
+      where actor_id = $1 and faction_id = $2`, [player.actorId, faction]);
+    const oldValue = Number(current.rows[0]?.reputation_amount || 0);
+    const nextValue = Math.max(0, Math.min(12474, oldValue + delta));
+    await tx.query("select dune.set_player_faction_reputation($1::bigint, $2::smallint, $3::integer)", [player.actorId, faction, nextValue]);
+    if (faction === 1 || faction === 2) await syncFactionComponent(tx, player.actorId);
+    return { ok: true, player, factionId: faction, oldValue, newValue: nextValue };
+  });
+}
+
+export async function deleteInventoryItem(db, playerId, itemId) {
+  await requireCapability(await supportsInventoryDelete(db), "Inventory delete requires dune.items, dune.inventories, and dune.delete_item(bigint).");
+  const safeItemId = intParam(itemId, "item id", 1);
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, playerId);
+    const item = await tx.query(`
+      select i.id, i.template_id, i.stack_size, i.quality_level, i.position_index, i.inventory_id, inv.actor_id
+      from dune.items i
+      join dune.inventories inv on inv.id = i.inventory_id
+      where i.id = $1 and inv.actor_id = $2
+      for update`, [safeItemId, player.actorId]);
+    if (!item.rows[0]) throw new Error("Inventory item was not found in the selected player's directly-owned inventory");
+    await tx.query("select dune.delete_item($1::bigint)", [safeItemId]);
+    return { ok: true, player, deleted: item.rows[0] };
+  });
+}
+
+export async function giveItemToStorage(db, storageId, { itemName = "", itemId = "", templateId = "", quantity = 1, quality = 0 }) {
+  await requireCapability(await supportsStorageGiveItem(db), "Storage give-item requires compatible dune.inventories and dune.items insert columns.");
+  const target = intParam(storageId, "storage id", 1);
+  const resolvedTemplate = validateTemplateId(templateId || itemId || itemName);
+  const stackSize = intParam(quantity, "quantity", 1, 1000000);
+  const qualityLevel = intParam(quality, "quality", 0, 1000000);
+  return db.transaction(async (tx) => {
+    const storage = await tx.query(`
+      select id, actor_id, coalesce(max_item_count, 0)::int as max_item_count, coalesce(max_item_volume, 0)::int as max_item_volume
+      from dune.inventories
+      where actor_id = $1
+      order by id
+      limit 1
+      for update`, [target]);
+    if (!storage.rows[0]) throw new Error("Storage inventory was not found for the selected storage actor");
+    const inventory = storage.rows[0];
+    const count = await tx.query("select count(*)::int as count from dune.items where inventory_id = $1", [inventory.id]);
+    const currentCount = Number(count.rows[0]?.count || 0);
+    if (inventory.max_item_count > 0 && currentCount >= inventory.max_item_count) throw new Error("Storage is full by item slot count");
+    const position = await tx.query("select coalesce(max(position_index), -1)::int + 1 as position_index from dune.items where inventory_id = $1", [inventory.id]);
+    const stats = {
+      FCustomizationStats: [[], {}],
+      FItemStackAndDurabilityStats: [[], {}]
+    };
+    const inserted = await tx.query(`
+      insert into dune.items (inventory_id, template_id, stack_size, quality_level, position_index, stats)
+      values ($1, $2, $3, $4, $5, $6::jsonb)
+      returning id, template_id, stack_size, quality_level, position_index, inventory_id`, [
+      inventory.id,
+      resolvedTemplate,
+      stackSize,
+      qualityLevel,
+      Number(position.rows[0]?.position_index || 0),
+      JSON.stringify(stats)
+    ]);
+    return { ok: true, storage: inventory, inserted: inserted.rows[0] };
+  });
+}
+
+export async function repairGear(db, id) {
+  await requireCapability(await supportsRepairGear(db), "Repair gear requires dune.items.stats and dune.inventories.inventory_type.");
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    if (String(player.onlineStatus).toLowerCase() === "online") throw new Error("Repair gear requires the player to be offline so live state cannot overwrite the DB change");
+    const items = await tx.query(`
+      select i.id, i.stats
+      from dune.items i
+      join dune.inventories inv on inv.id = i.inventory_id
+      where inv.actor_id = $1 and inv.inventory_type in (0, 1, 14, 15, 27, 30)
+      for update`, [player.actorId]);
+    let repaired = 0;
+    for (const row of items.rows) {
+      const stats = row.stats || {};
+      const durability = stats.FItemStackAndDurabilityStats?.[1];
+      if (!durability || typeof durability !== "object") continue;
+      const target = repairTarget(durability);
+      if (!target) continue;
+      durability.CurrentDurability = target;
+      durability.DecayedDurability = target;
+      await tx.query("update dune.items set stats = $1::jsonb where id = $2", [JSON.stringify(stats), row.id]);
+      repaired += 1;
+    }
+    return { ok: true, player, scanned: items.rows.length, repaired };
+  });
+}
+
+export async function refuelVehicle(db, id, { vehicleId }) {
+  await requireCapability(await supportsRefuelVehicle(db), "Refuel vehicle requires dune.actors.owner_account_id, class, and properties JSON.");
+  const safeVehicleId = intParam(vehicleId, "vehicle id", 1);
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    if (String(player.onlineStatus).toLowerCase() === "online") throw new Error("Refuel vehicle requires the player to be offline so live state cannot overwrite the DB change");
+    const vehicle = await tx.query(`
+      select id, class, owner_account_id, properties
+      from dune.actors
+      where id = $1
+      for update`, [safeVehicleId]);
+    const row = vehicle.rows[0];
+    if (!row) throw new Error("Vehicle actor was not found");
+    if (Number(row.owner_account_id || 0) !== Number(player.accountId || 0)) throw new Error("Vehicle is not owned by the selected player's account");
+    const bpClass = String(row.class || "").split(".").pop();
+    if (!bpClass) throw new Error("Vehicle class could not be resolved");
+    await tx.query(`
+      update dune.actors
+      set properties = jsonb_set(coalesce(properties, '{}'::jsonb), $1::text[], '1.0'::jsonb, true)
+      where id = $2`, [[bpClass, "m_InitialFuel"], safeVehicleId]);
+    return { ok: true, player, vehicle: { id: row.id, class: row.class } };
+  });
+}
+
 async function playerCapabilities(db) {
   return {
     inventory: await tableExists(db, "items") && await tableExists(db, "inventories"),
     currency: await tableExists(db, "player_virtual_currency_balances"),
     factions: await tableExists(db, "player_faction_reputation"),
     specs: await tableExists(db, "specialization_tracks"),
+    addCurrency: await supportsCurrencyMutation(db),
+    addFactionReputation: await supportsFactionMutation(db),
+    inventoryDelete: await supportsInventoryDelete(db),
+    repairGear: await supportsRepairGear(db),
+    refuelVehicle: await supportsRefuelVehicle(db),
     progression: false,
     events: false,
     stats: false,
     history: false
   };
+}
+
+async function supportsCurrencyMutation(db) {
+  return await tableExists(db, "player_virtual_currency_balances") &&
+    await functionExists(db, "dune.adjust_player_virtual_currency_balance(bigint,smallint,bigint)");
+}
+
+async function supportsFactionMutation(db) {
+  if (!(await tableExists(db, "player_faction_reputation")) || !(await tableExists(db, "actors"))) return false;
+  const actorColumns = await columnsFor(db, "actors");
+  return actorColumns.has("properties") &&
+    await functionExists(db, "dune.set_player_faction_reputation(bigint,smallint,integer)");
+}
+
+async function supportsInventoryDelete(db) {
+  return await tableExists(db, "items") &&
+    await tableExists(db, "inventories") &&
+    await functionExists(db, "dune.delete_item(bigint)");
+}
+
+async function supportsStorageGiveItem(db) {
+  if (!(await tableExists(db, "items")) || !(await tableExists(db, "inventories"))) return false;
+  const inventoryColumns = await columnsFor(db, "inventories");
+  const itemColumns = await columnsFor(db, "items");
+  return ["id", "actor_id", "max_item_count", "max_item_volume"].every((column) => inventoryColumns.has(column)) &&
+    ["inventory_id", "template_id", "stack_size", "quality_level", "position_index", "stats"].every((column) => itemColumns.has(column));
+}
+
+async function supportsRepairGear(db) {
+  if (!(await tableExists(db, "items")) || !(await tableExists(db, "inventories"))) return false;
+  const inventoryColumns = await columnsFor(db, "inventories");
+  const itemColumns = await columnsFor(db, "items");
+  return inventoryColumns.has("inventory_type") && itemColumns.has("stats");
+}
+
+async function supportsRefuelVehicle(db) {
+  if (!(await tableExists(db, "actors"))) return false;
+  const actorColumns = await columnsFor(db, "actors");
+  return ["id", "class", "owner_account_id", "properties"].every((column) => actorColumns.has(column));
+}
+
+async function functionExists(db, signature) {
+  const result = await db.query("select to_regprocedure($1) is not null as exists", [signature]);
+  return Boolean(result.rows[0]?.exists);
+}
+
+async function requireCapability(supported, reason) {
+  if (!supported) throw new UnsupportedCapabilityError(reason);
+}
+
+async function resolvePlayerMutationTarget(db, id) {
+  const actorId = intParam(id, "player id", 1);
+  const result = await db.query(`
+    select a.id as actor_id,
+           coalesce(a.owner_account_id, ps.account_id, 0) as account_id,
+           coalesce(ps.player_controller_id, a.id) as controller_id,
+           coalesce(ps.online_status::text, 'Offline') as online_status
+    from dune.actors a
+    left join dune.player_state ps on ps.player_pawn_id = a.id or ps.account_id = a.owner_account_id
+    where a.id = $1
+    limit 1`, [actorId]);
+  const row = result.rows[0];
+  if (!row) throw new Error("Player not found");
+  return {
+    actorId: Number(row.actor_id),
+    accountId: Number(row.account_id || 0),
+    controllerId: Number(row.controller_id || row.actor_id),
+    onlineStatus: row.online_status || "Offline"
+  };
+}
+
+async function resolveCurrencyId(db, currencyId) {
+  const raw = String(currencyId ?? "0").trim().toLowerCase();
+  if (!raw || raw === "0" || raw === "solaris") {
+    if (!(await functionExists(db, "dune.get_solaris_id()"))) {
+      throw new UnsupportedCapabilityError("Solaris currency requires dune.get_solaris_id() in this schema.");
+    }
+    const result = await db.query("select dune.get_solaris_id()::int as currency_id");
+    return intParam(result.rows[0]?.currency_id, "currency id", 0, 32767);
+  }
+  return intParam(raw, "currency id", 0, 32767);
+}
+
+async function syncFactionComponent(db, actorId) {
+  const result = await db.query(`
+    select faction_id, reputation_amount
+    from dune.player_faction_reputation
+    where actor_id = $1 and faction_id in (1, 2)`, [actorId]);
+  const reps = new Map(result.rows.map((row) => [Number(row.faction_id), Number(row.reputation_amount || 0)]));
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = [
+    { Faction: { Name: "Atreides" }, timestamp, ReputationAmount: reps.get(1) || 0 },
+    { Faction: { Name: "Harkonnen" }, timestamp, ReputationAmount: reps.get(2) || 0 }
+  ];
+  await db.query(`
+    update dune.actors
+    set properties = jsonb_set(coalesce(properties, '{}'::jsonb), '{FactionPlayerComponent,m_FactionDataArray}', $1::jsonb, true)
+    where id = $2`, [JSON.stringify(payload), actorId]);
+}
+
+function validateTemplateId(value) {
+  const raw = String(value || "").trim();
+  if (/^[A-Za-z0-9_./:-]{1,240}$/.test(raw)) return raw;
+  throw new Error("Invalid item template/id");
+}
+
+function repairTarget(durability) {
+  const max = Number(durability.MaxDurability);
+  const current = Number(durability.CurrentDurability || 0);
+  const decayed = Number(durability.DecayedDurability || 0);
+  const target = Number.isFinite(max) && max > 0 ? max : Math.max(current, decayed, 100);
+  if (!Number.isFinite(target) || target <= 0) return 0;
+  if (current >= target && decayed >= target) return 0;
+  return target;
 }
 
 function unsupported(feature, requiredTables) {

@@ -63,7 +63,7 @@ Base path for the native RedBlink API: `/api`.
 | `/api/players/:id/stats` | GET | Stats capability report | Returns unsupported reason until schema is mapped |
 | `/api/players/:id/history` | GET | History capability report | Returns unsupported reason until schema is mapped |
 | `/api/players/:id/give-item` | POST | Give item task | `dune admin grant-item` |
-| `/api/players/:id/give-items` | POST | Give bundled item template task | `dune admin grant-template` |
+| `/api/players/:id/give-items` | POST | Give multiple items | Arbitrary payload uses repeated validated `dune admin grant-item-id`; legacy template payload uses `dune admin grant-template` |
 | `/api/players/:id/give-item-id` | POST | Give raw item ID task | `dune admin grant-item-id` |
 | `/api/players/:id/add-xp` | POST | Add XP task | `dune admin award-xp` |
 | `/api/players/:id/set-skill-points` | POST | Set unspent skill points task | `dune admin skill-points` |
@@ -75,17 +75,26 @@ Base path for the native RedBlink API: `/api`.
 | `/api/players/:id/spawn-vehicle` | POST | Spawn vehicle in front of player task | `dune admin spawn-vehicle` |
 | `/api/players/:id/clean-inventory` | POST | Clean inventory task | `dune admin clean-inventory`; requires confirmation phrase `CLEAN INVENTORY` |
 | `/api/players/:id/reset-progression` | POST | Reset progression task | `dune admin reset-progression`; requires confirmation phrase `RESET PROGRESSION` |
+| `/api/players/:id/add-currency` | POST | Add Solaris/currency | Creates `dune db backup`, transactionally calls `dune.adjust_player_virtual_currency_balance`; requires `ADD CURRENCY` |
+| `/api/players/:id/add-faction-reputation` | POST | Add faction reputation | Creates `dune db backup`, transactionally calls `dune.set_player_faction_reputation` and syncs actor faction JSON for Atreides/Harkonnen; requires `ADD FACTION REPUTATION` |
+| `/api/players/:id/repair-gear` | POST | Repair carried gear | Creates `dune db backup`, requires offline player, transactionally updates item durability JSON; requires `REPAIR GEAR` |
+| `/api/players/:id/refuel-vehicle` | POST | Refuel owned vehicle | Creates `dune db backup`, requires offline player and matching vehicle ownership, transactionally updates actor fuel JSON; requires `REFUEL VEHICLE` |
+| `/api/players/:id/inventory/:itemId` | DELETE | Delete inventory item | Creates `dune db backup`, verifies direct player inventory ownership, transactionally calls `dune.delete_item`; requires `DELETE ITEM` |
 | `/api/admin/items/search` | GET | Search admin item catalog | `dune admin item-search <q>` |
 | `/api/admin/items` | GET | List admin item catalog/categories | `dune admin item-list [category]` |
 | `/api/admin/vehicles` | GET | List/search vehicle catalog | `dune admin vehicle-list [q]` |
 | `/api/admin/skill-modules` | GET | List/search skill module catalog | `dune admin skill-modules [q]` |
 | `/api/admin/history` | GET | Admin history | `dune admin history` |
+| `/api/admin/broadcast` | POST | Live admin broadcast | Publishes RedBlink `ServiceBroadcast` Generic envelope to `dune-rmq-game` `heartbeats/notifications` |
+| `/api/admin/broadcast-shutdown` | POST | Shutdown broadcast | Publishes RedBlink `ServiceBroadcast` ServerShutdown envelope to `dune-rmq-game` `heartbeats/notifications`; requires `SHUTDOWN BROADCAST` |
+| `/api/admin/whisper` | POST | Whisper capability response | Returns unsupported until GM courier identity and `chat.whispers` route are verified |
 | `/api/maps` | GET | Map list | `dune maps list` |
 | `/api/sietches` | GET | Sietch state | `dune sietches list` |
 | `/api/deepdesert` | GET | Deep Desert status | `dune deepdesert dual status` |
 | `/api/settings` | GET | Runtime settings state | Setup state/config summary |
 | `/api/storage/:id` | GET | Storage detail | Direct PostgreSQL storage list lookup |
 | `/api/storage/:id/items` | GET | Storage inventory | Direct PostgreSQL inventory query |
+| `/api/storage/:id/give-item` | POST | Give item to storage | Creates `dune db backup`, validates item catalog/template and slot count, transactionally inserts into `dune.items`; requires `GIVE ITEM TO STORAGE` |
 | `/api/storage/:id/export` | GET | Export storage JSON | Direct PostgreSQL inventory query |
 | `/api/bases/:id` | GET | Base detail | Direct PostgreSQL base list lookup |
 | `/api/bases/:id/export` | GET | Export base summary JSON | Direct PostgreSQL base query summary |
@@ -96,12 +105,7 @@ Base path for the native RedBlink API: `/api`.
 
 
 - `/api/players/:id/set-currency`
-- `/api/players/:id/add-currency` returns explicit unsupported capability response until Solaris/currency write schema is verified
-- `/api/players/:id/add-faction-reputation` returns explicit unsupported capability response until faction reputation write schema is verified
-- `/api/players/:id/repair-gear` and `/api/players/:id/refuel-vehicle` return explicit unsupported capability responses until direct DB stat updates are ported safely
-- `DELETE /api/players/:id/inventory/:itemId` returns explicit unsupported capability response until ownership checks and `dune.delete_item` availability are verified
-- `POST /api/storage/:id/give-item` returns explicit unsupported capability response until direct DB item insert logic is ported safely
-- `/api/admin/broadcast`, `/api/admin/broadcast-shutdown`, and `/api/admin/whisper` return explicit unsupported capability responses until RedBlink RabbitMQ broadcast/chat publishing is implemented or exposed by CLI
+- `/api/admin/whisper` returns explicit unsupported capability response until RedBlink exposes or seeds a verified GM courier identity for `chat.whispers`
 - player progression/events/stats/history deep schema mapping
 - `/api/maps/update`
 - `/api/sietches/update`
