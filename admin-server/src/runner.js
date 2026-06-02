@@ -202,10 +202,7 @@ export function runDune(config, args, options = {}) {
 }
 
 export function runDockerLogs(service, options = {}) {
-  const container = validateServiceName(service);
-  if (!/^dune-server-[a-z0-9-]+$/i.test(container)) {
-    return Promise.reject(new Error(`Docker log access is only allowed for dynamic dune-server containers: ${container}`));
-  }
+  const container = dockerContainerForLogService(service);
   const args = ["logs", "--tail", String(options.tail || 400)];
   if (options.follow) args.push("-f");
   args.push(container);
@@ -240,6 +237,27 @@ export function runDockerLogs(service, options = {}) {
 
 export function isDynamicServerService(service) {
   return /^dune-server-[a-z0-9-]+$/i.test(String(service || ""));
+}
+
+export function dockerContainerForLogService(service) {
+  const raw = String(service || "").trim();
+  const normalized = validateServiceName(raw);
+  const containers = new Map([
+    ["postgres", "dune-postgres"],
+    ["rmq-admin", "dune-rmq-admin"],
+    ["rmq-game", "dune-rmq-game"],
+    ["text-router", "dune-text-router"],
+    ["director", "dune-director"],
+    ["gateway", "dune-server-gateway"],
+    ["survival", "dune-server-survival-1"],
+    ["survival-1", "dune-server-survival-1"],
+    ["overmap", "dune-server-overmap"],
+    ["orchestrator", "dune-orchestrator"],
+    ["autoscaler", "dune-autoscaler"]
+  ]);
+  if (containers.has(normalized)) return containers.get(normalized);
+  if (/^dune-server-[a-z0-9-]+$/i.test(normalized)) return normalized;
+  throw new Error(`Docker log access is not configured for service: ${raw}`);
 }
 
 function validatePlayerId(value) {

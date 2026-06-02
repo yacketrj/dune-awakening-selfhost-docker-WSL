@@ -697,10 +697,11 @@ async function logsRoute(req, res, path) {
 }
 
 function readLogs(service, options) {
-  if (isDynamicServerService(service)) {
-    return runDockerLogs(service, options);
-  }
-  return runDune(config, buildDuneArgs("logs", { service }), options);
+  // The web Logs page needs historical tail output as well as optional follow mode.
+  // RedBlink's `dune logs <service>` is optimized for CLI streaming and may not
+  // return historical lines before the HTTP timeout. Use docker logs here with
+  // strict service/container validation in runner.js.
+  return runDockerLogs(service, options);
 }
 
 async function setupState() {
