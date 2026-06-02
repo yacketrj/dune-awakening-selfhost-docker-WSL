@@ -24,6 +24,7 @@ import { ReadinessTimeline } from "./components/ReadinessTimeline";
 import { ServiceHealthCard } from "./components/ServiceHealthCard";
 
 type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Market" | "Starter Kit" | "Database" | "Storage" | "Bases" | "Blueprints" | "Backups" | "Logs" | "Updates" | "Settings";
+type HomeLoadResult = { statusLoaded: boolean; readinessLoaded: boolean; statusError: string; readinessError: string };
 
 const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Home", icon: <Home size={18} /> },
@@ -113,9 +114,22 @@ export function App() {
         {error && <div className="error-banner">{error}</div>}
         {tab === "Home" && <HomePanel status={status} readiness={readiness} setTask={setTask} onLoad={async () => {
           setError("");
-          const [nextStatus, nextReadiness] = await Promise.all([serverApi.status(), serverApi.readiness()]);
-          setStatus(nextStatus.stdout);
-          setReadiness(nextReadiness.stdout);
+          const [nextStatus, nextReadiness] = await Promise.allSettled([serverApi.status(), serverApi.readiness()]);
+          const result: HomeLoadResult = { statusLoaded: false, readinessLoaded: false, statusError: "", readinessError: "" };
+          if (nextStatus.status === "fulfilled") {
+            setStatus(nextStatus.value.stdout);
+            result.statusLoaded = true;
+          } else {
+            result.statusError = nextStatus.reason instanceof Error ? nextStatus.reason.message : String(nextStatus.reason);
+          }
+          if (nextReadiness.status === "fulfilled") {
+            setReadiness(nextReadiness.value.stdout);
+            result.readinessLoaded = true;
+          } else {
+            setReadiness("");
+            result.readinessError = nextReadiness.reason instanceof Error ? nextReadiness.reason.message : String(nextReadiness.reason);
+          }
+          return result;
         }} />}
         {tab === "Setup" && <SetupWizard />}
         {tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} onError={setError} />}
@@ -140,17 +154,26 @@ export function App() {
   );
 }
 
-function HomePanel({ status, readiness, setTask, onLoad }: { status: string; readiness: string; setTask: (task: Task) => void; onLoad: () => Promise<void> }) {
+function HomePanel({ status, readiness, setTask, onLoad }: { status: string; readiness: string; setTask: (task: Task) => void; onLoad: () => Promise<HomeLoadResult> }) {
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [readinessWarning, setReadinessWarning] = useState("");
   const [hasLoaded, setHasLoaded] = useState(Boolean(status || readiness));
 
   async function refresh(isActive = () => true) {
     setLoading(true);
     setLocalError("");
+    setReadinessWarning("");
     try {
-      await onLoad();
-      if (isActive()) setHasLoaded(true);
+      const result = await onLoad();
+      if (!isActive()) return;
+      if (result.statusLoaded || result.readinessLoaded) {
+        setHasLoaded(true);
+        if (!result.readinessLoaded && result.readinessError) setReadinessWarning(result.readinessError);
+        if (!result.statusLoaded && result.statusError) setLocalError(result.statusError);
+      } else {
+        setLocalError(result.statusError || result.readinessError || "Server status and readiness checks failed.");
+      }
     } catch (error) {
       if (isActive()) setLocalError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -201,8 +224,14 @@ function HomePanel({ status, readiness, setTask, onLoad }: { status: string; rea
         {localError && <p className="error">{localError}</p>}
       </article>
       <ServiceHealthCard name="Runtime" status={status ? "checked" : "unknown"} />
-      <ServiceHealthCard name="Readiness" status={readiness ? "checked" : "unknown"} />
+      <ServiceHealthCard name="Readiness" status={readiness ? "checked" : readinessWarning ? "not ready / check failed" : loading ? "checking" : "unknown"} />
+      {readinessWarning && <article className="panel wide warning-panel">
+        <h3>Readiness check warning</h3>
+        <p>Dune readiness can fail while the stack is still starting or partially unavailable. Server status loaded, so the web admin is still connected.</p>
+        <pre className="mini-output">{readinessWarning}</pre>
+      </article>}
       <pre className="mini-output wide">{status || "Status has not been loaded."}</pre>
+      {readiness && <pre className="mini-output wide">{readiness}</pre>}
     </section>
   );
 }
@@ -469,11 +498,15 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
 
       <section className="action-section">
         <h4>XP / Skills</h4>
-        <div className="actions-grid">
+        <div className="action-line">
           <label>XP Amount<input value={xp} onChange={(event) => setXp(event.target.value)} /></label>
           <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Add ${xp} XP to player ${actionPlayerId}?`)) await runTask(() => playersApi.addXp(actionPlayerId, Number(xp))); })}>Add XP</button>
+        </div>
+        <div className="action-line">
           <label>Skill Points<input value={points} onChange={(event) => setPoints(event.target.value)} /></label>
           <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Set player ${actionPlayerId} to ${points} unspent skill points?`)) await runTask(() => playersApi.setSkillPoints(actionPlayerId, Number(points))); })}>Set Skill Points</button>
+        </div>
+        <div className="action-line">
           <label>Skill Module<input value={module} onChange={(event) => setModule(event.target.value)} /></label>
           <label>Level<input value={level} onChange={(event) => setLevel(event.target.value)} /></label>
           <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Set ${module} to level ${level} for player ${actionPlayerId}?`)) await runTask(() => playersApi.setSkillModule(actionPlayerId, { module, level: Number(level) })); })}>Set Skill Module</button>
@@ -483,19 +516,23 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
       <section className="action-section">
         <h4>Survival</h4>
         <p>Refill Water uses the live admin CLI and was verified in-game.</p>
-        <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Refill water for player ${actionPlayerId}?`)) await runTask(() => playersApi.refillWater(actionPlayerId)); })}>Refill Water</button>
+        <div className="action-line">
+          <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Refill water for player ${actionPlayerId}?`)) await runTask(() => playersApi.refillWater(actionPlayerId)); })}>Refill Water</button>
+        </div>
       </section>
 
       <section className="action-section">
         <h4>Movement / Vehicles</h4>
         <p>Use current position only to copy known coordinates; edit X/Y/Z before teleporting if needed. Yaw defaults to 0 when unavailable.</p>
-        <div className="actions-grid">
+        <div className="action-line">
           <label>X<input value={coords.x} onChange={(event) => setCoords({ ...coords, x: event.target.value })} /></label>
           <label>Y<input value={coords.y} onChange={(event) => setCoords({ ...coords, y: event.target.value })} /></label>
           <label>Z<input value={coords.z} onChange={(event) => setCoords({ ...coords, z: event.target.value })} /></label>
           <label>Yaw<input value={coords.yaw} onChange={(event) => setCoords({ ...coords, yaw: event.target.value })} /></label>
           <button onClick={() => run(useCurrentPosition)}>Use Current Position</button>
           <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Teleport player ${actionPlayerId} to X=${coords.x} Y=${coords.y} Z=${coords.z}?`)) await runTask(() => playersApi.teleport(actionPlayerId, { x: Number(coords.x), y: Number(coords.y), z: Number(coords.z), yaw: Number(coords.yaw) })); })}>Teleport</button>
+        </div>
+        <div className="action-line">
           <label>Vehicle<select value={vehicleId} onChange={(event) => { const nextVehicle = event.target.value; setVehicleId(nextVehicle); setVehicleTemplate(vehicleCatalog[nextVehicle]?.[0] || ""); }}>
             {vehicleIds.length === 0 && <option value="">Manual vehicle ID</option>}
             {vehicleIds.map((id) => <option key={id} value={id}>{id}</option>)}
@@ -522,10 +559,12 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
       <section className="action-section">
         <h4>Currency / Factions</h4>
         <p>These direct DB mutations create a backup first and use the DB player ID.</p>
-        <div className="actions-grid">
+        <div className="action-line">
           <label>Currency ID<input value={currency.currencyId} onChange={(event) => setCurrency({ ...currency, currencyId: event.target.value })} /></label>
           <label>Currency Amount<input value={currency.amount} onChange={(event) => setCurrency({ ...currency, amount: event.target.value })} /></label>
           <button onClick={() => run(async () => { if (window.confirm(`Add ${currency.amount} currency ${currency.currencyId || "Solaris"} to DB player ${dbPlayerId}? A backup will be created first.`)) await runDirect(() => playersApi.addCurrency(dbPlayerId, { currencyId: Number(currency.currencyId || 0), amount: Number(currency.amount), confirmation: "ADD CURRENCY" })); })}>Add Currency</button>
+        </div>
+        <div className="action-line">
           <label>Faction ID<input value={faction.factionId} onChange={(event) => setFaction({ ...faction, factionId: event.target.value })} /></label>
           <label>Reputation Amount<input value={faction.amount} onChange={(event) => setFaction({ ...faction, amount: event.target.value })} /></label>
           <button onClick={() => run(async () => { if (window.confirm(`Add ${faction.amount} reputation for faction ${faction.factionId} to DB player ${dbPlayerId}? A backup will be created first.`)) await runDirect(() => playersApi.addFactionReputation(dbPlayerId, { factionId: Number(faction.factionId), amount: Number(faction.amount), confirmation: "ADD FACTION REPUTATION" })); })}>Add Faction Reputation</button>
@@ -535,8 +574,10 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
       <section className="action-section">
         <h4>Repair / Refuel</h4>
         <p>Offline DB-backed repair/refuel actions create a backup first.</p>
-        <div className="actions-grid">
+        <div className="action-line">
           <button onClick={() => run(async () => { if (window.confirm(`Repair gear for offline DB player ${dbPlayerId}? A backup will be created first.`)) await runDirect(() => playersApi.repairGear(dbPlayerId, "REPAIR GEAR")); })}>Repair Gear</button>
+        </div>
+        <div className="action-line">
           <label>Refuel Vehicle Actor ID<input value={refuelVehicleId} onChange={(event) => setRefuelVehicleId(event.target.value)} /></label>
           <button onClick={() => run(async () => { if (window.confirm(`Refuel vehicle ${refuelVehicleId} owned by DB player ${dbPlayerId}? A backup will be created first.`)) await runDirect(() => playersApi.refuelVehicle(dbPlayerId, { vehicleId: refuelVehicleId, confirmation: "REFUEL VEHICLE" })); })}>Refuel Vehicle</button>
         </div>

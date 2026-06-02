@@ -63,7 +63,12 @@ main { padding: 22px; min-width: 0; }
 .action-section h4 { margin: 0; color: #ffd08a; }
 .action-section p { margin: 0; color: #ad9f89; }
 .danger-section { border-color: #6f3030; background: #1b1414; }
+.warning-panel { border-color: #a97932; background: #211b12; }
+.action-line { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.action-line label { flex: 0 1 180px; }
+.action-line button, .action-section > button { width: auto; justify-self: start; }
 .actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
+.actions-grid > button { justify-self: start; }
 .service-card, .check-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #171a1d; border: 1px solid #302b25; border-radius: 8px; padding: 14px; }
 .service-card div, .check-card div { display: grid; gap: 4px; }
 .service-card span, .check-card p { margin: 0; color: #ad9f89; }
