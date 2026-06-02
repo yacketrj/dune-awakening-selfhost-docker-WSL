@@ -9,6 +9,21 @@ RUN npm run build
 FROM node:20-bookworm
 WORKDIR /app
 ENV NODE_ENV=production
+
+# Runtime tools required by RedBlink dune scripts when the web admin runs in a container.
+# docker.io provides the docker CLI for talking to the mounted host Docker socket.
+# iproute2 provides ss, used by readiness/listener checks.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        docker.io \
+        iproute2 \
+        ca-certificates \
+        curl \
+        bash \
+        procps \
+        netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY admin-server/package.json ./
 COPY admin-server/package-lock.json ./
 RUN npm ci --omit=dev
