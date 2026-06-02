@@ -24,7 +24,7 @@ import { ReadinessTimeline } from "./components/ReadinessTimeline";
 
 type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Market" | "Starter Kit" | "Database" | "Storage" | "Bases" | "Blueprints" | "Backups" | "Logs" | "Updates" | "Settings";
 type HomeLoadResult = { statusLoaded: boolean; readinessLoaded: boolean; statusError: string; readinessError: string };
-type CatalogItem = { name: string; id: string; category?: string; source?: string };
+type CatalogItem = { name: string; id: string; itemId?: string; category?: string; source?: string };
 
 const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Home", icon: <Home size={18} /> },
@@ -353,9 +353,10 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
   const [selectedPlayer, setSelectedPlayer] = useState("");
   const [itemName, setItemName] = useState("");
   const [itemId, setItemId] = useState("");
-  const [itemOptions, setItemOptions] = useState<CatalogItem[]>([]);
+  const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [search, setSearch] = useState("");
   const [catalog, setCatalog] = useState("");
+  const [catalogRows, setCatalogRows] = useState<Record<string, unknown>[]>([]);
   const [liveToolSummary, setLiveToolSummary] = useState("");
   const [liveToolDetails, setLiveToolDetails] = useState("");
   const [xp, setXp] = useState("1000");
@@ -378,17 +379,21 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
     const row = players.find((player) => String(player.actor_id || player.player_pawn_id || player.action_player_id) === value);
     setPlayerId(String(row?.action_player_id || row?.funcom_id || row?.fls_id || row?.account_id || ""));
   }
-  async function searchAdminItems() {
-    const response = await adminApi.itemSearch(search || itemName);
-    setCatalog(response.stdout || "");
-    const parsed = parseCatalogItems(response.stdout || "");
-    setItemOptions(parsed);
-    if (parsed[0]) {
-      setItemName(parsed[0].name);
-      setItemId(parsed[0].id);
-    }
+  function chooseAdminItem(item: CatalogItem | null) {
+    setSelectedItem(item);
+    setItemName(item?.name || "");
+    setItemId(item?.id || "");
   }
-  const catalogRows = parseCatalogRows(catalog);
+  async function loadItemCatalog() {
+    const response = await adminApi.itemCatalog(search, 500);
+    setCatalog("");
+    setCatalogRows((response.rows || []).map((item) => ({ name: item.name, id: item.itemId || item.id, category: titleCase(item.category || ""), source: item.source })));
+  }
+  async function loadVehicleCatalog() {
+    const response = await adminApi.structuredVehicles();
+    setCatalog(response.stdout || "");
+    setCatalogRows((response.vehicles || []).map((vehicle) => ({ name: vehicle.name || vehicle.id, id: vehicle.id, category: "Vehicle", source: (vehicle.templates || []).join(", ") })));
+  }
   return (
     <section className="panel">
       <h2>Admin Tools</h2>
@@ -407,22 +412,10 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
       </div>
       <div className="action-section">
         <h4>Grant Item</h4>
+        <ItemCatalogSelector selected={selectedItem} onSelect={chooseAdminItem} />
         <div className="action-line">
-          <label className="wide-field">Item Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Plant Fiber, cup of water..." /></label>
-          <button onClick={() => run(searchAdminItems)}>Search Items</button>
+          <button disabled={!selectedItem || !playerId} onClick={() => run(async () => window.confirm(`Give 1 x ${itemName} to ${playerId}?`) && setTask((await playersApi.giveItem(playerId, { itemName, quantity: 1, durability: 1 })).task))}>Give Selected Item</button>
         </div>
-        <div className="action-line">
-          <label className="wide-field">Item<select value={itemName} onChange={(event) => {
-            const selectedItem = itemOptions.find((item) => item.name === event.target.value || item.id === event.target.value);
-            setItemName(selectedItem?.name || event.target.value);
-            setItemId(selectedItem?.id || "");
-          }}>
-            <option value={itemName || ""}>{itemName || "Search and select item"}</option>
-            {itemOptions.map((item) => <option key={`${item.name}-${item.id}`} value={item.name}>{item.name}{item.category ? ` - ${item.category}` : ""}</option>)}
-          </select></label>
-          <button onClick={() => run(async () => window.confirm(`Give 1 x ${itemName} to ${playerId}?`) && setTask((await playersApi.giveItem(playerId, { itemName, quantity: 1, durability: 1 })).task))}>Give Item</button>
-        </div>
-        {itemName && <KeyValueGrid items={[["Display name", itemName], ["Template/item ID", itemId || "Not available"], ["Source", itemOptions.find((item) => item.name === itemName)?.category || "Catalog search"]]} />}
         <details className="technical-details"><summary>Developer raw item ID</summary><div className="action-line">
           <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} placeholder="ItemTemplate_5" /></label>
           <button onClick={() => run(async () => window.confirm(`Give item id ${itemId} to ${playerId}?`) && setTask((await playersApi.giveItemId(playerId, { itemId, quantity: 1, durability: 1 })).task))}>Give Item by ID</button>
@@ -437,11 +430,10 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
       </div>
       <h3>Catalogs</h3>
       <div className="action-row">
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items, vehicles, or skill modules" />
-        <button onClick={() => run(searchAdminItems)}>Item Search</button>
-        <button onClick={() => run(async () => setCatalog((await adminApi.itemList()).stdout))}>Item List</button>
-        <button onClick={() => run(async () => setCatalog((await adminApi.vehicles(search)).stdout))}>Vehicle List</button>
-        <button onClick={() => run(async () => setCatalog((await adminApi.skillModules(search)).stdout))}>Skill Module List</button>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter item catalog, vehicles, or skill modules" />
+        <button onClick={() => run(loadItemCatalog)}>Items</button>
+        <button onClick={() => run(loadVehicleCatalog)}>Vehicles</button>
+        <button onClick={() => run(async () => { const response = await adminApi.skillModules(search); setCatalog(response.stdout || ""); setCatalogRows(parseCatalogRows(response.stdout || "")); })}>Skill Modules</button>
       </div>
       <div className="result-panel">
         <strong>Catalog Results</strong>
@@ -525,8 +517,7 @@ function PlayersPanel({ setTask, onError }: { setTask: (task: Task) => void; onE
 function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh }: { dbPlayerId: string; actionPlayerId: string; setTask: (task: Task) => void; onError: (text: string) => void; onRefresh: () => void }) {
   const [itemName, setItemName] = useState("");
   const [itemId, setItemId] = useState("");
-  const [itemSearch, setItemSearch] = useState("");
-  const [itemOptions, setItemOptions] = useState<CatalogItem[]>([]);
+  const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [quantity, setQuantity] = useState("1");
   const [multiItems, setMultiItems] = useState("");
   const [multiList, setMultiList] = useState<{ itemName?: string; itemId?: string; quantity: number; durability: number }[]>([]);
@@ -561,14 +552,10 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
     setResultDetails(JSON.stringify(response, null, 2));
     onRefresh();
   }
-  async function searchCatalogItems() {
-    const response = await adminApi.itemSearch(itemSearch);
-    const parsed = parseCatalogItems(response.stdout || "");
-    setItemOptions(parsed);
-    if (parsed[0]) {
-      setItemName(parsed[0].name);
-      setItemId(parsed[0].id);
-    }
+  function choosePlayerItem(item: CatalogItem | null) {
+    setSelectedItem(item);
+    setItemName(item?.name || "");
+    setItemId(item?.id || "");
   }
   function parsedMultiItems() {
     if (multiList.length) return multiList;
@@ -617,28 +604,18 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
       <section className="action-section">
         <h4>Give Items</h4>
         <p>Search the item catalog, select the exact item, then grant it to the player.</p>
+        <ItemCatalogSelector selected={selectedItem} onSelect={choosePlayerItem} />
         <div className="actions-grid">
-          <label>Find Item<input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Plant Fiber, water, ornithopter..." /></label>
-          <button onClick={() => run(searchCatalogItems)}>Search Items</button>
-          <label>Item<select value={itemName} onChange={(event) => {
-            const selectedItem = itemOptions.find((item) => item.name === event.target.value || item.id === event.target.value);
-            setItemName(selectedItem?.name || event.target.value);
-            setItemId(selectedItem?.id || "");
-          }}>
-            <option value={itemName || ""}>{itemName || "Search and select item"}</option>
-            {itemOptions.map((item) => <option key={`${item.name}-${item.id}`} value={item.name}>{item.name}{item.category ? ` - ${item.category}` : ""}</option>)}
-          </select></label>
           <label>Quantity<input value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-          <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: 1 })); })}>Give Item</button>
+          <button disabled={!canRunCliAction || !selectedItem} title={!canRunCliAction ? cliDisabledReason : !selectedItem ? "Select an item from the catalog first." : undefined} onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: 1 })); })}>Give Item</button>
         </div>
-        {itemName && <KeyValueGrid items={[["Display name", itemName], ["Template/item ID", itemId || "Not available"], ["Source", itemOptions.find((item) => item.name === itemName)?.category || "Catalog search"]]} />}
         <details className="technical-details"><summary>Developer manual item ID</summary><div className="actions-grid">
           <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} /></label>
           <button disabled={!canRunCliAction} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => { if (window.confirm(`Give raw item id ${itemId} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItemId(actionPlayerId, { itemId, quantity: Number(quantity), durability: 1 })); })}>Give Item by ID</button>
         </div></details>
         <h4>Give Multiple Items</h4>
         <div className="action-line">
-          <button disabled={!itemName} onClick={() => setMultiList([...multiList, { itemName, itemId, quantity: Number(quantity), durability: 1 }])}>Add Selected Item</button>
+          <button disabled={!selectedItem} onClick={() => setMultiList([...multiList, { itemName, itemId, quantity: Number(quantity), durability: 1 }])}>Add Selected Item</button>
           <button disabled={!multiList.length} onClick={() => setMultiList([])}>Clear List</button>
         </div>
         {multiList.length ? <div className="table-wrap starter-items-table"><table><thead><tr><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Durability</th><th>Actions</th></tr></thead><tbody>{multiList.map((item, index) => <tr key={`${item.itemName || item.itemId}-${index}`}><td>{item.itemName || ""}</td><td>{item.itemId || ""}</td><td>{item.quantity}</td><td>{item.durability}</td><td><button className="danger" onClick={() => setMultiList(multiList.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></td></tr>)}</tbody></table></div> : <div className="empty">No multi-item entries yet. Search/select an item, set quantity, then Add Selected Item.</div>}
@@ -755,6 +732,27 @@ async function waitForTask(task: Task, setTask: (task: Task) => void) {
     setTask(current);
   }
   return current;
+}
+
+function parseUpdateTask(task: Task) {
+  const text = task.logLines.map((line) => line.line).join("\n");
+  if (task.status === "failed") return { status: "Check Failed", current: "", latest: "", reason: task.errorMessage || summarizeCommandText(text) };
+  if (task.status !== "succeeded") return { status: "Checking", current: "", latest: "", reason: task.progressMessage || "" };
+  const current = firstVersionMatch(text, [/current(?: build| version)?\s*[:=]\s*([^\n]+)/i, /installed(?: build| version)?\s*[:=]\s*([^\n]+)/i, /local(?: build| version)?\s*[:=]\s*([^\n]+)/i]);
+  const latest = firstVersionMatch(text, [/latest(?: build| version)?\s*[:=]\s*([^\n]+)/i, /remote(?: build| version)?\s*[:=]\s*([^\n]+)/i, /available(?: build| version)?\s*[:=]\s*([^\n]+)/i]);
+  const updateAvailable = /update available|newer|can update|available update/i.test(text);
+  const latestStatus = /up to date|already latest|no update|latest/i.test(text) && !updateAvailable;
+  if (updateAvailable) return { status: "Update Available", current, latest, reason: summarizeCommandText(text) };
+  if (latestStatus) return { status: "Latest", current, latest, reason: summarizeCommandText(text) };
+  return { status: "Completed", current, latest, reason: current || latest ? summarizeCommandText(text) : "Unable to parse version details from completed check." };
+}
+
+function firstVersionMatch(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1].trim().slice(0, 80);
+  }
+  return "";
 }
 
 function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: string; onError: (text: string) => void }) {
@@ -993,8 +991,7 @@ function MarketPanel({ onError }: { onError: (text: string) => void }) {
 function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
   const [config, setConfig] = useState<StarterKitConfig>({ enabled: false, version: "starter-kit-v1", items: [], xp: 0, allowRepeatGrants: false, autoGrantEnabled: false, autoGrantIntervalSeconds: 60, grantWhen: "first_seen" });
   const [itemsText, setItemsText] = useState("");
-  const [starterItemSearch, setStarterItemSearch] = useState("");
-  const [starterItemOptions, setStarterItemOptions] = useState<CatalogItem[]>([]);
+  const [selectedStarterItem, setSelectedStarterItem] = useState<CatalogItem | null>(null);
   const [starterDraft, setStarterDraft] = useState({ itemName: "", itemId: "", quantity: "1", durability: "1" });
   const [players, setPlayers] = useState<Record<string, unknown>[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState("");
@@ -1030,11 +1027,9 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
       })
     };
   }
-  async function searchStarterItems() {
-    const response = await adminApi.itemSearch(starterItemSearch);
-    const parsed = parseCatalogItems(response.stdout || "");
-    setStarterItemOptions(parsed);
-    if (parsed[0]) setStarterDraft({ ...starterDraft, itemName: parsed[0].name, itemId: parsed[0].id });
+  function chooseStarterItem(item: CatalogItem | null) {
+    setSelectedStarterItem(item);
+    setStarterDraft({ ...starterDraft, itemName: item?.name || "", itemId: item?.id || "" });
   }
   function addStarterItem() {
     const item = starterDraft.itemId ? { itemId: starterDraft.itemId } : { itemName: starterDraft.itemName };
@@ -1067,21 +1062,11 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
           <label className="checkbox-line"><input type="checkbox" checked={config.allowRepeatGrants} onChange={(event) => setConfig({ ...config, allowRepeatGrants: event.target.checked })} /> <span>Allow repeat manual grants</span></label>
         </div>
         <h4>Starter Items</h4>
+        <ItemCatalogSelector selected={selectedStarterItem} onSelect={chooseStarterItem} />
         <div className="action-line">
-          <label className="wide-field">Find Item<input value={starterItemSearch} onChange={(event) => setStarterItemSearch(event.target.value)} placeholder="Plant Fiber, cup of water..." /></label>
-          <button onClick={() => run(searchStarterItems)}>Search Items</button>
-        </div>
-        <div className="action-line">
-          <label className="wide-field">Item<select value={starterDraft.itemName || starterDraft.itemId} onChange={(event) => {
-            const selectedItem = starterItemOptions.find((item) => item.name === event.target.value || item.id === event.target.value);
-            setStarterDraft({ ...starterDraft, itemName: selectedItem?.name || event.target.value, itemId: selectedItem?.id || "" });
-          }}>
-            <option value={starterDraft.itemName || starterDraft.itemId}>{starterDraft.itemName || "Search and select item"}</option>
-            {starterItemOptions.map((item) => <option key={`${item.name}-${item.id}`} value={item.name}>{item.name}{item.category ? ` - ${item.category}` : ""}</option>)}
-          </select></label>
           <label>Quantity<input type="number" min="1" value={starterDraft.quantity} onChange={(event) => setStarterDraft({ ...starterDraft, quantity: event.target.value })} /></label>
           <label>Durability / Quality<input type="number" min="0" value={starterDraft.durability} onChange={(event) => setStarterDraft({ ...starterDraft, durability: event.target.value })} /></label>
-          <button onClick={addStarterItem}>Add Item</button>
+          <button disabled={!selectedStarterItem} onClick={addStarterItem}>Add Item</button>
         </div>
         {config.items?.length ? <div className="table-wrap starter-items-table"><table><thead><tr><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Durability</th><th>Actions</th></tr></thead><tbody>{config.items.map((item, index) => <tr key={`${item.itemName || item.itemId}-${index}`}><td>{item.itemName || ""}</td><td>{item.itemId || ""}</td><td>{item.quantity}</td><td>{item.durability}</td><td><button className="danger" onClick={() => {
           const nextItems = config.items.filter((_, itemIndex) => itemIndex !== index);
@@ -1151,6 +1136,42 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
     setOutput(formatStarterKitGrantResult(result));
     setTechnicalOutput(JSON.stringify(result, null, 2));
   }
+}
+
+function ItemCatalogSelector({ label = "Item", selected, onSelect, placeholder = "Type to filter item catalog" }: { label?: string; selected: CatalogItem | null; onSelect: (item: CatalogItem | null) => void; placeholder?: string }) {
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState<CatalogItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  async function load(nextQuery = query) {
+    setLoading(true);
+    try {
+      const result = await adminApi.itemCatalog(nextQuery, 100);
+      setItems((result.rows || []).map((item) => ({ ...item, id: item.itemId || item.id })));
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    load("").catch(() => undefined);
+  }, []);
+  const selectedValue = selected ? `${selected.name}::${selected.id}` : "";
+  return <div className="catalog-selector">
+    <label className="wide-field">{label}
+      <input value={query} onChange={(event) => { setQuery(event.target.value); load(event.target.value).catch(() => undefined); }} placeholder={placeholder} />
+    </label>
+    <label className="wide-field">Select Item
+      <select value={selectedValue} onChange={(event) => {
+        const item = items.find((candidate) => `${candidate.name}::${candidate.id}` === event.target.value) || null;
+        onSelect(item);
+      }}>
+        <option value="">{loading ? "Loading items..." : "Choose an item from catalog"}</option>
+        {items.map((item) => <option key={`${item.id}-${item.name}-${item.source}`} value={`${item.name}::${item.id}`}>
+          {item.name} - {item.id}{item.category ? ` - ${titleCase(item.category)}` : ""}{item.source ? ` (${item.source})` : ""}
+        </option>)}
+      </select>
+    </label>
+    {selected && <KeyValueGrid items={[["Item Name", selected.name], ["Item ID", selected.id], ["Category", selected.category ? titleCase(selected.category) : ""], ["Source", selected.source || ""]]} />}
+  </div>;
 }
 
 function formatStarterKitGrantResult(result: Record<string, unknown>) {
@@ -1283,6 +1304,7 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
   const [selected, setSelected] = useState<LiveMapMarker | null>(null);
   const [filters, setFilters] = useState<Record<string, boolean>>({ player: true, vehicle: true, base: true, storage: true, service: true });
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [zoom, setZoom] = useState(1);
   async function load() {
     onError("");
     try {
@@ -1309,13 +1331,21 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
     <div className="panel-title"><h2>Live Map</h2><div className="action-row"><button onClick={load}>Refresh</button><label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} /> Auto-refresh</label></div></div>
     <div className="action-row"><input value={map} onChange={(event) => setMap(event.target.value)} placeholder="Optional map filter, e.g. Survival_1" /></div>
     <div className="toggle-row">{Object.keys(filters).map((key) => <button key={key} className={filters[key] ? "active" : ""} onClick={() => setFilters({ ...filters, [key]: !filters[key] })}>{friendlyMarkerType(key)}</button>)}</div>
+    <div className="action-line">
+      <button onClick={() => setZoom(Math.min(3, Number((zoom + 0.2).toFixed(2))))}>Zoom In</button>
+      <button onClick={() => setZoom(Math.max(1, Number((zoom - 0.2).toFixed(2))))}>Zoom Out</button>
+      <button onClick={() => setZoom(1)}>Fit Map / Reset View</button>
+      <span className="muted">Zoom: {Math.round(zoom * 100)}%</span>
+    </div>
     {Object.entries(overlays).filter(([, reason]) => reason).map(([key, reason]) => <p className="danger-note" key={key}>{key}: {reason}</p>)}
     <div className="map-canvas" style={{ "--map-image": "url('/hagga-basin.png')" } as React.CSSProperties}>
+      <div className="map-zoom-layer" style={{ transform: `scale(${zoom})` }}>
       {plotted.length === 0 && <div className="empty">No plottable markers. Raw marker rows are shown below when available.</div>}
       {plotted.map((marker, index) => {
         const point = markerPoint(marker, bounds);
         return <button key={`${marker.type}-${marker.id}-${index}`} title={`${marker.type}: ${friendlyMarkerName(marker)}`} onClick={() => setSelected(marker)} style={{ position: "absolute", left: `${point.x}%`, top: `${point.y}%`, transform: "translate(-50%, -50%)", width: 12, height: 12, borderRadius: "50%", border: "1px solid white", background: markerColor(String(marker.type)), cursor: "pointer" }} />;
       })}
+      </div>
     </div>
     <p className="danger-note">Marker positions are approximate. Coordinates use raw Dune world positions from actor transforms; exact image/world calibration is not verified.</p>
     {selected && <section className="drawer"><div className="panel-title"><h3>{friendlyMarkerName(selected)}</h3><button onClick={() => setSelected(null)}>Close</button></div><KeyValueGrid items={[
@@ -1474,41 +1504,41 @@ function friendlyMarkerType(type: string) {
 }
 
 function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
-  const [gameStatus, setGameStatus] = useState("Not checked");
-  const [stackStatus, setStackStatus] = useState("Not checked");
+  const [gameStatus, setGameStatus] = useState<Record<string, string>>({ status: "Not checked", current: "", latest: "", reason: "" });
+  const [stackStatus, setStackStatus] = useState<Record<string, string>>({ status: "Not checked", current: "", latest: "", reason: "" });
   async function checkGame() {
-    setGameStatus("Checking");
-    const response = await updatesApi.checkGame();
-    setTask(response.task);
-    setGameStatus("Check running");
+    setGameStatus({ status: "Checking", current: "", latest: "", reason: "" });
+    const final = await waitForTask((await updatesApi.checkGame()).task, setTask);
+    setGameStatus(parseUpdateTask(final));
   }
   async function checkStack() {
-    setStackStatus("Checking");
-    const response = await updatesApi.checkStack();
-    setTask(response.task);
-    setStackStatus("Check running");
+    setStackStatus({ status: "Checking", current: "", latest: "", reason: "" });
+    const final = await waitForTask((await updatesApi.checkStack()).task, setTask);
+    setStackStatus(parseUpdateTask(final));
   }
   useEffect(() => {
-    checkGame().catch(() => setGameStatus("Check failed"));
-    checkStack().catch(() => setStackStatus("Check failed"));
+    checkGame().catch((error) => setGameStatus({ status: "Check Failed", current: "", latest: "", reason: error instanceof Error ? error.message : String(error) }));
+    checkStack().catch((error) => setStackStatus({ status: "Check Failed", current: "", latest: "", reason: error instanceof Error ? error.message : String(error) }));
   }, []);
+  const gameCanApply = gameStatus.status === "Update Available";
+  const stackCanApply = stackStatus.status === "Update Available";
   return <section className="panel">
     <h2>Updates</h2>
     <div className="action-sections">
       <section className="action-section">
-        <div className="panel-title"><h4>Game Update</h4><StatusPill value={gameStatus} /></div>
-        <KeyValueGrid items={[["Current build", "Reported by update check"], ["Latest build", "Reported by update check"], ["Status", gameStatus]]} />
+        <div className="panel-title"><h4>Game Update</h4><StatusPill value={gameStatus.status} /></div>
+        <KeyValueGrid items={[["Current build", gameStatus.current || "Unknown"], ["Latest build", gameStatus.latest || "Unknown"], ["Status", gameStatus.status], ["Details", gameStatus.reason]]} />
         <div className="action-line">
           <button onClick={checkGame}>Refresh Game Check</button>
-          <button className="danger" onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button>
+          <button className="danger" disabled={!gameCanApply} title={!gameCanApply ? "Apply is enabled only when the latest check reports an available update." : undefined} onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button>
         </div>
       </section>
       <section className="action-section">
-        <div className="panel-title"><h4>Stack Update</h4><StatusPill value={stackStatus} /></div>
-        <KeyValueGrid items={[["Current version", "Reported by stack check"], ["Latest version", "Reported by stack check"], ["Status", stackStatus]]} />
+        <div className="panel-title"><h4>Stack Update</h4><StatusPill value={stackStatus.status} /></div>
+        <KeyValueGrid items={[["Current version", stackStatus.current || "Unknown"], ["Latest version", stackStatus.latest || "Unknown"], ["Status", stackStatus.status], ["Details", stackStatus.reason]]} />
         <div className="action-line">
           <button onClick={checkStack}>Refresh Stack Check</button>
-          <button className="danger" onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button>
+          <button className="danger" disabled={!stackCanApply} title={!stackCanApply ? "Apply is enabled only when the latest check reports an available update." : undefined} onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button>
         </div>
       </section>
       <div className="planned-grid">
@@ -1579,19 +1609,19 @@ function doctorAdvice(issue: string) {
     title: "Director Heartbeat Not Recently Observed",
     message: "The latest sampled logs did not show a recent director heartbeat. This can be a stale log-window warning if the server is otherwise ready.",
     nextStep: "Open Logs -> Director and Gateway if readiness stays unhealthy.",
-    status: "Attention Needed"
+    status: "Warn"
   };
   if (/gateway.*db|db monitoring/i.test(issue)) return {
     title: "Gateway Database Monitoring Not Recently Observed",
     message: "The doctor check did not find recent gateway database-monitoring lines in the sampled logs.",
     nextStep: "Open Logs -> Gateway and check whether DB health messages are current.",
-    status: "Attention Needed"
+    status: "Warn"
   };
   if (/public.*private|advertis/i.test(issue)) return {
     title: "Advertised IP Warning",
     message: clean,
     nextStep: "Review Setup -> Server Identity and Network/Ports for Local vs Public mode.",
-    status: "Attention Needed"
+    status: "Warn"
   };
   return {
     title: "Diagnostic Warning",
@@ -1829,12 +1859,12 @@ function formatTechnicalText(sections: [string, string][]) {
 
 function summarizeHomeStatus(status: string, readiness: string, readinessWarning: string, loading: boolean) {
   const overall = findLineValue(status, ["overall"]) || (readiness ? "Readiness checked" : readinessWarning ? "Status loaded, readiness warning" : status ? "Status loaded" : loading ? "Checking" : "Unknown");
-  const containers = summarizeSection(status, "Containers");
-  const listeners = summarizeSection(status, "Listeners");
-  const database = summarizeSection(status, "Database");
-  const games = summarizeSection(status, "Game servers");
-  const rabbit = summarizeSection(status, "RabbitMQ game connections");
-  const fls = summarizeSection(status, "Funcom/FLS summary");
+  const containers = summarizeContainers(status);
+  const listeners = summarizeListeners(status);
+  const database = summarizeDatabase(status);
+  const games = summarizeGameServers(status);
+  const rabbit = summarizeRabbit(status);
+  const fls = summarizeFls(status);
   const population = findPopulation(status) || findLineValue(status, ["population", "players"]);
   return {
     identity: [
@@ -1844,7 +1874,7 @@ function summarizeHomeStatus(status: string, readiness: string, readinessWarning
       { label: "Mode", value: titleCase(findLineValue(status, ["mode", "server mode"]) || "Unknown"), status: "Info", detail: "" },
       { label: "Server IP", value: findLineValue(status, ["server ip", "ip", "SERVER_IP"]) || "Unknown", status: "Info", detail: "" },
       { label: "Battlegroup", value: findLineValue(status, ["battlegroup", "battlegroup id"]) || "Unknown", status: "Info", detail: "" },
-      { label: "Population", value: population || "No population data", status: population ? "Checked" : "Unknown", detail: "" }
+      { label: "Population", value: population || "No population data", status: "Info", detail: "" }
     ],
     health: [
       { label: "Containers", value: containers.label, status: containers.status, detail: containers.detail },
@@ -1855,6 +1885,67 @@ function summarizeHomeStatus(status: string, readiness: string, readinessWarning
       { label: "Funcom/FLS", value: fls.label, status: fls.status, detail: fls.detail }
     ]
   };
+}
+
+function summarizeContainers(text: string) {
+  const lines = sectionLines(text, "Containers").filter((line) => !/^SERVICE\s+STATUS/i.test(line));
+  if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
+  const bad = lines.find((line) => /\b(missing|stopped|exited|dead)\b/i.test(line));
+  return bad ? { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) } : { label: "Ready", status: "Ready", detail: "" };
+}
+
+function summarizeListeners(text: string) {
+  const lines = sectionLines(text, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line));
+  if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
+  const bad = lines.find((line) => /\b(MISSING|FAIL|ERROR)\b/i.test(line));
+  return bad ? { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) } : { label: "Ready", status: "Ready", detail: "" };
+}
+
+function summarizeDatabase(text: string) {
+  const value = findLineValue(sectionLines(text, "Database").join("\n"), ["World partitions"]);
+  if (!value) return { label: "Unknown", status: "Unknown", detail: "" };
+  const count = Number(value);
+  if (Number.isFinite(count) && count > 0) return { label: "Ready", status: "Ready", detail: `World partitions: ${count}` };
+  return { label: "Attention Needed", status: "Warn", detail: `World partitions: ${value}` };
+}
+
+function summarizeGameServers(text: string) {
+  const lines = sectionLines(text, "Game servers").filter((line) => !/^MAP\s+STATE\s+UPTIME/i.test(line) && !/^Note:/i.test(line));
+  if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
+  const bad = lines.find((line) => /\b(ERROR|NOT RUNNING|MISSING)\b/i.test(line));
+  const wait = lines.find((line) => /\b(WARMING|WAIT)\b/i.test(line));
+  if (bad) return { label: "Attention Needed", status: "Failed", detail: friendlyIssueLine(bad) };
+  if (wait) return { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(wait) };
+  return { label: "Ready", status: "Ready", detail: "" };
+}
+
+function summarizeRabbit(text: string) {
+  const lines = sectionLines(text, "RabbitMQ game connections");
+  if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
+  if (lines.some((line) => /not running|missing|failed/i.test(line))) return { label: "Attention Needed", status: "Failed", detail: friendlyIssueLine(lines[0]) };
+  const director = numberAfterLabel(lines, "Director connections");
+  const game = numberAfterLabel(lines, "Game server connections");
+  const textRouter = numberAfterLabel(lines, "TextRouter connections");
+  if ((director !== null && director < 1) || (game !== null && game < 1)) {
+    return { label: "Attention Needed", status: "Warn", detail: `Director connections: ${director ?? "unknown"}, game server connections: ${game ?? "unknown"}` };
+  }
+  const detail = [`Director connections: ${director ?? "unknown"}`, `Game server connections: ${game ?? "unknown"}`, `TextRouter connections: ${textRouter ?? "0"}`].join(", ");
+  return { label: "Ready", status: "Ready", detail };
+}
+
+function summarizeFls(text: string) {
+  const lines = sectionLines(text, "Funcom/FLS summary");
+  if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
+  const bad = lines.find((line) => /:\s*(WAIT|FAIL|ERROR|MISSING)/i.test(line));
+  if (bad) return { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) };
+  return { label: "Ready", status: "Ready", detail: lines.map(friendlyIssueLine).join(", ") };
+}
+
+function numberAfterLabel(lines: string[], label: string) {
+  const line = lines.find((candidate) => candidate.toLowerCase().startsWith(label.toLowerCase()));
+  if (!line) return null;
+  const match = line.match(/(-?\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 function findPopulation(text: string) {

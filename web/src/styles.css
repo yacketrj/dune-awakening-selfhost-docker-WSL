@@ -80,6 +80,7 @@ main { padding: 22px; min-width: 0; }
 .broadcast-line button { margin-bottom: 0; }
 .actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
 .actions-grid > button { justify-self: start; }
+.catalog-selector { display: grid; gap: 10px; }
 .service-card, .check-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #171a1d; border: 1px solid #302b25; border-radius: 8px; padding: 14px; }
 .service-card div, .check-card div { display: grid; gap: 4px; }
 .service-card span, .check-card p { margin: 0; color: #ad9f89; }
@@ -175,6 +176,16 @@ tr.clickable:hover { background: rgba(198, 139, 74, .12); }
   background-position: center;
   overflow: hidden;
 }
+.map-zoom-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: center;
+  transition: transform .16s ease;
+  background-image: var(--map-image);
+  background-size: cover;
+  background-position: center;
+}
+.map-canvas { background-image: none; }
 .muted { color: #ad9f89; }
 .planned-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .planned-card { background: #14171a; border: 1px dashed #514232; border-radius: 8px; padding: 14px; display: grid; gap: 6px; }

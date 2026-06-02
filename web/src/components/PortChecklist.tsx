@@ -15,6 +15,7 @@ export function PortChecklist({ text }: { text: string }) {
 function parsePorts(text: string) {
   const seen = new Set<string>();
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => {
+    if (!/^(OK|WARN|FAIL|WAIT)\s+/i.test(line)) return false;
     if (!/\b\d{2,5}\b/.test(line)) return false;
     if (/battlegroup|advertised ip|local bind|public mode|private ip|in-game ping|server ip/i.test(line)) return false;
     return /\b(udp|tcp)\b/i.test(line) || /\b(listen|listening|port|open|ready|ok)\b/i.test(line);
@@ -23,18 +24,22 @@ function parsePorts(text: string) {
     const port = portToken?.[1] || "";
     const protocol = (portToken?.[2] || line.match(/\b(udp|tcp)\b/i)?.[1] || "").toUpperCase();
     if (!protocol || !port) return null;
-    const status = /fail|closed|missing|error|down/i.test(line) ? "Failed" : /warn|not ready|waiting/i.test(line) ? "Attention Needed" : /open|listen|listening|ok|ready|up/i.test(line) ? "Ready" : "Checked";
+    const status = /^FAIL\s+/i.test(line) || /closed|missing|error|down/i.test(line) ? "Failed" : /^(WARN|WAIT)\s+/i.test(line) || /not ready|waiting/i.test(line) ? "Warn" : "Ready";
     const beforePort = portToken ? line.slice(0, portToken.index).trim() : line;
     const name = friendlyPortName(beforePort || line, port, protocol);
     const key = `${name}-${port}-${protocol}`;
     if (seen.has(key)) return null;
     seen.add(key);
-    return { name, port, protocol, status, detail: status === "Ready" ? "Listening" : cleanDetail(line), kind: status === "Failed" ? "fail" : status === "Attention Needed" ? "warn" : "pass" };
+    return { name, port, protocol, status, detail: status === "Ready" ? "Open" : cleanDetail(line), kind: status === "Failed" ? "fail" : status === "Warn" ? "warn" : "pass" };
   }).filter(Boolean) as { name: string; port: string; protocol: string; status: string; detail: string; kind: string }[];
 }
 
 function parseNetworkWarnings(text: string) {
-  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /advertised ip|public mode|private ip|local bind|in-game ping/i.test(line)).map(cleanDetail).slice(0, 4);
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(WARN|FAIL)\s+/i.test(line) && /advertised ip|public mode|private ip|in-game ping/i.test(line)).map((line) => {
+    const clean = cleanDetail(line);
+    if (/public mode advertises/i.test(clean)) return "Public mode with NAT detected. Make sure UDP game ports are forwarded to the local host.";
+    return clean;
+  }).slice(0, 4);
 }
 
 function cleanDetail(line: string) {
@@ -55,6 +60,8 @@ function friendlyPortName(raw: string, port: string, protocol: string) {
   if (known) return known;
   if (/overmap.*client/.test(normalized)) return "Overmap Clients";
   if (/survival.*client/.test(normalized)) return "Survival 1 Clients";
+  if (/overmap.*game/.test(normalized)) return "Overmap Game";
+  if (/survival.*game/.test(normalized)) return "Survival 1 Game";
   if (/survival.*s2s|survival.*igw/.test(normalized)) return "Survival 1 IGW";
   if (/overmap.*s2s|overmap.*igw/.test(normalized)) return "Overmap IGW";
   if (/rabbit.*game.*http/.test(normalized)) return "RabbitMQ Game HTTP";

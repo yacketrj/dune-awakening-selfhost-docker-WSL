@@ -15,14 +15,21 @@ export function ReadinessTimeline({ text }: { text: string }) {
 }
 
 function parseChecks(text: string) {
-  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => !/^=+|checks?$|readiness/i.test(line)).slice(0, 40).map((line) => {
-    const status = /fail|error|not ready|missing|down/i.test(line) ? "Failed" : /warn|waiting|starting|partial|wait/i.test(line) ? "Attention Needed" : /ok|ready|healthy|running|up|pass|found/i.test(line) ? "Ready" : "Checked";
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => {
+    if (/^=== .+ ===$/.test(line)) return false;
+    if (/^(READY|WARMING|NOT READY):/i.test(line)) return false;
+    if (/^Note:|^Tip:|^Run again|^After READY|^Possible runtime/i.test(line)) return false;
+    if (/^\s*dune ready\s*$/i.test(line)) return false;
+    if (/^This is normal|^Game server containers|^Director is running|^Gateway is running|^Fresh init/i.test(line)) return false;
+    return /^(OK|WAIT|FAIL)\s+/i.test(line);
+  }).slice(0, 80).map((line) => {
+    const status = /^FAIL\s+/i.test(line) ? "Failed" : /^WAIT\s+/i.test(line) ? "Warn" : "Ready";
     const name = friendlyCheckName(line);
     return {
       name,
       detail: detailForCheck(line, name),
       status,
-      kind: status === "Ready" || status === "Checked" ? "pass" : status === "Failed" ? "fail" : "warn"
+      kind: status === "Ready" ? "pass" : status === "Failed" ? "fail" : "warn"
     };
   }).filter((check) => check.name);
 }
@@ -30,11 +37,11 @@ function parseChecks(text: string) {
 function groupChecks(checks: ReturnType<typeof parseChecks>) {
   return checks.reduce<Record<string, typeof checks>>((groups, check) => {
     const text = `${check.name} ${check.detail}`.toLowerCase();
-    const group = /container|docker|compose|running/.test(text) ? "Container Checks" :
+    const group = /dune postgres|rabbitmq admin|rabbitmq game|text router|dune director|gateway|survival 1$|overmap$|orchestrator/.test(text) ? "Container Checks" :
       /listener|port|tcp|udp|listen/.test(text) ? "Listener Checks" :
-        /database|postgres|partition|world/.test(text) ? "Database Checks" :
-          /server|gateway|director|survival|overmap|map/.test(text) ? "Game Server Checks" :
-            /rabbit|rmq|fls|funcom|heartbeat|population/.test(text) ? "RabbitMQ / FLS Checks" :
+        /database|partition|world/.test(text) ? "Database Checks" :
+          /ready|warming|server|survival|overmap|dynamic|idle|map/.test(text) ? "Game Server Checks" :
+            /rabbit|rmq|fls|funcom|heartbeat|population|gateway db|monitoring/.test(text) ? "RabbitMQ / FLS Checks" :
               "Other Checks";
     groups[group] ||= [];
     groups[group].push(check);
@@ -72,5 +79,6 @@ function friendlyCheckName(line: string) {
 
 function detailForCheck(line: string, name: string) {
   if (/^OK|^PASS|^READY/i.test(line)) return "";
-  return line.replace(name, "").replace(/\s+/g, " ").trim();
+  const clean = line.replace(/^(WAIT|FAIL)\s+/i, "").replace(/\s+/g, " ").trim();
+  return clean === name ? "Attention needed" : clean;
 }

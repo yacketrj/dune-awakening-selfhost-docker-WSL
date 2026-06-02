@@ -82,6 +82,7 @@ Base path for the native RedBlink API: `/api`.
 | `/api/players/:id/inventory/:itemId` | DELETE | Delete inventory item | Creates `dune db backup`, verifies direct player inventory ownership, transactionally calls `dune.delete_item`; requires `DELETE ITEM` |
 | `/api/admin/items/search` | GET | Search admin item catalog | `dune admin item-search <q>` |
 | `/api/admin/items` | GET | List admin item catalog/categories | `dune admin item-list [category]` |
+| `/api/admin/items/catalog` | GET | Structured admin item catalog | Reads `runtime/data/admin-items.json`; supports `q` and `limit`; used by normal UI item selectors so metadata rows such as `category`/`source` cannot be selected as items |
 | `/api/admin/vehicles` | GET | List/search vehicle catalog | `dune admin vehicle-list [q]` |
 | `/api/admin/vehicles/structured` | GET | Structured vehicle catalog | Parses `dune admin vehicle-list` into `{ id, name, actor, templates[] }` for Spawn Vehicle dropdowns |
 | `/api/admin/skill-modules` | GET | List/search skill module catalog | `dune admin skill-modules [q]` |

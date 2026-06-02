@@ -8,7 +8,16 @@ export type VehicleCatalogEntry = {
   templates: string[];
 };
 
+export type ItemCatalogEntry = {
+  id: string;
+  itemId: string;
+  name: string;
+  category: string;
+  source: string;
+};
+
 export const adminApi = {
+  itemCatalog: (q = "", limit = 500) => api<{ rows: ItemCatalogEntry[] }>(`/api/admin/items/catalog?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`),
   itemSearch: (q: string) => api<{ stdout: string }>(`/api/admin/items/search?q=${encodeURIComponent(q)}`),
   itemList: (category = "") => api<{ stdout: string }>(`/api/admin/items${category ? `?category=${encodeURIComponent(category)}` : ""}`),
   vehicles: (q = "") => api<{ stdout: string }>(`/api/admin/vehicles${q ? `?q=${encodeURIComponent(q)}` : ""}`),

@@ -31,7 +31,7 @@ Goal: add operational controls only where existing RedBlink manager behavior is 
 Goal: replace free-text workflows with selectors and structured result tables.
 
 - Admin player selector from Players API using character name, online status, DB actor ID, and Admin action ID.
-- Item selector/search from existing catalog endpoints with category/template display.
+- Item selector/search from the structured `runtime/data/admin-items.json` catalog endpoint with category/template display. Normal user flows must select an actual catalog row, not arbitrary text.
 - Structured command history table.
 - Starter Kit item picker/table with quantity and durability/quality controls, plus collapsed manual/raw override.
 - Specialization XP and faction unlock flow only after verifying exact RedBlink admin tooling or DB/RMQ semantics.
@@ -80,3 +80,4 @@ Goal: close remaining parity gaps without guessing.
 - Starter Kit auto-grant is partial: it runs as a web-admin scanner, not a standalone durable service.
 - Market automation remains blocked until a RedBlink-compatible market automation runtime exists.
 - Phase 12A2 completed low-risk selector/table cleanup for Home, Setup, Server Control, Services, Players, Admin Tools, Live Map, Starter Kit, Backups, Logs, Updates, and Settings. Remaining 12B-12F backend-heavy items are intentionally deferred until CLI behavior and safety requirements are verified.
+- Phase 12A corrective follow-up replaced loose status/readiness/ports/item parsing with stricter parser behavior and a structured item catalog endpoint. Deferred work remains focused on deeper manager-backed features, not parser guesswork.
