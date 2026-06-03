@@ -11,6 +11,7 @@ source runtime/scripts/runtime-env.sh
 
 issue=0
 warming=0
+rmq_game_connections_cache="__unset__"
 
 config_value() {
   local file="$1"
@@ -134,7 +135,11 @@ count_rmq_prefix() {
     return
   fi
 
-  docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
+  if [ "$rmq_game_connections_cache" = "__unset__" ]; then
+    rmq_game_connections_cache="$(timeout 8 docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null || true)"
+  fi
+
+  printf '%s\n' "$rmq_game_connections_cache" \
     | awk -v prefix="$prefix" '$1 != "user" && index($1, prefix) == 1 && $2 == "running" { n++ } END { print n + 0 }'
 }
 
@@ -491,9 +496,13 @@ echo "Auto updates: $(auto_update_state)"
 echo
 echo "=== RabbitMQ game connections ==="
 if is_running dune-rmq-game; then
-  echo "Director connections:    $(count_rmq_prefix 'bgd.')"
-  echo "Game server connections: $(count_rmq_prefix 'sg.')"
-  echo "TextRouter connections:  $(count_rmq_prefix 'tr.')"
+  rmq_game_connections_cache="$(timeout 8 docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null || true)"
+  director_connections="$(printf '%s\n' "$rmq_game_connections_cache" | awk '$1 != "user" && index($1, "bgd.") == 1 && $2 == "running" { n++ } END { print n + 0 }')"
+  game_server_connections="$(printf '%s\n' "$rmq_game_connections_cache" | awk '$1 != "user" && index($1, "sg.") == 1 && $2 == "running" { n++ } END { print n + 0 }')"
+  text_router_connections="$(printf '%s\n' "$rmq_game_connections_cache" | awk '$1 != "user" && index($1, "tr.") == 1 && $2 == "running" { n++ } END { print n + 0 }')"
+  echo "Director connections:    $director_connections"
+  echo "Game server connections: $game_server_connections"
+  echo "TextRouter connections:  $text_router_connections"
 else
   echo "RabbitMQ game is not running"
 fi

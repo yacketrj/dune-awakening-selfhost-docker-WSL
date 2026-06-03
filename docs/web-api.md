@@ -30,6 +30,8 @@ Base path for the native RedBlink API: `/api`.
 | `/api/server/stop` | POST | Stop task | `dune stop` |
 | `/api/server/restart` | POST | Restart task | `dune stop` then `dune start` |
 | `/api/server/restart-service` | POST | Restart service task | `dune restart <validated-service>` |
+| `/api/server/restart-schedule` | GET | Scheduled restart status | `dune restart-schedule status`; returns command status even when timer/state cannot be read |
+| `/api/server/restart-schedule` | POST | Save scheduled restart | Task wrapping `dune restart-schedule enable <hours>` or `disable`; requires `SAVE RESTART SCHEDULE`; validates 1-168 hours |
 | `/api/logs/services` | GET | Service names | Static allowlist until dynamic discovery is added |
 | `/api/logs/:service` | GET | Service logs | `dune logs <validated-service>` |
 | `/api/logs/:service/stream` | GET | Service log SSE stream | `dune logs <validated-service>` or validated Docker logs for dynamic `dune-server-*` containers |
@@ -38,10 +40,17 @@ Base path for the native RedBlink API: `/api`.
 | `/api/updates/apply-game` | POST | Game update task | `dune update --yes` |
 | `/api/updates/check-stack` | POST | Stack update check task | `dune self-update check` |
 | `/api/updates/apply-stack` | POST | Stack update task | `dune self-update install latest` |
+| `/api/updates/auto-game` | GET | Automatic game update status | `dune update auto status`; reports saved manager preference and timer state |
+| `/api/updates/auto-game` | POST | Save automatic game update setting | Task wrapping `dune update auto enable <HH:MM:SS>` or `disable`; requires `SAVE AUTO GAME UPDATES` |
+| `/api/updates/previous-stack` | GET | Previous stack releases | `dune self-update list` |
+| `/api/updates/restore-previous-stack` | POST | Restore previous RedBlink stack | Task wrapping `dune self-update install previous`; requires `RESTORE PREVIOUS STACK` |
 | `/api/backups` | GET | Backup list | `dune db list` |
 | `/api/backups/create` | POST | Create backup task | `dune db backup` |
 | `/api/backups/restore` | POST | Restore backup task | `dune db restore <validated-backup>` |
 | `/api/backups/:name` | DELETE | Delete backup task | `dune db delete <validated-backup>` |
+| `/api/backups/auto` | GET | Automatic database backup status | `dune db auto status`; reports saved manager preference and timer state |
+| `/api/backups/auto` | POST | Save automatic database backup setting | Task wrapping `dune db auto enable <hours> [retention-days]` or `disable`; validates interval and retention |
+| `/api/backups/import-remote` | POST | Remote backup import capability response | Returns unsupported; manager SSH import is interactive and needs key-only credential/preview support before web exposure |
 | `/api/database/status` | GET | Direct DB health/config status | Direct PostgreSQL query using discovered RedBlink DB config |
 | `/api/database/schemas` | GET | List schemas | Direct PostgreSQL `information_schema` query |
 | `/api/database/tables` | GET | Database tables | Direct PostgreSQL `information_schema` / `pg_stat_user_tables` query |
@@ -107,6 +116,10 @@ Base path for the native RedBlink API: `/api`.
 | `/api/maps/autoscaler` | POST | Autoscaler control | Task wrapping validated `dune autoscaler start|stop|restart|logs|status`; requires `AUTOSCALER CHANGE` |
 | `/api/maps/memory` | GET | Map memory status | `dune memory status` |
 | `/api/maps/memory` | POST | Set/unset map memory | Task wrapping `dune memory set|unset`; requires `SET MAP MEMORY` or `UNSET MAP MEMORY` |
+| `/api/maps/userengine` | GET | Read UserEngine global settings | `python3 runtime/scripts/usersettings.py engine-values`; read-only preview |
+| `/api/maps/usergame` | GET | Read UserGame map or partition settings | `python3 runtime/scripts/usersettings.py map-values <map>` or `partition-values <map> <partition>`; read-only preview |
+| `/api/maps/user-settings/materialize` | POST | Refresh current UserEngine/UserGame files | Task wrapping `python3 runtime/scripts/usersettings.py materialize-current`; requires `REFRESH MAP SETTINGS` |
+| `/api/maps/user-settings/restore-defaults` | POST | User settings restore-default capability response | Returns unsupported until backup-before-write and restart-impact preview are implemented |
 | `/api/sietches` | GET | Sietch state | `dune sietches list` |
 | `/api/sietches/update` | POST | Sietch settings/control | Task wrapping validated `dune sietches set-max|set-active|set-display|set-password|sync|validate|reconcile`; dangerous actions require `UPDATE SIETCHES` |
 | `/api/deepdesert` | GET | Deep Desert status | `dune deepdesert dual status` |

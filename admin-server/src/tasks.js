@@ -57,6 +57,7 @@ export class TaskManager {
         const args = buildDuneArgs(operation, payload);
         const result = await runDune(this.config, args, {
           allowedExitCodes: operation === "updateCheck" ? [0, 100] : [0],
+          timeoutMs: taskTimeoutMs(this.config, operation),
           onLine: (text, stream) => this.append(task, text, stream)
         });
         lastCode = result.code;
@@ -93,6 +94,13 @@ export class TaskManager {
     const all = this.list();
     for (const task of all.slice(this.config.taskRetention)) this.tasks.delete(task.id);
   }
+}
+
+export function taskTimeoutMs(config, operation) {
+  if (["start", "stop", "restartAll", "restartService", "init", "updateApply", "selfUpdateApply", "selfUpdatePrevious"].includes(operation)) {
+    return Math.max(config.commandTimeoutMs, 30 * 60 * 1000);
+  }
+  return config.commandTimeoutMs;
 }
 
 export function publicTask(task) {

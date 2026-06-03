@@ -21,7 +21,7 @@ Goal: remove the remaining "CLI wrapper" feel from normal workflows without chan
 Goal: add operational controls only where existing RedBlink manager behavior is clear and testable.
 
 - Inspect `runtime/scripts/dune`, `runtime/scripts/manager.sh`, setup scripts, and compose behavior.
-- Scheduled restarts: implement only if a manager command or durable configuration exists. Otherwise document required scheduler/service design.
+- Scheduled restarts: implemented through `dune restart-schedule status|enable|disable`. The web UI saves the manager preference, validates a 1-168 hour interval, requires `SAVE RESTART SCHEDULE`, and reports whether the systemd timer is installed.
 - Server title update: implement only if the stack has a safe config write/apply path and restart requirements are explicit.
 - Redeploy: implement only if existing CLI provides a safe redeploy/update command. Otherwise link users to Setup/Updates and document the intended flow.
 - Add audit events and confirmations for any disruptive action.
@@ -44,16 +44,16 @@ Goal: make map operations understandable without exposing raw command text.
 - Friendly marker names for vehicles/classes; raw class paths only in details/tooltips.
 - Maps page: map table and edit panel for mode, memory, name/password, and safe per-map settings.
 - Inspect manager support for global UserEngine, per-map UserGame overrides, memory defaults, second map/survival support, and revert-to-default flows.
-- Do not expose INI editing until supported keys and rollback behavior are verified.
-- Phase 12A3 corrective pass exposes a menu-style Maps page with dynamic read panels for list/status/autoscaler/memory/deep-desert data. UserEngine/UserGame editing, current live memory usage, restore memory defaults, and revert UserSettings remain planned because they need dedicated backend routes, preview/confirmation, audit logging, and rollback behavior.
+- UserEngine/UserGame read-only previews are exposed through `runtime/scripts/usersettings.py engine-values`, `map-values`, and `partition-values`. Write/reset controls remain disabled because `usersettings.py` can write config/runtime files directly but does not create backups or preview restart impact for the web UI.
+- Phase 12 follow-up exposes a calmer Maps page: dynamic map list first, selected-map edit panel second, and no dumped all-at-once panels. Memory set remains active only through the existing validated `dune memory set` route. Current configured memory is shown from `dune memory status`. Survival dimension/name/password controls, Deep Desert dual-desert writes, UserEngine/UserGame writes, live Docker memory usage, restore memory defaults, and revert UserSettings remain planned because they need restart-impact previews, confirmation design, audit logging, and rollback behavior.
 
 ## Phase 12E: Backups Automation, Remote SSH Import, Character Transfer/Account Takeover Analysis
 
 Goal: improve backup UX while keeping destructive DB operations safe.
 
 - Backups table with row-level restore/delete and automatic initial load.
-- Auto-backup settings only if existing manager has durable scheduling and retention support.
-- Remote SSH import only after verifying secret handling, host validation, progress reporting, and audit logging.
+- Auto-backup settings are implemented through `dune db auto status|enable|disable`. The web UI validates interval/retention and reports when host/systemd permissions prevent timer installation.
+- Remote SSH import remains disabled. The manager flow is interactive (`ssh`/`scp` host, user, port, path prompts), so the web wrapper still needs key-only credential selection, remote preview, no secret logging, progress reporting, and audit logging.
 - Character transfer/account takeover: analyze schema, ownership, account identity, and recovery risks before implementation. Keep blocked until backup, preview, transaction, and rollback requirements are defined.
 
 ## Phase 12F: Updates Dashboard, Auto Game Updates, Stack Rollback
@@ -62,8 +62,8 @@ Goal: make update state visible and safe.
 
 - Auto-load game and stack update checks into status cards.
 - Expose update buttons only when an update is available or when a manual re-check is requested.
-- Auto game updates only if the manager supports durable scheduling, maintenance windows, and safe failure handling.
-- Stack rollback only if previous stack state is captured and a verified restore command exists.
+- Auto game updates are implemented through `dune update auto status|enable|disable`. The web UI validates `HH:MM:SS`, requires `SAVE AUTO GAME UPDATES`, and reports timer state.
+- Previous stack release listing is implemented through `dune self-update list`; restore uses `dune self-update install previous` and requires `RESTORE PREVIOUS STACK`.
 
 ## Phase 12G: Remaining Player/Admin Features
 
@@ -82,3 +82,4 @@ Goal: close remaining parity gaps without guessing.
 - Market automation remains blocked until a RedBlink-compatible market automation runtime exists.
 - Phase 12A2 completed low-risk selector/table cleanup for Home, Setup, Server Control, Services, Players, Admin Tools, Live Map, Starter Kit, Backups, Logs, Updates, and Settings. Remaining 12B-12F backend-heavy items are intentionally deferred until CLI behavior and safety requirements are verified.
 - Phase 12A corrective follow-up replaced loose status/readiness/ports/item parsing with stricter parser behavior and a structured item catalog endpoint. Deferred work remains focused on deeper manager-backed features, not parser guesswork.
+- Phase 12 manager feature pass added web controls for automatic database backup settings, scheduled restart settings, automatic game update settings, previous stack release listing/restore, configured map memory display, and read-only UserEngine/UserGame previews. Remote SSH backup import and UserEngine/UserGame writes remain disabled for exact safety reasons listed above.

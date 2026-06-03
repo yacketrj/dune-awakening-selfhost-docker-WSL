@@ -7,6 +7,7 @@ cd "$(dirname "$0")/../.."
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/runtime-env.sh
 source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
@@ -247,9 +248,9 @@ docker run -d \
   --network dune-net \
   --restart unless-stopped \
   -p 127.0.0.1:11717:11717/tcp \
-  -v "$PWD/runtime/director/config/director_config.ini:/Tools/Battlegroups/Director/BattlegroupDirector/director_config.ini:ro" \
-  -v "$PWD/runtime/generated/director-bundle:/opt/dune-director-bundle" \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$(host_path "$PWD/runtime/director/config/director_config.ini"):/Tools/Battlegroups/Director/BattlegroupDirector/director_config.ini:ro" \
+  -v "$(host_path "$PWD/runtime/generated/director-bundle"):/opt/dune-director-bundle" \
+  -v "$(host_path "$FAKE_K8S_SERVICEACCOUNT_DIR"):/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "DOTNET_BUNDLE_EXTRACT_BASE_DIR=/opt/dune-director-bundle" \
   -e "KUBERNETES_SERVICE_HOST=igwo.local" \
   -e "KUBERNETES_SERVICE_PORT=6443" \

@@ -18,7 +18,19 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("backupDelete", { backup: "dune-db-test.backup" }), ["db", "delete", "dune-db-test.backup"]);
   assert.deepEqual(buildDuneArgs("adminAddXp", { playerId: "FLS_TEST", amount: 1000 }), ["admin", "award-xp", "FLS_TEST", "1000"]);
   assert.deepEqual(buildDuneArgs("updateApply"), ["update", "--yes"]);
+  assert.deepEqual(buildDuneArgs("updateAutoStatus"), ["update", "auto", "status"]);
+  assert.deepEqual(buildDuneArgs("updateAutoEnable", { time: "05:00:00" }), ["update", "auto", "enable", "05:00:00"]);
+  assert.deepEqual(buildDuneArgs("updateAutoDisable"), ["update", "auto", "disable"]);
   assert.deepEqual(buildDuneArgs("selfUpdateApply"), ["self-update", "install", "latest"]);
+  assert.deepEqual(buildDuneArgs("selfUpdateList"), ["self-update", "list"]);
+  assert.deepEqual(buildDuneArgs("selfUpdatePrevious"), ["self-update", "install", "previous"]);
+  assert.deepEqual(buildDuneArgs("backupAutoStatus"), ["db", "auto", "status"]);
+  assert.deepEqual(buildDuneArgs("backupAutoEnable", { hours: 6, retentionDays: 14 }), ["db", "auto", "enable", "6", "14"]);
+  assert.deepEqual(buildDuneArgs("backupAutoEnable", { hours: 6, retentionDays: 0 }), ["db", "auto", "enable", "6"]);
+  assert.deepEqual(buildDuneArgs("backupAutoDisable"), ["db", "auto", "disable"]);
+  assert.deepEqual(buildDuneArgs("restartScheduleStatus"), ["restart-schedule", "status"]);
+  assert.deepEqual(buildDuneArgs("restartScheduleEnable", { hours: 12 }), ["restart-schedule", "enable", "12"]);
+  assert.deepEqual(buildDuneArgs("restartScheduleDisable"), ["restart-schedule", "disable"]);
   assert.deepEqual(buildDuneArgs("adminTeleport", { playerId: "FLS_TEST", x: 1, y: 2, z: 3, yaw: 90 }), ["admin", "teleport", "FLS_TEST", "1", "2", "3", "90"]);
   assert.deepEqual(buildDuneArgs("adminGiveItemId", { playerId: "FLS_TEST", itemId: "WaterBottle_1", quantity: 2, durability: 0.5 }), ["admin", "grant-item-id", "FLS_TEST", "WaterBottle_1", "2", "0.5"]);
   assert.deepEqual(buildDuneArgs("adminGiveItems", { playerId: "FLS_TEST", template: "scout-ornithopter-mk6" }), ["admin", "grant-template", "FLS_TEST", "scout-ornithopter-mk6"]);
@@ -37,6 +49,9 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("sietchesSetActive", { map: "Survival_1", count: 2 }), ["sietches", "set-active", "Survival_1", "2"]);
   assert.deepEqual(buildDuneArgs("sietchesSetDisplay", { partitionId: 38, displayName: "Sietch Alpha" }), ["sietches", "set-display", "38", "Sietch Alpha"]);
   assert.deepEqual(buildDuneArgs("deepdesertAction", { action: "disable" }), ["deepdesert", "dual", "disable", "--yes", "--force"]);
+  assert.deepEqual(buildDuneArgs("userSettingsEngineValues"), ["usersettings", "engine-values"]);
+  assert.deepEqual(buildDuneArgs("userSettingsMapValues", { map: "Survival_1" }), ["usersettings", "map-values", "Survival_1"]);
+  assert.deepEqual(buildDuneArgs("userSettingsPartitionValues", { map: "Survival_1", partitionId: 1 }), ["usersettings", "partition-values", "Survival_1", "1"]);
   assert.throws(() => buildDuneArgs("adminAddXp", { playerId: "bad;id", amount: 1000 }));
   assert.throws(() => buildDuneArgs("backupRestore", { backup: "../dump.backup" }));
   assert.throws(() => buildDuneArgs("adminGiveItem", { playerId: "FLS_TEST", itemName: "", quantity: 1 }));
@@ -52,6 +67,10 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.throws(() => buildDuneArgs("memorySet", { map: "DeepDesert_1", memory: "8gb" }));
   assert.throws(() => buildDuneArgs("sietchesSetPassword", { partitionId: 1, password: "bad\npw" }));
   assert.throws(() => buildDuneArgs("deepdesertAction", { action: "reset" }));
+  assert.throws(() => buildDuneArgs("restartScheduleEnable", { hours: 0 }));
+  assert.throws(() => buildDuneArgs("backupAutoEnable", { hours: 0 }));
+  assert.throws(() => buildDuneArgs("backupAutoRetention", { retentionDays: -1 }));
+  assert.throws(() => buildDuneArgs("updateAutoEnable", { time: "bad" }));
   assert.throws(() => buildDuneArgs("unknown"));
 });
 

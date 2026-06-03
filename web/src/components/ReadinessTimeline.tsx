@@ -130,7 +130,7 @@ function parseStatusRabbit(text: string, readyRows: ReturnType<typeof parseReady
 }
 
 function parseStatusFls(text: string, readyRows: ReturnType<typeof parseReadyRows>): CheckRow[] {
-  const section = sectionLines(text, "Funcom/FLS summary");
+  const section = sectionLines(text, "Funcom/FLS summary").filter((line) => /^(Director heartbeat|Population declaration|Max capacity declaration|Gateway DB monitoring)\s*:/i.test(line));
   if (!section.length) return readyRows.filter((row) => row.group === "Funcom/FLS Summary").map(({ group: _group, ...row }) => row);
   return section.map((line) => {
     const [name, value = ""] = line.split(":").map((part) => part.trim());

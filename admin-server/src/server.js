@@ -14,6 +14,7 @@ import { listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
 import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishServerCommand } from "./rmq.js";
 import { enableStarterKit, grantEligibleStarterKits, grantStarterKit, retryStarterKitGrant, runStarterKitAutoScan, saveStarterKitConfig, starterKitCapabilities, starterKitConfig, starterKitEligiblePlayers, starterKitHistory } from "./starterKit.js";
 import { readJsonBody, safeStaticTarget } from "./httpSafety.js";
+import { parseBackupAutoStatus, parseBackupListRows } from "./statusParsers.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
@@ -88,10 +89,10 @@ async function handleApi(req, res) {
   if (path.startsWith("/api/setup/tasks/")) return taskRoute(req, res, path);
 
   if (path === "/api/server/status") return commandJson(res, "status");
-  if (path === "/api/server/readiness") return commandJson(res, "readiness");
+  if (path === "/api/server/readiness") return safeCommandJson(res, "readiness");
   if (path === "/api/server/ports") return commandJson(res, "ports");
   if (path === "/api/server/services") return commandJson(res, "services");
-  if (path === "/api/server/doctor") return commandJson(res, "doctor");
+  if (path === "/api/server/doctor") return safeCommandJson(res, "doctor");
   if (path === "/api/server/start" && req.method === "POST") return task(req, res, "server", "start", {});
   if (path === "/api/server/stop" && req.method === "POST") return task(req, res, "server", "stop", {});
   if (path === "/api/server/restart" && req.method === "POST") return task(req, res, "server", "restartAll", {});
@@ -99,6 +100,8 @@ async function handleApi(req, res) {
     const body = await readJson(req);
     return task(req, res, "server", "restartService", { service: body.service });
   }
+  if (path === "/api/server/restart-schedule" && req.method === "POST") return restartScheduleRoute(req, res);
+  if (path === "/api/server/restart-schedule") return safeCommandJson(res, "restartScheduleStatus");
 
   if (path === "/api/logs/services") return json(res, 200, { services: await discoverServices() });
   if (path.startsWith("/api/logs/")) return logsRoute(req, res, path);
@@ -107,9 +110,16 @@ async function handleApi(req, res) {
   if (path === "/api/updates/apply-game" && req.method === "POST") return task(req, res, "updates", "updateApply", {});
   if (path === "/api/updates/check-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateCheck", {});
   if (path === "/api/updates/apply-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateApply", {});
+  if (path === "/api/updates/auto-game" && req.method === "POST") return autoGameUpdateRoute(req, res);
+  if (path === "/api/updates/restore-previous-stack" && req.method === "POST") return previousStackRestoreRoute(req, res);
+  if (path === "/api/updates/auto-game") return safeCommandJson(res, "updateAutoStatus");
+  if (path === "/api/updates/previous-stack") return safeCommandJson(res, "selfUpdateList");
   if (path === "/api/updates/repair-runtime" && req.method === "POST") return task(req, res, "updates", "readiness", {});
 
-  if (path === "/api/backups") return commandJson(res, "backupList");
+  if (path === "/api/backups") return backupsListRoute(res);
+  if (path === "/api/backups/auto" && req.method === "POST") return autoBackupRoute(req, res);
+  if (path === "/api/backups/import-remote" && req.method === "POST") return remoteBackupImportRoute(req, res);
+  if (path === "/api/backups/auto") return backupAutoStatusRoute(res);
   if (path === "/api/backups/create" && req.method === "POST") return task(req, res, "backup", "backupCreate", {});
   if (path === "/api/backups/restore" && req.method === "POST") {
     const body = await readJson(req);
@@ -255,6 +265,10 @@ async function handleApi(req, res) {
   if (path === "/api/maps/autoscaler") return commandJson(res, "autoscalerStatus");
   if (path === "/api/maps/memory" && req.method === "POST") return memoryRoute(req, res);
   if (path === "/api/maps/memory") return commandJson(res, "memoryStatus");
+  if (path === "/api/maps/userengine") return safeCommandJson(res, "userSettingsEngineValues");
+  if (path === "/api/maps/usergame") return safeCommandJson(res, url.searchParams.get("partitionId") ? "userSettingsPartitionValues" : "userSettingsMapValues", { map: url.searchParams.get("map") || "Survival_1", partitionId: url.searchParams.get("partitionId") || "1" });
+  if (path === "/api/maps/user-settings/materialize" && req.method === "POST") return confirmedTask(req, res, "maps", "userSettingsMaterializeCurrent", {}, "REFRESH MAP SETTINGS");
+  if (path === "/api/maps/user-settings/restore-defaults" && req.method === "POST") return userSettingsRestoreDefaultsRoute(req, res);
   if (path === "/api/sietches") return commandJson(res, "sietchesList");
   if (path === "/api/sietches/update" && req.method === "POST") return sietchesUpdateRoute(req, res);
   if (path === "/api/deepdesert") return commandJson(res, "deepdesertStatus");
@@ -270,6 +284,23 @@ async function commandJson(res, operation, payload = {}) {
   const args = buildDuneArgs(operation, payload);
   const result = await runDune(config, args);
   return json(res, 200, { operation, stdout: result.stdout, stderr: result.stderr, exitCode: result.code });
+}
+
+async function safeCommandJson(res, operation, payload = {}) {
+  if (config.mockMode) return json(res, 200, mockCommand(operation));
+  return json(res, 200, await safeCommand(operation, payload));
+}
+
+async function backupsListRoute(res) {
+  if (config.mockMode) return json(res, 200, { ...mockCommand("backupList"), rows: [] });
+  const result = await runDune(config, buildDuneArgs("backupList"));
+  return json(res, 200, { operation: "backupList", stdout: result.stdout, stderr: result.stderr, exitCode: result.code, rows: parseBackupListRows(result.stdout) });
+}
+
+async function backupAutoStatusRoute(res) {
+  if (config.mockMode) return json(res, 200, { ...mockCommand("backupAutoStatus"), status: { ok: true, enabled: false, intervalHours: "", retentionDays: "0", retentionLabel: "No Retention Limit", timer: "" } });
+  const result = await safeCommand("backupAutoStatus");
+  return json(res, 200, { ...result, status: parseBackupAutoStatus(result) });
 }
 
 async function structuredVehiclesRoute(res) {
@@ -299,7 +330,7 @@ async function safeCommand(operation, payload = {}) {
     const result = await runDune(config, args);
     return { operation, stdout: result.stdout, stderr: result.stderr, exitCode: result.code };
   } catch (error) {
-    return { operation, stdout: "", stderr: redact(error.stderr || error.message || error), exitCode: error.code || 1 };
+    return { operation, stdout: redact(error.stdout || ""), stderr: redact(error.stderr || error.message || error), exitCode: error.code || 1 };
   }
 }
 
@@ -434,6 +465,58 @@ async function memoryRoute(req, res) {
   const phrase = operation === "memoryUnset" ? "UNSET MAP MEMORY" : "SET MAP MEMORY";
   if (body.confirmation !== phrase) return json(res, 400, { error: `Confirmation phrase required: ${phrase}` });
   return task(req, res, "maps", operation, body);
+}
+
+async function autoBackupRoute(req, res) {
+  const body = await readJson(req);
+  const operation = body.enabled ? "backupAutoEnable" : "backupAutoDisable";
+  return task(req, res, "backup", operation, body);
+}
+
+async function remoteBackupImportRoute(req, res) {
+  const body = await readJson(req);
+  const reason = "Remote SSH backup import remains disabled in the web UI: the Dune Manager flow is interactive and asks for SSH host/user/port/path before running scp. A safe web wrapper needs key-only credential selection, remote preview, no secret logging, and restore preflight coverage.";
+  audit(config, req, "backup.import-remote", {
+    supported: false,
+    reason,
+    host: body.host ? "<redacted-host>" : "",
+    user: body.user ? "<redacted-user>" : "",
+    path: body.path ? "<redacted-path>" : ""
+  });
+  return json(res, 501, { supported: false, reason, error: reason });
+}
+
+async function restartScheduleRoute(req, res) {
+  const body = await readJson(req);
+  if (body.confirmation !== "SAVE RESTART SCHEDULE") {
+    return json(res, 400, { error: "Confirmation phrase required: SAVE RESTART SCHEDULE" });
+  }
+  const operation = body.enabled ? "restartScheduleEnable" : "restartScheduleDisable";
+  return task(req, res, "server", operation, body);
+}
+
+async function autoGameUpdateRoute(req, res) {
+  const body = await readJson(req);
+  if (body.confirmation !== "SAVE AUTO GAME UPDATES") {
+    return json(res, 400, { error: "Confirmation phrase required: SAVE AUTO GAME UPDATES" });
+  }
+  const operation = body.enabled ? "updateAutoEnable" : "updateAutoDisable";
+  return task(req, res, "updates", operation, body);
+}
+
+async function previousStackRestoreRoute(req, res) {
+  const body = await readJson(req);
+  if (body.confirmation !== "RESTORE PREVIOUS STACK") {
+    return json(res, 400, { error: "Confirmation phrase required: RESTORE PREVIOUS STACK" });
+  }
+  return task(req, res, "updates", "selfUpdatePrevious", body);
+}
+
+async function userSettingsRestoreDefaultsRoute(req, res) {
+  const body = await readJson(req);
+  const reason = "Restore map defaults remains disabled in the web UI: usersettings.py reset-all can remove overrides, but it does not create a backup or preview which UserEngine/UserGame files will change. Web exposure needs backup-before-write and restart impact handling first.";
+  audit(config, req, "maps.user-settings.restore-defaults", { supported: false, reason, requested: body.confirmation === "RESTORE MAP DEFAULTS" });
+  return json(res, 501, { supported: false, reason, error: reason });
 }
 
 async function sietchesUpdateRoute(req, res) {

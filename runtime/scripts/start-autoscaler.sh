@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+source runtime/scripts/host-paths.sh
+
 CONTAINER_NAME="dune-autoscaler"
 IMAGE="dune-orchestrator:dev"
 
@@ -41,7 +43,7 @@ docker run -d \
   --restart unless-stopped \
   --entrypoint bash \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD:$PWD" \
+  -v "$(host_path "$PWD"):$PWD" \
   -w "$PWD" \
   "$IMAGE" \
   runtime/scripts/autoscaler.sh >/dev/null

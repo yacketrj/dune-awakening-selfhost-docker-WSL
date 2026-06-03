@@ -53,12 +53,170 @@ export function parseRabbitConnections(text) {
 }
 
 export function parseFlsSummary(text) {
-  return Object.fromEntries(sectionLines(text, "Funcom/FLS summary").map((line) => line.split(":").map((part) => part.trim())).filter((parts) => parts.length === 2));
+  return Object.fromEntries(sectionLines(text, "Funcom/FLS summary").filter(isFlsSummaryLine).map((line) => line.split(":").map((part) => part.trim())).filter((parts) => parts.length === 2));
+}
+
+export function parseDoctorWarnings(text, readinessText = "") {
+  const readinessHealthy = /^READY:/m.test(readinessText);
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^WARN\s+/i.test(line)).filter((line) => {
+    if (!readinessHealthy) return true;
+    return !/Director heartbeat not seen in recent logs|Gateway DB monitoring not seen in recent logs/i.test(line);
+  });
+}
+
+export function parseSkillModules(text) {
+  const rows = [];
+  let current = null;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const header = line.match(/^(.+?)\s+\[([^\]]+)\]$/);
+    if (header) {
+      if (current) rows.push(current);
+      current = { skillModule: header[1].trim(), category: header[2].trim(), id: "", maxLevel: "" };
+      continue;
+    }
+    if (!current) continue;
+    const id = line.match(/^id:\s*(.+)$/i);
+    if (id) {
+      current.id = id[1].trim();
+      continue;
+    }
+    const max = line.match(/^max level:\s*(.+)$/i);
+    if (max) current.maxLevel = max[1].trim();
+  }
+  if (current) rows.push(current);
+  return rows;
+}
+
+export function parseMapListRows(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bCurrent:\s*(dynamic|always-on)\b/i.test(line)).map((line) => {
+    const map = line.split(/\s+/)[0];
+    return {
+      map,
+      mode: friendlyMode(line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || ""),
+      partitions: line.match(/\bPartitions:\s*(\d+)/i)?.[1] || "",
+      assigned: line.match(/\bAssigned:\s*(\d+)/i)?.[1] || ""
+    };
+  }).filter((row) => row.map);
+}
+
+export function parseMemoryStatusRows(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^===|^Default memory|^MAP\s+MEMORY/i.test(line)).map((line) => {
+    const match = line.match(/^(.+?)\s{2,}(.+)$/);
+    if (!match) return null;
+    return { map: match[1].trim(), memory: formatMemoryValue(match[2].trim()) };
+  }).filter(Boolean);
+}
+
+export function parseBackupListRows(text) {
+  return text.split(/\r?\n/)
+    .map((line) => parseBackupLine(line))
+    .filter(Boolean)
+    .sort((a, b) => Number(b.createdSort || 0) - Number(a.createdSort || 0));
+}
+
+export function parseBackupAutoStatus(result = {}) {
+  const stdout = String(result.stdout || "");
+  const stderr = String(result.stderr || "");
+  const values = {};
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const match = rawLine.trim().match(/^([^:]{2,80}):\s*(.*)$/);
+    if (!match) continue;
+    values[match[1].trim().toLowerCase().replace(/\s+/g, "_")] = match[2].trim();
+  }
+  const retentionRaw = values.retention || "";
+  return {
+    ok: Number(result.exitCode || 0) === 0,
+    enabled: /^true|1$/i.test(values.enabled || ""),
+    intervalHours: values.interval_hours || "",
+    retentionDays: retentionRaw.match(/(\d+)/)?.[1] || "0",
+    retentionLabel: retentionRaw && !/^off$/i.test(retentionRaw) ? titleDays(retentionRaw.match(/(\d+)/)?.[1] || "") : "No Retention Limit",
+    timer: values.systemd_timer || "",
+    backupDirectory: values.backup_directory || "",
+    reason: Number(result.exitCode || 0) === 0 ? "" : conciseBackupError(stderr || stdout)
+  };
+}
+
+function parseBackupLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) return null;
+  const name = trimmed.match(/([A-Za-z0-9_.-]+(?:\.backup|\.dump|\.sql))/)?.[1];
+  if (!name) return null;
+  const timestamp = name.match(/(\d{8}-\d{6})/)?.[1] || "";
+  const createdSort = backupTimestampSort(timestamp);
+  return {
+    name,
+    backupName: name,
+    created: formatBackupTimestamp(timestamp),
+    createdSort,
+    type: friendlyBackupType(name, trimmed),
+    source: backupSource(name)
+  };
+}
+
+function backupTimestampSort(value) {
+  const match = String(value || "").match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return 0;
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
+}
+
+function formatBackupTimestamp(value) {
+  const match = String(value || "").match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return "Unknown";
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
+}
+
+function friendlyBackupType(name, line) {
+  if (/auto|scheduled/i.test(name) || /auto|scheduled/i.test(line)) return "Automatic Backup";
+  if (/import/i.test(name) || /import/i.test(line)) return "Imported Backup";
+  if (/\.(backup|dump|sql)$/i.test(name)) return "Manual Backup";
+  return "Unknown";
+}
+
+function backupSource(name) {
+  if (name.includes("__")) return name.split("__")[0].replace(/^dune-db-/, "") || "Unknown";
+  return "Local";
+}
+
+function titleDays(value) {
+  return value ? `${value} ${Number(value) === 1 ? "Day" : "Days"}` : "No Retention Limit";
+}
+
+function conciseBackupError(text) {
+  const line = String(text || "").split(/\r?\n/).map((part) => part.trim()).filter(Boolean).find(Boolean) || "Backup status unavailable";
+  if (/permission denied/i.test(line)) return "Backup scheduler status file is not readable by the web admin user.";
+  return line.replace(/^.*runtime\/scripts\/db\.sh:\s*/i, "");
+}
+
+export function parseServerPartitionRows(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^\d+\s*\|/.test(line)).map((line) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 9) return null;
+    const [partitionId, map, dimension, label, assignedServer, gamePort, igwPort, ready, alive] = parts;
+    return {
+      partitionId,
+      map,
+      dimension,
+      label,
+      assignedServer,
+      gamePort,
+      igwPort,
+      ready,
+      alive,
+      status: mapRuntimeStatus({ assignedServer, ready, alive })
+    };
+  }).filter(Boolean);
 }
 
 function findPopulation(text) {
   const line = text.split(/\r?\n/).find((candidate) => /population/i.test(candidate)) || "";
-  return line.match(/\b(\d+\s*\/\s*\d+)\b/)?.[1]?.replace(/\s+/g, "") || "";
+  const match = line.match(/\b(\d+|\?|unknown)\s*\/\s*(\d+|\?|unknown)\b/i);
+  if (!match) return "";
+  const current = /^unknown$/i.test(match[1]) ? "?" : match[1];
+  const max = /^unknown$/i.test(match[2]) ? "?" : match[2];
+  if (current === "?" && max === "?") return "";
+  return `${current}/${max}`;
 }
 
 function summarizeDatabase(text) {
@@ -75,8 +233,37 @@ function summarizeRabbit(text) {
 }
 
 function summarizeFls(text) {
-  const lines = sectionLines(text, "Funcom/FLS summary");
+  const lines = sectionLines(text, "Funcom/FLS summary").filter(isFlsSummaryLine);
   return lines.length && lines.every((line) => /:\s*OK$/i.test(line)) ? "Ready" : "Warn";
+}
+
+function isFlsSummaryLine(line) {
+  return /^(Director heartbeat|Population declaration|Max capacity declaration|Gateway DB monitoring)\s*:/i.test(line);
+}
+
+function friendlyMode(value) {
+  if (value === "dynamic") return "Dynamic";
+  if (value === "always-on") return "Always On";
+  return value || "Not Available";
+}
+
+function formatMemoryValue(value) {
+  const text = String(value || "").trim();
+  const isDefault = /\bdefault\b/i.test(text);
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(GiB?|GB|MiB?|MB|[gGmM])?/i);
+  if (!match) return text || "Not Available";
+  const unit = (match[2] || "GB").toLowerCase();
+  return `${match[1]} ${unit.startsWith("m") ? "MB" : "GB"}${isDefault ? " (Default)" : ""}`;
+}
+
+function mapRuntimeStatus(row) {
+  const assigned = Boolean(String(row.assignedServer || "").trim());
+  const ready = /^true$/i.test(String(row.ready || "").trim());
+  const alive = /^true$/i.test(String(row.alive || "").trim());
+  if (ready) return "Ready";
+  if (alive) return "Running";
+  if (assigned) return "Starting";
+  return "Not Running";
 }
 
 function sectionLines(text, section) {

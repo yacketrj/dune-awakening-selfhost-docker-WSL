@@ -7,6 +7,7 @@ cd "$(dirname "$0")/../.."
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/runtime-env.sh
 source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
@@ -133,10 +134,10 @@ docker run -d \
   --security-opt seccomp=unconfined \
   --memory "$MEMORY" \
   --memory-reservation "$MEMORY" \
-  -v "$PWD/runtime/game/overmap/Saved:/home/dune/server/DuneSandbox/Saved" \
-  -v "$PWD/runtime/game/artifacts:/home/dune/artifacts" \
-  -v "$PWD/runtime/container:/opt/dune-local:ro" \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$(host_path "$PWD/runtime/game/overmap/Saved"):/home/dune/server/DuneSandbox/Saved" \
+  -v "$(host_path "$PWD/runtime/game/artifacts"):/home/dune/artifacts" \
+  -v "$(host_path "$PWD/runtime/container"):/opt/dune-local:ro" \
+  -v "$(host_path "$FAKE_K8S_SERVICEACCOUNT_DIR"):/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "POD_UID=docker-overmap" \
   -e "POD_NAME=${BATTLEGROUP_ID}-sg-overmap-pod-2" \
   -e "POD_IP=$MULTIHOME_IP" \

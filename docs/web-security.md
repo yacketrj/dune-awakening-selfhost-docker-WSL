@@ -64,12 +64,16 @@ Destructive live actions require backend confirmation phrases in addition to fro
 - inventory delete: `DELETE ITEM`
 - storage give item: `GIVE ITEM TO STORAGE`
 - shutdown broadcast: `SHUTDOWN BROADCAST`
+- scheduled restart settings: `SAVE RESTART SCHEDULE`
+- automatic game update settings: `SAVE AUTO GAME UPDATES`
+- restore previous stack: `RESTORE PREVIOUS STACK`
 - map mode changes: `SET MAP MODE`
 - map reconcile: `RECONCILE MAPS`
 - map spawn: `SPAWN MAP`
 - map despawn: `DESPAWN MAP`
 - autoscaler control: `AUTOSCALER CHANGE`
 - map memory set/unset: `SET MAP MEMORY` / `UNSET MAP MEMORY`
+- materialize UserEngine/UserGame runtime files: `REFRESH MAP SETTINGS`
 - Sietch live-impacting changes: `UPDATE SIETCHES`
 - Deep Desert dual controls: `UPDATE DEEP DESERT`
 - Starter Kit config: `SAVE STARTER KIT`
@@ -80,7 +84,9 @@ Destructive live actions require backend confirmation phrases in addition to fro
 - blueprint import/clone/delete blocked paths: `IMPORT BLUEPRINT` / `CLONE BLUEPRINT` / `DELETE BLUEPRINT`
 - base import/delete blocked paths: `IMPORT BASE` / `DELETE BASE`
 
-Market automation, blueprint/base graph writes, and whisper are not exposed as generic command or message publishers. They return explicit unsupported responses until a verified RedBlink-compatible runtime or schema/RMQ mutation path exists. Starter Kit auto-grant is not a generic command runner: it is disabled by default, requires Starter Kit enabled plus `autoGrantEnabled`, uses the current player list `action_player_id`, skips players without admin action IDs, respects current-version idempotency unless repeat grants are enabled, and avoids overlapping scans.
+Automatic database backup settings are validated server-side and run only through `dune db auto enable|disable`; retention `0` is treated as "no retention limit" and is not passed as an invalid manager argument. Remote SSH backup import remains disabled because the Dune Manager flow is interactive and would require SSH credential handling. UserEngine/UserGame restore defaults remains disabled because the helper can remove/write overrides without a web-managed backup/preview.
+
+Market automation, blueprint/base graph writes, remote SSH import, UserEngine/UserGame destructive reset, and whisper are not exposed as generic command or message publishers. They return explicit unsupported responses until a verified RedBlink-compatible runtime or schema/RMQ/file mutation path exists. Starter Kit auto-grant is not a generic command runner: it is disabled by default, requires Starter Kit enabled plus `autoGrantEnabled`, uses the current player list `action_player_id`, skips players without admin action IDs, respects current-version idempotency unless repeat grants are enabled, and avoids overlapping scans.
 
 ## Live Map Safety
 

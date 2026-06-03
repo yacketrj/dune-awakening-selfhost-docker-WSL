@@ -29,11 +29,19 @@ const simpleOperations = {
   stop: ["stop"],
   updateCheck: ["update", "check"],
   updateApply: ["update", "--yes"],
+  updateAutoStatus: ["update", "auto", "status"],
+  updateAutoDisable: ["update", "auto", "disable"],
   selfUpdateCheck: ["self-update", "check"],
   selfUpdateApply: ["self-update", "install", "latest"],
+  selfUpdateList: ["self-update", "list"],
+  selfUpdatePrevious: ["self-update", "install", "previous"],
   backupCreate: ["db", "backup"],
   backupList: ["db", "list"],
+  backupAutoStatus: ["db", "auto", "status"],
+  backupAutoDisable: ["db", "auto", "disable"],
   init: ["init"],
+  restartScheduleStatus: ["restart-schedule", "status"],
+  restartScheduleDisable: ["restart-schedule", "disable"],
   dbStatus: ["database", "status"],
   servers: ["servers"],
   mapsList: ["maps", "list"],
@@ -62,6 +70,8 @@ export function buildDuneArgs(operation, payload = {}) {
   switch (operation) {
     case "restartService":
       return ["restart", validateServiceName(payload.service)];
+    case "restartScheduleEnable":
+      return ["restart-schedule", "enable", String(validateInteger(payload.hours, 1, 168))];
     case "restartAll":
       return ["restart", "gateway"];
     case "logs":
@@ -70,6 +80,17 @@ export function buildDuneArgs(operation, payload = {}) {
       return ["db", "restore", validateBackupName(payload.backup)];
     case "backupDelete":
       return ["db", "delete", validateBackupName(payload.backup)];
+    case "backupAutoEnable":
+      {
+        const args = ["db", "auto", "enable", String(validateInteger(payload.hours, 1, 168))];
+        const retentionDays = validateInteger(payload.retentionDays ?? 0, 0, 3650);
+        if (retentionDays > 0) args.push(String(retentionDays));
+        return args;
+      }
+    case "backupAutoRetention":
+      return ["db", "auto", "retention", String(validateInteger(payload.retentionDays, 0, 3650))];
+    case "updateAutoEnable":
+      return ["update", "auto", "enable", validateUpdateTime(payload.time || "05:00:00")];
     case "databaseTables":
       return ["database", "tables", payload.schema || "dune"];
     case "databasePreview":
@@ -162,6 +183,16 @@ export function buildDuneArgs(operation, payload = {}) {
       return ["sietches", "reconcile", validateMapName(payload.map)];
     case "deepdesertAction":
       return ["deepdesert", "dual", validateDeepDesertAction(payload.action), "--yes", ...(payload.action === "disable" ? ["--force"] : [])];
+    case "userSettingsEngineValues":
+      return ["usersettings", "engine-values"];
+    case "userSettingsMapValues":
+      return ["usersettings", "map-values", validateMapName(payload.map)];
+    case "userSettingsPartitionValues":
+      return ["usersettings", "partition-values", validateMapName(payload.map), validatePartitionId(payload.partitionId)];
+    case "userSettingsResetAll":
+      return ["usersettings", "reset-all"];
+    case "userSettingsMaterializeCurrent":
+      return ["usersettings", "materialize-current"];
     default:
       throw new Error(`Unsupported operation: ${operation}`);
   }
@@ -172,8 +203,15 @@ export function runDune(config, args, options = {}) {
     return Promise.reject(new Error(`Missing dune command: ${config.duneScript}`));
   }
 
+  let command = config.duneScript;
+  let commandArgs = args;
+  if (args[0] === "usersettings") {
+    command = "python3";
+    commandArgs = [`${config.repoRoot}/runtime/scripts/usersettings.py`, ...args.slice(1)];
+  }
+
   return new Promise((resolve, reject) => {
-    const child = spawn(config.duneScript, args, {
+    const child = spawn(command, commandArgs, {
       cwd: config.repoRoot,
       shell: false,
       env: { ...process.env, DUNE_ADMIN_ASSUME_YES: "1", DUNE_DB_ASSUME_YES: "1", DUNE_MEMORY_ASSUME_YES: "1" }
@@ -194,7 +232,7 @@ export function runDune(config, args, options = {}) {
     child.on("error", reject);
     child.on("close", (code, signal) => {
       clearTimeout(timeout);
-      const result = { code, signal, stdout, stderr, args };
+      const result = { code, signal, stdout, stderr, args: commandArgs };
       const allowedExitCodes = options.allowedExitCodes || [0];
       if (allowedExitCodes.includes(code)) resolve(result);
       else reject(Object.assign(new Error(`dune ${args.join(" ")} failed with exit ${code}`), result));
@@ -401,6 +439,12 @@ function validateDeepDesertAction(value) {
   const raw = String(value || "").trim();
   if (["enable", "disable", "bootstrap", "repair"].includes(raw)) return raw;
   throw new Error("Unsupported Deep Desert action");
+}
+
+function validateUpdateTime(value) {
+  const raw = String(value || "").trim();
+  if (/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(raw)) return raw;
+  throw new Error("Auto update time must be HH:MM:SS");
 }
 
 function validateSearchQuery(value) {

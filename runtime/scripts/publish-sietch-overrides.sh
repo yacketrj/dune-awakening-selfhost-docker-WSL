@@ -155,7 +155,7 @@ heal_survival_alive_state() {
   local live_server_ids sql
 
   live_server_ids="$(
-    docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
+    timeout 8 docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
       | awk '$1 ~ /^sg[.]/ && $2 == "running" { split($1, parts, "."); if (length(parts) >= 2) print parts[length(parts) - 1] }' \
       | sort -u
   )" || true

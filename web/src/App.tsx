@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Activity, Archive, Database, FileText, Gift, Home, Map, PackagePlus, Play, RefreshCw, Server, Settings, Shield, ShoppingCart, Users } from "lucide-react";
 import { api, post, setCsrfToken } from "./api/client";
@@ -23,8 +23,10 @@ import { PortChecklist } from "./components/PortChecklist";
 import { ReadinessTimeline } from "./components/ReadinessTimeline";
 
 type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Market" | "Starter Kit" | "Database" | "Storage" | "Bases" | "Blueprints" | "Backups" | "Logs" | "Updates" | "Settings";
-type HomeLoadResult = { statusLoaded: boolean; readinessLoaded: boolean; statusError: string; readinessError: string };
+type HomeLoadResult = { statusLoaded: boolean; readinessLoaded: boolean; statusError: string; readinessError: string; statusText: string; readinessText: string };
 type CatalogItem = { name: string; id: string; itemId?: string; category?: string; source?: string };
+type BackupResult = { status: "running" | "succeeded" | "failed"; title: string; message?: string; details?: string };
+type HomeTaskResult = { status: "running" | "succeeded" | "failed" | "stopped"; title: string; message?: string; details?: string };
 
 const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Home", icon: <Home size={18} /> },
@@ -94,6 +96,8 @@ export function App() {
   const [selectedLogService, setSelectedLogService] = useState("gateway");
   const [logs, setLogs] = useState("");
   const [task, setTask] = useState<Task | null>(null);
+  const [homeTaskResult, setHomeTaskResult] = useState<HomeTaskResult | null>(null);
+  const [homeRunningAction, setHomeRunningAction] = useState<"start" | "stop" | "restart" | "">("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -102,10 +106,6 @@ export function App() {
       setCsrfToken(state.csrfToken);
     }).catch(() => undefined);
   }, []);
-
-  useEffect(() => {
-    if (task && isTerminalTask(task.status)) setTask(null);
-  }, [tab]);
 
   async function login() {
     const result = await post<{ authenticated: boolean; csrfToken: string }>("/api/auth/login", { password });
@@ -146,19 +146,23 @@ export function App() {
           </div>
         </header>
         {error && <div className="error-banner">{error}</div>}
-        {tab === "Home" && <HomePanel status={status} readiness={readiness} setTask={setTask} onLoad={async () => {
+        {tab === "Home" && <HomePanel status={status} readiness={readiness} taskResult={homeTaskResult} setTaskResult={setHomeTaskResult} runningAction={homeRunningAction} setRunningAction={setHomeRunningAction} onLoad={async () => {
           setError("");
           const [nextStatus, nextReadiness] = await Promise.allSettled([serverApi.status(), serverApi.readiness()]);
-          const result: HomeLoadResult = { statusLoaded: false, readinessLoaded: false, statusError: "", readinessError: "" };
+          const result: HomeLoadResult = { statusLoaded: false, readinessLoaded: false, statusError: "", readinessError: "", statusText: "", readinessText: "" };
           if (nextStatus.status === "fulfilled") {
             setStatus(nextStatus.value.stdout);
+            result.statusText = nextStatus.value.stdout;
             result.statusLoaded = true;
           } else {
             result.statusError = nextStatus.reason instanceof Error ? nextStatus.reason.message : String(nextStatus.reason);
           }
           if (nextReadiness.status === "fulfilled") {
-            setReadiness(nextReadiness.value.stdout);
-            result.readinessLoaded = true;
+            const readinessText = nextReadiness.value.stdout || nextReadiness.value.stderr || "";
+            result.readinessText = readinessText;
+            setReadiness(readinessText);
+            result.readinessLoaded = Number(nextReadiness.value.exitCode || 0) === 0;
+            if (!result.readinessLoaded) result.readinessError = nextReadiness.value.stderr || nextReadiness.value.stdout || "Readiness checks are not ready yet.";
           } else {
             setReadiness("");
             result.readinessError = nextReadiness.reason instanceof Error ? nextReadiness.reason.message : String(nextReadiness.reason);
@@ -188,11 +192,37 @@ export function App() {
   );
 }
 
-function HomePanel({ status, readiness, setTask, onLoad }: { status: string; readiness: string; setTask: (task: Task) => void; onLoad: () => Promise<HomeLoadResult> }) {
+function HomePanel({ status, readiness, taskResult, setTaskResult, runningAction, setRunningAction, onLoad }: {
+  status: string;
+  readiness: string;
+  taskResult: HomeTaskResult | null;
+  setTaskResult: Dispatch<SetStateAction<HomeTaskResult | null>>;
+  runningAction: "start" | "stop" | "restart" | "";
+  setRunningAction: Dispatch<SetStateAction<"start" | "stop" | "restart" | "">>;
+  onLoad: () => Promise<HomeLoadResult>;
+}) {
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
   const [readinessWarning, setReadinessWarning] = useState("");
   const [hasLoaded, setHasLoaded] = useState(Boolean(status || readiness));
+  const homeActionRunId = useRef(0);
+  const homeActionStartedAt = useRef(0);
+  const activeHomeAction = useRef<"start" | "stop" | "restart" | "">(runningAction);
+
+  function setHomeAction(action: "start" | "stop" | "restart" | "") {
+    activeHomeAction.current = action;
+    setRunningAction(action);
+  }
+
+  useEffect(() => {
+    activeHomeAction.current = runningAction;
+  }, [runningAction]);
+
+  function applyHomeLoadResult(result: HomeLoadResult) {
+    if (result.statusLoaded || result.readinessLoaded) setHasLoaded(true);
+    setReadinessWarning(!result.readinessLoaded && result.readinessError ? result.readinessError : "");
+    if (!result.statusLoaded && result.statusError) setLocalError(friendlyHomeStatusError(result.statusError));
+  }
 
   async function refresh(isActive = () => true) {
     setLoading(true);
@@ -202,16 +232,94 @@ function HomePanel({ status, readiness, setTask, onLoad }: { status: string; rea
       const result = await onLoad();
       if (!isActive()) return;
       if (result.statusLoaded || result.readinessLoaded) {
-        setHasLoaded(true);
-        if (!result.readinessLoaded && result.readinessError) setReadinessWarning(result.readinessError);
-        if (!result.statusLoaded && result.statusError) setLocalError(result.statusError);
+        applyHomeLoadResult(result);
+        const loadedState = getHomeServerState(result.statusText || status, result.readinessText || readiness);
+        if ((runningAction === "start" || runningAction === "restart") && isHomeActionComplete(result.statusText || status, result.readinessText || readiness)) {
+          setTaskResult({ status: "succeeded", title: runningAction === "start" ? "Server Started Successfully" : "Server Restarted Successfully" });
+          setHomeAction("");
+        } else if (runningAction === "stop" && loadedState.stopped) {
+          setTaskResult({ status: "stopped", title: "Server Stopped" });
+          setHomeAction("");
+        }
+        if (taskResult?.status === "failed" && isHomeActionComplete(result.statusText || status, result.readinessText || readiness)) {
+          setTaskResult({ status: "succeeded", title: /restart/i.test(taskResult.title) ? "Server Restarted Successfully" : "Server Started Successfully" });
+        } else if (taskResult?.status === "failed" && loadedState.running) {
+          setTaskResult({ status: "succeeded", title: /restart/i.test(taskResult.title) ? "Server Restarted Successfully" : "Server Started Successfully" });
+        } else if (taskResult?.status === "failed" && loadedState.stopped && /stop/i.test(taskResult.title)) {
+          setTaskResult({ status: "stopped", title: "Server Stopped" });
+        }
       } else {
-        setLocalError(result.statusError || result.readinessError || "Server status and readiness checks failed.");
+        setLocalError(friendlyHomeStatusError(result.statusError || result.readinessError || "Server status and readiness checks failed."));
       }
     } catch (error) {
-      if (isActive()) setLocalError(error instanceof Error ? error.message : String(error));
+      if (isActive()) setLocalError(friendlyHomeStatusError(error instanceof Error ? error.message : String(error)));
     } finally {
       if (isActive()) setLoading(false);
+    }
+  }
+
+  async function runServerAction(action: "start" | "stop" | "restart") {
+    if (action === "stop" && !window.confirm("Stop the Dune server stack?")) return;
+    if (action === "restart" && !window.confirm("Restart the Dune server stack?")) return;
+    const actionRunId = ++homeActionRunId.current;
+    homeActionStartedAt.current = Date.now();
+    let commandAction = action;
+    const copy = {
+      start: { running: "Starting", success: "Server Started Successfully", failure: "Start Failed" },
+      stop: { running: "Stopping", success: "Server Stopped", failure: "Server stop failed." },
+      restart: { running: "Restarting", success: "Server Restarted Successfully", failure: "Restart Failed" }
+    }[action];
+    setLocalError("");
+    setHomeAction(action);
+    setTaskResult({ status: "running", title: copy.running });
+    if (action === "restart") {
+      const preLoad = await onLoad().catch(() => null);
+      if (homeActionRunId.current !== actionRunId) return;
+      if (preLoad) {
+        applyHomeLoadResult(preLoad);
+        const preState = getHomeServerState(preLoad.statusText || status, preLoad.readinessText || readiness);
+        if (preState.stopped) commandAction = "start";
+      }
+    }
+    let keepPolling = false;
+    try {
+      const response = commandAction === "start" ? await serverApi.start() : commandAction === "stop" ? await serverApi.stop() : await serverApi.restart();
+      const final = await waitForTaskSilently(response.task);
+      if (homeActionRunId.current !== actionRunId) return;
+      const details = taskTechnicalDetails(final);
+      const postLoad = await onLoad().catch(() => null);
+      if (homeActionRunId.current !== actionRunId) return;
+      if (postLoad) applyHomeLoadResult(postLoad);
+      const postState = getHomeServerState(postLoad?.statusText || status, postLoad?.readinessText || readiness);
+      const postReady = isHomeActionComplete(postLoad?.statusText || status, postLoad?.readinessText || readiness);
+      if (action === "stop" && isHomeStopComplete(postLoad?.statusText || status, postLoad?.readinessText || readiness)) {
+        setTaskResult({ status: "stopped", title: copy.success, details });
+      } else if ((action === "start" || action === "restart") && postReady) {
+        setTaskResult({ status: "succeeded", title: copy.success, details });
+      } else if (final.status !== "succeeded") {
+        if ((action === "start" || action === "restart") && (postState.starting || postState.running)) {
+          keepPolling = true;
+          setTaskResult({ status: "running", title: copy.running, details });
+        } else {
+          setTaskResult({ status: "failed", title: copy.failure, details });
+        }
+      } else if (action === "stop") {
+        keepPolling = true;
+        setTaskResult({ status: "running", title: copy.running, details });
+      } else if (action === "restart" && final.status === "succeeded") {
+        keepPolling = true;
+        setTaskResult({ status: "running", title: copy.running, details });
+      } else if ((action === "start" || action === "restart") && (final.status === "succeeded" || postState.starting || postState.running)) {
+        keepPolling = true;
+        setTaskResult({ status: "running", title: copy.running });
+      } else {
+        setTaskResult({ status: "failed", title: copy.failure, details });
+      }
+    } catch (error) {
+      if (homeActionRunId.current !== actionRunId) return;
+      setTaskResult({ status: "failed", title: copy.failure, details: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (homeActionRunId.current === actionRunId && !keepPolling) setHomeAction("");
     }
   }
 
@@ -221,13 +329,72 @@ function HomePanel({ status, readiness, setTask, onLoad }: { status: string; rea
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (!runningAction) return;
+    let active = true;
+    const id = window.setInterval(async () => {
+      const result = await onLoad().catch(() => null);
+      if (!active || !result) return;
+      applyHomeLoadResult(result);
+      const currentAction = activeHomeAction.current;
+      if (currentAction === "stop" && isHomeStopComplete(result.statusText || status, result.readinessText || readiness)) {
+        setTaskResult({ status: "stopped", title: "Server Stopped" });
+        setHomeAction("");
+      } else if ((currentAction === "start" || currentAction === "restart") && isHomeActionComplete(result.statusText || status, result.readinessText || readiness)) {
+        setTaskResult({ status: "succeeded", title: currentAction === "start" ? "Server Started Successfully" : "Server Restarted Successfully" });
+        setHomeAction("");
+      }
+    }, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [runningAction, status, readiness, onLoad, setRunningAction, setTaskResult]);
+
+  useEffect(() => {
+    if (runningAction || !homeNeedsWarmRefresh(status, readiness)) return;
+    let active = true;
+    const id = window.setInterval(async () => {
+      const result = await onLoad().catch(() => null);
+      if (active && result) applyHomeLoadResult(result);
+    }, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [runningAction, status, readiness, onLoad]);
+
+  useEffect(() => {
+    if (runningAction !== "start" && runningAction !== "restart") return;
+    if (!isHomeActionComplete(status, readiness)) return;
+    const minimumTransitionMs = runningAction === "restart" ? 8000 : 0;
+    const elapsedMs = Date.now() - homeActionStartedAt.current;
+    if (elapsedMs < minimumTransitionMs) return;
+    setTaskResult({ status: "succeeded", title: runningAction === "start" ? "Server Started Successfully" : "Server Restarted Successfully" });
+    setHomeAction("");
+  }, [runningAction, status, readiness, setRunningAction, setTaskResult]);
+
+  useEffect(() => {
+    if (!taskResult || taskResult.status === "running" || taskResult.status === "failed") return;
+    const id = window.setTimeout(() => setTaskResult(null), 10400);
+    return () => window.clearTimeout(id);
+  }, [taskResult?.status, taskResult?.title, setTaskResult]);
+
+  const serverState = getHomeServerState(status, readiness);
+  const controlsState = taskResult?.status === "stopped" && !runningAction ? { running: false, stopped: true, starting: false } : serverState;
+  const actionRunning = Boolean(runningAction);
+  const refreshDisabled = loading || actionRunning;
+  const startDisabled = loading || actionRunning || controlsState.running;
+  const stopDisabled = runningAction === "stop" || (!actionRunning && (loading || controlsState.stopped));
+  const restartDisabled = loading || actionRunning || controlsState.stopped;
+
   if (loading && !hasLoaded) {
     return <section className="grid">
       <article className="hero-panel wide loading-panel">
         <span className="spinner" aria-hidden="true" />
         <div>
-          <h2>Checking server status...</h2>
-          <p>Checking readiness...</p>
+          <h2>Checking Server Status...</h2>
+          <p>Checking Readiness...</p>
           <p>This can take a few seconds while Docker and Dune health checks run.</p>
         </div>
       </article>
@@ -250,28 +417,43 @@ function HomePanel({ status, readiness, setTask, onLoad }: { status: string; rea
         <h2>Server Overview</h2>
         <p>Use this dashboard for setup, service health, logs, backups, updates, and player admin actions.</p>
         <div className="action-row">
-          <button disabled={loading} onClick={() => refresh()}>{loading ? "Refreshing..." : "Refresh Status"}</button>
-          <button onClick={async () => setTask((await serverApi.start()).task)}><Play size={16} /> Start</button>
-          <button onClick={async () => window.confirm("Stop the Dune server stack?") && setTask((await serverApi.stop()).task)}>Stop</button>
-          <button onClick={async () => window.confirm("Restart the Dune server stack?") && setTask((await serverApi.restart()).task)}>Restart</button>
+          <button disabled={refreshDisabled} onClick={() => refresh()}>{loading ? "Refreshing..." : "Refresh Status"}</button>
+          <button disabled={startDisabled} title={controlsState.running ? "Server is already running." : ""} onClick={() => runServerAction("start")}><Play size={16} /> Start</button>
+          <button disabled={stopDisabled} onClick={() => runServerAction("stop")}>Stop</button>
+          <button disabled={restartDisabled} onClick={() => runServerAction("restart")}>Restart</button>
         </div>
+        {taskResult && <HomeTaskResultCard result={taskResult} />}
         {localError && <p className="error">{localError}</p>}
       </article>
-      <HomeHealthCards status={status} readiness={readiness} readinessWarning={readinessWarning} loading={loading} />
-      {readinessWarning && <article className="panel wide warning-panel">
-        <h3>Readiness check warning</h3>
-        <p>Dune readiness can fail while the stack is still starting or partially unavailable. Server status loaded, so the web admin is still connected.</p>
-        <TechnicalDetails title="Advanced readiness error" text={readinessWarning} />
-      </article>}
+      <HomeHealthCards status={status} readiness={readiness} readinessWarning={readinessWarning} loading={loading} runningAction={runningAction} taskResult={taskResult} />
     </section>
   );
 }
 
+function HomeTaskResultCard({ result }: { result: HomeTaskResult }) {
+  return <div className={`result-panel home-task-result result-${result.status === "succeeded" || result.status === "stopped" ? "ok" : result.status === "failed" ? "fail" : "running"}`} aria-live="polite">
+    <strong className={result.status === "running" ? "loading-dots" : ""}>{result.title}</strong>
+    {result.message && <p>{result.message}</p>}
+    {result.details && <TechnicalDetails title="Technical details" text={result.details} />}
+  </div>;
+}
+
 function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: string) => void; status: string; setReadiness: (text: string) => void; setPorts: (text: string) => void; setDoctor: (text: string) => void; ports: string; readiness: string; doctor: string; onError: (text: string) => void }) {
   const [service, setService] = useState(RESTARTABLE_SERVICES[0].value);
+  const [restartSchedule, setRestartSchedule] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [restartEnabled, setRestartEnabled] = useState(false);
+  const [restartHours, setRestartHours] = useState("24");
+  const restartScheduleValues = parseKeyValueText(restartSchedule?.stdout || "");
   async function run(action: () => Promise<unknown>) {
     props.onError("");
     try { await action(); } catch (error) { props.onError(error instanceof Error ? error.message : String(error)); }
+  }
+  async function loadRestartSchedule() {
+    const result = await serverApi.restartSchedule();
+    setRestartSchedule(result);
+    const values = parseKeyValueText(result.stdout || "");
+    setRestartEnabled(/^true$/i.test(values.scheduled_restart_enabled || ""));
+    if (values.restart_interval_hours && values.restart_interval_hours !== "unset") setRestartHours(values.restart_interval_hours);
   }
   useEffect(() => {
     run(async () => {
@@ -279,6 +461,7 @@ function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: s
       props.setReadiness((await serverApi.readiness()).stdout);
       props.setPorts((await serverApi.ports()).stdout);
       props.setDoctor((await serverApi.doctor()).stdout);
+      await loadRestartSchedule();
     });
   }, []);
   return (
@@ -299,12 +482,35 @@ function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: s
         <button onClick={() => run(async () => { if (window.confirm(`Restart ${friendlyServiceName(service)}?`)) props.setTask((await serverApi.restartService(service)).task); })}>Restart Service</button>
       </div>
       <section className="action-section">
-        <h4>Scheduled Restarts, Server Title, and Redeploy</h4>
-        <p>These controls are planned for Phase 12B. The CLI has server title support and database backup scheduling, but web exposure needs dedicated routes, audit entries, and restart/confirmation design before it is safe to ship.</p>
+        <div className="panel-title"><h4>Scheduled Restarts</h4><StatusPill value={restartEnabled ? "Enabled" : "Disabled"} /></div>
+        <p className="muted">Uses the Dune Manager restart schedule. Saving stores the preference; installing the systemd timer depends on host permissions reported by the command.</p>
+        <KeyValueGrid items={[
+          ["Current status", restartEnabled ? "Enabled" : "Disabled"],
+          ["Interval", restartScheduleValues.restart_interval_hours && restartScheduleValues.restart_interval_hours !== "unset" ? `${restartScheduleValues.restart_interval_hours} hours` : "Not configured"],
+          ["Timer", restartScheduleValues.systemd_timer || "Not installed"]
+        ]} />
+        {commandStatusSummary(restartSchedule).reason && <p className="danger-note">{commandStatusSummary(restartSchedule).reason}</p>}
+        <div className="action-line">
+          <label className="checkbox-row"><input type="checkbox" checked={restartEnabled} onChange={(event) => setRestartEnabled(event.target.checked)} /> Enable scheduled restarts</label>
+          <label className="memory-number-field">Every<input type="number" min="1" max="168" step="1" value={restartHours} onChange={(event) => setRestartHours(event.target.value)} /></label>
+          <span className="unit-label">hours</span>
+          <button onClick={() => run(async () => {
+            const confirmation = window.prompt("Type SAVE RESTART SCHEDULE to save scheduled restart settings.");
+            if (confirmation !== "SAVE RESTART SCHEDULE") return;
+            const response = await serverApi.saveRestartSchedule({ enabled: restartEnabled, hours: Number(restartHours), confirmation });
+            await waitForTask(response.task, props.setTask);
+            await loadRestartSchedule();
+          })}>Save Schedule</button>
+          <button onClick={() => run(loadRestartSchedule)}>Refresh Schedule</button>
+        </div>
+      </section>
+      <section className="action-section">
+        <h4>Server Title and Redeploy</h4>
+        <p className="muted">Planned. These remain disabled until the web flow can preview config changes, required restarts, and rollback behavior from the Dune Manager setup flow.</p>
       </section>
       <ReadinessTimeline text={props.readiness} statusText={props.status} />
       <PortChecklist text={props.ports} statusText={props.status} />
-      <DoctorSummary text={props.doctor} />
+      <DoctorSummary text={props.doctor} readiness={props.readiness} />
     </section>
   );
 }
@@ -392,7 +598,7 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
     setCatalogRows((response.vehicles || []).map((vehicle) => ({ vehicle: vehicle.name || vehicle.id, actor: vehicle.actor || "Unknown", templates: (vehicle.templates || []).join(", ") || "None reported" })));
   }
   return (
-    <section className="panel">
+    <section className="panel admin-tools-panel">
       <h2>Admin Tools</h2>
       <div className="action-section">
         <h4>Quick Player Actions</h4>
@@ -434,25 +640,27 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter item catalog, vehicles, or skill modules" />
         <button onClick={() => run(loadItemCatalog)}>Items</button>
         <button onClick={() => run(loadVehicleCatalog)}>Vehicles</button>
-        <button onClick={() => run(async () => { const response = await adminApi.skillModules(search); setCatalogColumns(["skillModule", "id", "category"]); setCatalogRows(parseSkillModuleRows(response.stdout || "")); })}>Skill Modules</button>
+        <button onClick={() => run(async () => { const response = await adminApi.skillModules(search); setCatalogColumns(["skillModule", "category", "maxLevel", "id"]); setCatalogRows(parseSkillModuleRows(response.stdout || "")); })}>Skill Modules</button>
       </div>
       <div className="result-panel">
         <strong>Catalog Results</strong>
         {catalogRows.length ? <DataTable rows={catalogRows} columns={catalogColumns} /> : <div className="empty">Use catalog tools to find item names, item IDs, vehicles, and skill modules.</div>}
       </div>
       <h3>Global Live Tools</h3>
-      <p className="danger-note">Experimental: RabbitMQ publish works, but in-game display is not working/verified on the live server.</p>
-      <div className="action-line">
-        <button className="danger" onClick={() => run(async () => window.confirm("Kick every online player? This publishes PlayerId='*'.") && setTask((await adminApi.kickAllOnline("KICK ALL ONLINE PLAYERS")).task))}>Kick All Online Players</button>
-      </div>
-      <div className="action-line broadcast-line">
-        <label className="broadcast-message">Broadcast Message<input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Broadcast or whisper message" /></label>
-        <label className="inline-field">Duration seconds<input type="number" min="1" max="3600" value={broadcastDuration} onChange={(event) => setBroadcastDuration(event.target.value)} /></label>
-        <button onClick={() => run(async () => showLiveToolResult(await adminApi.broadcast(message, Number(broadcastDuration || 30))))}>Broadcast Publish Test</button>
-      </div>
-      <div className="action-line">
-        <button className="danger" onClick={() => run(async () => { if (window.confirm("Send shutdown broadcast publish test? In-game visibility is unverified.")) showLiveToolResult(await adminApi.shutdownBroadcast({ confirmation: "SHUTDOWN BROADCAST", delayMinutes: 15, shutdownType: "Restart" })); })}>Shutdown Broadcast Publish Test</button>
-        <button onClick={() => run(async () => showLiveToolResult(await adminApi.whisper(playerId, message)))}>Whisper</button>
+      <div className="global-live-tools">
+        <p className="danger-note">Experimental: RabbitMQ publish works, but in-game display is not working/verified on the live server.</p>
+        <div className="action-line">
+          <button className="danger" onClick={() => run(async () => window.confirm("Kick every online player? This publishes PlayerId='*'.") && setTask((await adminApi.kickAllOnline("KICK ALL ONLINE PLAYERS")).task))}>Kick All Online Players</button>
+        </div>
+        <div className="action-line broadcast-line">
+          <label className="broadcast-message">Broadcast Message<input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Broadcast or whisper message" /></label>
+          <label className="inline-field">Duration seconds<input type="number" min="1" max="3600" value={broadcastDuration} onChange={(event) => setBroadcastDuration(event.target.value)} /></label>
+          <button onClick={() => run(async () => showLiveToolResult(await adminApi.broadcast(message, Number(broadcastDuration || 30))))}>Broadcast Publish Test</button>
+        </div>
+        <div className="action-line live-tool-buttons">
+          <button className="danger" onClick={() => run(async () => { if (window.confirm("Send shutdown broadcast publish test? In-game visibility is unverified.")) showLiveToolResult(await adminApi.shutdownBroadcast({ confirmation: "SHUTDOWN BROADCAST", delayMinutes: 15, shutdownType: "Restart" })); })}>Shutdown Broadcast Publish Test</button>
+          <button onClick={() => run(async () => showLiveToolResult(await adminApi.whisper(playerId, message)))}>Whisper</button>
+        </div>
       </div>
       <div className="result-panel">
         <strong>Global Live Tool Result</strong>
@@ -460,7 +668,7 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
         {liveToolDetails && <TechnicalDetails text={liveToolDetails} />}
       </div>
       <h3>Command History</h3>
-      <button onClick={() => run(async () => setHistory((await adminApi.history()).stdout))}>Refresh Command History</button>
+      <div className="history-controls"><button onClick={() => run(async () => setHistory((await adminApi.history()).stdout))}>Refresh Command History</button></div>
       {parseHistoryRows(history).length ? <DataTable rows={parseHistoryRows(history)} columns={["time", "action", "target", "status", "summary"]} /> : <div className="empty">No command history rows found yet.</div>}
       {history && <TechnicalDetails title="Advanced history output" text={history} />}
     </section>
@@ -605,7 +813,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
         <h4>Give Items</h4>
         <p>Search the item catalog, select the exact item, then grant it to the player.</p>
         <ItemCatalogSelector selected={selectedItem} onSelect={choosePlayerItem} />
-        <div className="actions-grid">
+        <div className="action-line item-grant-row">
           <label className="compact-field">Quantity<input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <label className="compact-field">Durability<input type="number" min="0" value={durability} onChange={(event) => setDurability(event.target.value)} /></label>
           <button disabled={!canRunCliAction || !selectedItem} title={!canRunCliAction ? cliDisabledReason : !selectedItem ? "Select an item from the catalog first." : undefined} onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: Number(durability) })); })}>Give Item</button>
@@ -735,17 +943,31 @@ async function waitForTask(task: Task, setTask: (task: Task) => void) {
   return current;
 }
 
+async function waitForTaskSilently(task: Task) {
+  let current = task;
+  for (let i = 0; i < 180 && !["succeeded", "failed", "cancelled"].includes(current.status); i += 1) {
+    await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
+    current = (await setupApi.task(current.id)).task;
+  }
+  return current;
+}
+
 function parseUpdateTask(task: Task) {
   const text = task.logLines.map((line) => line.line).join("\n");
   if (task.status === "failed") return { status: "Check Failed", current: "", latest: "", reason: task.errorMessage || summarizeCommandText(text) };
-  if (task.status !== "succeeded") return { status: "Checking", current: "", latest: "", reason: task.progressMessage || "" };
+  if (task.status !== "succeeded") return { status: "Checking...", current: "", latest: "", reason: task.progressMessage || "" };
   const current = firstVersionMatch(text, [/current(?: stack)?(?: build| version)?\s*[:=]\s*([^\n]+)/i, /installed(?: build| version)?\s*[:=]\s*([^\n]+)/i, /local(?: build| version)?\s*[:=]\s*([^\n]+)/i]);
   const latest = firstVersionMatch(text, [/latest(?: release| build| version)?\s*[:=]\s*([^\n]+)/i, /remote(?: build| version)?\s*[:=]\s*([^\n]+)/i, /available(?: build| version)?\s*[:=]\s*([^\n]+)/i]);
   const updateAvailable = /update available|newer|can update|available update/i.test(text);
   const latestStatus = /up to date|already latest|no update|latest/i.test(text) && !updateAvailable;
   if (updateAvailable) return { status: "Update Available", current, latest, reason: summarizeCommandText(text) };
   if (latestStatus) return { status: "Latest", current, latest, reason: summarizeCommandText(text) };
-  return { status: current || latest ? "Completed" : "Check completed, version details unavailable", current, latest, reason: current || latest ? summarizeCommandText(text) : "Unable to parse version details from completed check." };
+  return { status: current || latest ? "Completed" : "Version details unavailable", current, latest, reason: current || latest ? summarizeCommandText(text) : "Unable to parse version details from completed check." };
+}
+
+function updateDisplayValue(status: Record<string, string>, key: "current" | "latest") {
+  if (/checking/i.test(status.status)) return "Loading...";
+  return status[key] || "Unknown";
 }
 
 function firstVersionMatch(text: string, patterns: RegExp[]) {
@@ -1002,10 +1224,12 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
   const [history, setHistory] = useState<Record<string, unknown>[]>([]);
   const [output, setOutput] = useState("");
   const [technicalOutput, setTechnicalOutput] = useState("");
+  const [outputScope, setOutputScope] = useState<"config" | "grant" | "auto" | "history" | "">("");
   async function run(action: () => Promise<void>) {
     onError("");
     setOutput("");
     setTechnicalOutput("");
+    setOutputScope("");
     try { await action(); } catch (error) { const text = error instanceof Error ? error.message : String(error); setOutput(text); onError(text); }
   }
   async function load() {
@@ -1056,7 +1280,6 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
 
       <section className="action-section">
         <h4>Starter Kit Configuration</h4>
-        <p>Use exact item names from Admin Tools {"->"} Item Search. Example: Plant Fiber, not fiber.</p>
         <div className="action-line">
           <label>Version<input value={config.version} onChange={(event) => setConfig({ ...config, version: event.target.value })} /></label>
           <label>XP<input type="number" min="0" value={String(config.xp)} onChange={(event) => setConfig({ ...config, xp: Number(event.target.value) })} /></label>
@@ -1076,10 +1299,11 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
         }}>Remove</button></td></tr>)}</tbody></table></div> : <div className="empty">No starter items configured. Search for an item, set quantity/quality, then Add Item.</div>}
         <details className="technical-details"><summary>Developer raw starter item textarea</summary><p>One item per line: item name or raw item ID, quantity, durability.</p><label>Starter Items<textarea value={itemsText} onChange={(event) => setItemsText(event.target.value)} placeholder="Plant Fiber,10,1&#10;cup of water,1,1" /></label></details>
         <div className="action-line">
-          <button onClick={() => run(async () => { if (window.confirm("Save Starter Kit config?")) { const saved = await starterKitApi.saveConfig(nextConfig(), "SAVE STARTER KIT"); setConfig(saved); setItemsText(saved.items.map((item) => `${item.itemId || item.itemName || ""},${item.quantity},${item.durability}`).join("\n")); setOutput("Starter Kit config saved."); } })}>Save Config</button>
+          <button onClick={() => run(async () => { if (window.confirm("Save Starter Kit config?")) { const saved = await starterKitApi.saveConfig(nextConfig(), "SAVE STARTER KIT"); setConfig(saved); setItemsText(saved.items.map((item) => `${item.itemId || item.itemName || ""},${item.quantity},${item.durability}`).join("\n")); setOutputScope("config"); setOutput("Starter Kit config saved."); } })}>Save Config</button>
           <button onClick={() => run(async () => { if (window.confirm("Enable Starter Kit config? Manual grants remain confirmation-gated.")) setConfig(await starterKitApi.enable("ENABLE STARTER KIT")); })}>Enable</button>
           <button className="danger" onClick={() => run(async () => { if (window.confirm("Disable Starter Kit?")) setConfig(await starterKitApi.disable("DISABLE STARTER KIT")); })}>Disable</button>
         </div>
+        <StarterKitResult output={outputScope === "config" ? output : ""} technicalOutput={outputScope === "config" ? technicalOutput : ""} />
       </section>
 
       <section className="action-section">
@@ -1092,13 +1316,14 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
               {String(player.character_name || "Unknown")} - {String(player.online_status || "unknown")} - actor {String(player.actor_id || "-")} - admin {String(player.action_player_id || "missing")}
             </option>)}
           </select></label>
-          <button disabled={!grantPlayerId} onClick={() => run(async () => { if (window.confirm(`Grant Starter Kit to ${selectedLabel || grantPlayerId}?`)) showGrantResult(await starterKitApi.grant(grantPlayerId, "GRANT STARTER KIT")); })}>Grant Starter Kit</button>
+          <button disabled={!grantPlayerId} onClick={() => run(async () => { if (window.confirm(`Grant Starter Kit to ${selectedLabel || grantPlayerId}?`)) showGrantResult("grant", await starterKitApi.grant(grantPlayerId, "GRANT STARTER KIT")); })}>Grant Starter Kit</button>
         </div>
         {selected && !selected.action_player_id && <p className="danger-note">Selected player has no Admin action ID, so CLI-backed grants are disabled.</p>}
         <details className="technical-details">
           <summary>Advanced manual player ID override</summary>
           <label>Admin action ID<input value={manualPlayerId} onChange={(event) => setManualPlayerId(event.target.value)} placeholder="RedBlink#75570" /></label>
         </details>
+        <StarterKitResult output={outputScope === "grant" ? output : ""} technicalOutput={outputScope === "grant" ? technicalOutput : ""} />
       </section>
 
       <section className="action-section">
@@ -1109,34 +1334,60 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
           <label>Interval seconds<input type="number" min="60" max="3600" value={String(config.autoGrantIntervalSeconds)} onChange={(event) => setConfig({ ...config, autoGrantIntervalSeconds: Number(event.target.value) })} /></label>
           <label>Grant when<select value={config.grantWhen} onChange={(event) => setConfig({ ...config, grantWhen: event.target.value as StarterKitConfig["grantWhen"] })}><option value="first_seen">First seen</option><option value="first_online">First online</option></select></label>
           <button onClick={() => run(async () => { const result = await starterKitApi.eligible(); setEligible(result.rows || []); })}>Preview Eligible Players</button>
-          <button className="danger" disabled={!eligibleCount} onClick={() => run(async () => { const phrase = window.prompt("Type GRANT STARTER KIT TO ELIGIBLE PLAYERS to bulk grant."); if (phrase) showGrantResult(await starterKitApi.grantEligible(phrase)); setHistory((await starterKitApi.history()).rows || []); })}>Grant to Eligible Players</button>
-          <button onClick={() => run(async () => showGrantResult(await starterKitApi.run("RUN STARTER KIT SCAN")))}>Run Auto Scan Now</button>
+          <button className="danger" disabled={!eligibleCount} onClick={() => run(async () => { const phrase = window.prompt("Type GRANT STARTER KIT TO ELIGIBLE PLAYERS to bulk grant."); if (phrase) showGrantResult("auto", await starterKitApi.grantEligible(phrase)); setHistory((await starterKitApi.history()).rows || []); })}>Grant to Eligible Players</button>
+          <button onClick={() => run(async () => showGrantResult("auto", await starterKitApi.run("RUN STARTER KIT SCAN")))}>Run Auto Scan Now</button>
         </div>
         {eligible.length > 0 && <DataTable rows={eligible} />}
+        <StarterKitResult output={outputScope === "auto" ? output : ""} technicalOutput={outputScope === "auto" ? technicalOutput : ""} />
       </section>
 
       <section className="action-section">
         <h4>Grant History</h4>
         <div className="action-line">
           <input value={grantId} onChange={(event) => setGrantId(event.target.value)} placeholder="Failed grant id" />
-          <button onClick={() => run(async () => { if (window.confirm(`Retry Starter Kit grant ${grantId}?`)) showGrantResult(await starterKitApi.retry(grantId, "RETRY STARTER KIT")); })}>Retry Failed Grant</button>
+          <button onClick={() => run(async () => { if (window.confirm(`Retry Starter Kit grant ${grantId}?`)) showGrantResult("history", await starterKitApi.retry(grantId, "RETRY STARTER KIT")); })}>Retry Failed Grant</button>
           <button onClick={() => run(async () => setHistory((await starterKitApi.history()).rows || []))}>Refresh History</button>
         </div>
+        <StarterKitResult output={outputScope === "history" ? output : ""} technicalOutput={outputScope === "history" ? technicalOutput : ""} />
         <DataTable rows={history} columns={["timestamp", "character_name", "action_player_id", "source", "version", "status", "summary"]} />
       </section>
     </div>
-    {output && <div className="result-panel"><strong>Starter Kit Result</strong><pre className="mini-output concise-output">{output}</pre></div>}
-    {technicalOutput && <TechnicalDetails text={technicalOutput} />}
     <details className="technical-details">
       <summary>Raw Starter Kit JSON</summary>
       <pre className="mini-output">{JSON.stringify(config, null, 2)}</pre>
     </details>
   </section>;
 
-  function showGrantResult(result: Record<string, unknown>) {
+  function showGrantResult(scope: "grant" | "auto" | "history", result: Record<string, unknown>) {
+    setOutputScope(scope);
     setOutput(formatStarterKitGrantResult(result));
     setTechnicalOutput(JSON.stringify(result, null, 2));
   }
+}
+
+function StarterKitResult({ output, technicalOutput }: { output: string; technicalOutput: string }) {
+  if (!output) return null;
+  const rows = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return <div className="result-panel starter-result">
+    <strong>Starter Kit Result</strong>
+    <ul className="result-list">
+      {rows.map((line, index) => {
+        const status = /^OK:/i.test(line) ? "ok" : /^FAIL:/i.test(line) || /failed/i.test(line) ? "fail" : "info";
+        return <li className={`result-row result-${status}`} key={`${line}-${index}`}>{friendlyStarterKitResultLine(line)}</li>;
+      })}
+    </ul>
+    {technicalOutput && <TechnicalDetails text={technicalOutput} />}
+  </div>;
+}
+
+function friendlyStarterKitResultLine(line: string) {
+  return line
+    .replace(/^OK:\s*/i, "Granted ")
+    .replace(/^FAIL:\s*/i, "Failed ")
+    .replace(/\s+granted$/i, "")
+    .replace(/\s+failed:/i, ":")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function ItemCatalogSelector({ label = "Select Item", selected, onSelect, placeholder = "Filter loaded item catalog" }: { label?: string; selected: CatalogItem | null; onSelect: (item: CatalogItem | null) => void; placeholder?: string }) {
@@ -1290,34 +1541,143 @@ function WorldListPanel({ title, load, exportUrl, exportLabel = "Export", blocke
 }
 
 function BackupsPanel({ setTask, onError }: { setTask: (task: Task) => void; onError: (text: string) => void }) {
-  const [text, setText] = useState("");
+  void setTask;
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [autoBackup, setAutoBackup] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [autoEnabled, setAutoEnabled] = useState(false);
+  const [autoHours, setAutoHours] = useState("24");
+  const [autoRetentionDays, setAutoRetentionDays] = useState("0");
+  const [backupResult, setBackupResult] = useState<BackupResult | null>(null);
+  const [autoResult, setAutoResult] = useState<BackupResult | null>(null);
+  const [busyAction, setBusyAction] = useState("");
+  const autoStatus = (autoBackup as { status?: Record<string, unknown> } | null)?.status || {};
   async function run(action: () => Promise<void>) {
     onError("");
     try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   }
+  async function refreshAutoBackup() {
+    const result = await backupsApi.autoStatus();
+    setAutoBackup(result);
+    const status = result.status || {};
+    setAutoEnabled(Boolean(status.enabled));
+    if (status.intervalHours) setAutoHours(String(status.intervalHours));
+    if (status.retentionDays !== undefined) setAutoRetentionDays(String(status.retentionDays || "0"));
+  }
   async function refresh() {
     const result = await backupsApi.list();
-    setText(result.stdout || "");
-    setRows(parseBackupRows(result.stdout || ""));
+    setRows(result.rows?.length ? result.rows : parseBackupRows(result.stdout || ""));
+    await refreshAutoBackup();
+  }
+  async function runBackupTask(action: "create" | "delete" | "restore" | "auto", taskFactory: () => Promise<{ task: Task }>, successTitle: string, failureTitle: string) {
+    setBusyAction(action);
+    const setter = action === "auto" ? setAutoResult : setBackupResult;
+    setter({ status: "running", title: action === "restore" ? "Restoring backup..." : action === "delete" ? "Deleting backup..." : action === "auto" ? "Saving automatic backup settings..." : "Creating backup..." });
+    try {
+      const response = await taskFactory();
+      const final = await waitForTaskSilently(response.task);
+      const result = summarizeBackupTask(final, successTitle, failureTitle);
+      setter(result);
+      if (final.status === "succeeded") await refresh();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setter({ status: "failed", title: failureTitle, message: reason });
+      onError(reason);
+    } finally {
+      setBusyAction("");
+    }
   }
   useEffect(() => {
     run(refresh);
   }, []);
   return (
     <section className="panel">
-      <div className="panel-title"><h2>Backups</h2><div className="action-row"><button onClick={() => run(refresh)}>Refresh Backups</button><button onClick={() => run(async () => setTask((await backupsApi.create()).task))}>Create Backup</button></div></div>
+      <div className="panel-title"><h2>Backups</h2><div className="action-row"><button disabled={Boolean(busyAction)} onClick={() => run(refresh)}>Refresh Backups</button><button disabled={Boolean(busyAction)} onClick={() => run(() => runBackupTask("create", backupsApi.create, "Backup created successfully", "Backup failed"))}>Create Backup</button></div></div>
+      {backupResult && <BackupResultCard result={backupResult} />}
       {rows.length ? <DataTable rows={rows} columns={["backupName", "created", "type", "source"]} action={(row) => <div className="service-actions">
-        <button className="danger" onClick={(event) => { event.stopPropagation(); run(async () => { if (window.confirm(`Restore backup ${String(row.name)}? This changes database state.`)) setTask((await backupsApi.restore(String(row.name))).task); }); }}>Restore</button>
-        <button className="danger" onClick={(event) => { event.stopPropagation(); run(async () => { if (window.confirm(`Delete backup ${String(row.name)}?`)) setTask((await backupsApi.delete(String(row.name))).task); }); }}>Delete</button>
+        <button className="danger" disabled={Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); run(async () => {
+          if (!window.confirm(`Restore backup ${String(row.name)}? This replaces the current battlegroup database and is destructive.`)) return;
+          await runBackupTask("restore", () => backupsApi.restore(String(row.name)), "Backup restored successfully", "Backup restore failed");
+        }); }}>Restore</button>
+        <button className="danger" disabled={Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); run(async () => {
+          if (!window.confirm(`Delete backup ${String(row.name)}? This cannot be undone.`)) return;
+          await runBackupTask("delete", () => backupsApi.delete(String(row.name)), "Backup deleted", "Backup delete failed");
+        }); }}>Delete</button>
       </div>} /> : <div className="empty">No database backups found yet.</div>}
       <section className="action-section">
-        <h4>Automation and Remote Imports</h4>
-        <p>Automatic backups and remote SSH import are planned for Phase 12E. Existing CLI support needs dedicated web routes, secret handling, progress output, and audit coverage before it is exposed here.</p>
+        <div className="panel-title"><h4>Automatic Backups</h4><StatusPill value={autoEnabled ? "Enabled" : "Disabled"} /></div>
+        <p className="muted">Uses the Dune Manager automatic database backup setting. Auto backups stay disabled unless this saved manager preference is enabled.</p>
+        <KeyValueGrid items={[
+          ["Current Status", commandStatusSummary(autoBackup).reason ? "Unavailable" : autoEnabled ? "Enabled" : "Disabled"],
+          ["Interval", autoStatus.intervalHours ? `${autoStatus.intervalHours} ${Number(autoStatus.intervalHours) === 1 ? "Hour" : "Hours"}` : "Not Configured"],
+          ["Retention", autoStatus.retentionLabel || "No Retention Limit"],
+          ["Timer", autoStatus.timer ? titleCase(String(autoStatus.timer)) : commandStatusSummary(autoBackup).reason ? "Unavailable" : "Not Installed"],
+          ["Last Run", autoStatus.lastRun],
+          ["Next Run", autoStatus.nextRun]
+        ]} />
+        {commandStatusSummary(autoBackup).reason && <p className="danger-note">{commandStatusSummary(autoBackup).reason}</p>}
+        {autoResult && <BackupResultCard result={autoResult} />}
+        <div className="action-line backup-auto-controls">
+          <label className="checkbox-row"><input type="checkbox" checked={autoEnabled} onChange={(event) => setAutoEnabled(event.target.checked)} /> Enable</label>
+          <label className="memory-number-field">Every<input type="number" min="1" max="168" step="1" value={autoHours} onChange={(event) => setAutoHours(event.target.value)} /></label>
+          <span className="unit-label">Hours</span>
+          <label className="memory-number-field">Keep<input type="number" min="0" max="3650" step="1" value={autoRetentionDays} onChange={(event) => setAutoRetentionDays(event.target.value)} /></label>
+          <span className="unit-label">Days</span>
+          <button disabled={Boolean(busyAction)} onClick={() => run(() => runBackupTask("auto", () => backupsApi.saveAuto({ enabled: autoEnabled, hours: Number(autoHours), retentionDays: Number(autoRetentionDays) }), "Automatic backup settings saved", "Automatic backup settings failed"))}>Save Settings</button>
+          <button disabled={Boolean(busyAction)} onClick={() => run(() => runBackupTask("create", backupsApi.create, "Backup created successfully", "Backup failed"))}>Run Backup Now</button>
+        </div>
       </section>
-      <TechnicalDetails title="Advanced backup output" text={text || "Backups have not been loaded yet."} />
+      <section className="action-section planned-card">
+        <strong>Remote Backup Import</strong>
+        <span>Disabled. The Dune Manager SSH import flow is interactive and uses scp after collecting host/user/path. A web wrapper needs key-only credential selection, remote preview, secret redaction, and restore preflight coverage before it is safe to expose.</span>
+      </section>
     </section>
   );
+}
+
+function BackupResultCard({ result }: { result: BackupResult }) {
+  return <section className={`result-panel backup-result ${result.status === "failed" ? "warning-panel" : ""}`}>
+    <div className="panel-title"><h4>{result.title}</h4><StatusPill value={result.status === "failed" ? "Failed" : result.status === "running" ? "Running" : "Succeeded"} /></div>
+    {result.message && <p>{result.message}</p>}
+    {result.details && <TechnicalDetails title="Technical details" text={result.details} />}
+  </section>;
+}
+
+function summarizeBackupTask(task: Task, successTitle: string, failureTitle: string): BackupResult {
+  const details = task.logLines.map((line) => line.line).join("\n");
+  if (task.status === "succeeded") {
+    const backupName = extractBackupName(details);
+    const created = backupName ? formatBackupTimestamp(backupName.match(/(\d{8}-\d{6})/)?.[1] || "") : "";
+    const schedulerNote = /cannot install systemd units|systemctl was not found/i.test(details) ? "Preference saved. Timer installation requires host systemd/root permissions." : "";
+    return {
+      status: "succeeded",
+      title: successTitle,
+      message: [backupName, created && created !== "Unknown" ? `Created ${created}` : "", schedulerNote].filter(Boolean).join(" · "),
+      details
+    };
+  }
+  return {
+    status: "failed",
+    title: failureTitle,
+    message: conciseTaskError(task),
+    details
+  };
+}
+
+function extractBackupName(text: string) {
+  const matches = [...String(text || "").matchAll(/([A-Za-z0-9_.-]+(?:\.backup|\.dump|\.sql))/g)];
+  return matches.length ? matches[matches.length - 1][1] : "";
+}
+
+function conciseTaskError(task: Task) {
+  const lines = task.logLines.map((line) => line.line.trim()).filter(Boolean);
+  const candidates = [task.errorMessage || "", ...lines].filter(Boolean).map((line) => line.replace(/^dune\s+.+?\s+failed with exit \d+$/i, "").trim()).filter(Boolean);
+  const seen = new Set<string>();
+  const unique = candidates.filter((line) => {
+    if (seen.has(line)) return false;
+    seen.add(line);
+    return true;
+  });
+  return unique[0] || "Task failed.";
 }
 
 function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
@@ -1330,6 +1690,7 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [drag, setDrag] = useState<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const mapRef = useRef<HTMLDivElement | null>(null);
   async function load() {
     onError("");
     try {
@@ -1358,8 +1719,9 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
     <div className="toggle-row">{Object.keys(filters).map((key) => <button key={key} className={filters[key] ? "active" : ""} onClick={() => setFilters({ ...filters, [key]: !filters[key] })}>{friendlyMarkerType(key)}</button>)}</div>
     {Object.entries(overlays).filter(([, reason]) => reason).map(([key, reason]) => <p className="danger-note" key={key}>{key}: {reason}</p>)}
     <div className="map-canvas" style={{ "--map-image": "url('/hagga-basin.png')" } as React.CSSProperties}
+      ref={mapRef}
       onMouseDown={(event) => { if (zoom > 1) setDrag({ x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }); }}
-      onMouseMove={(event) => { if (drag) setPan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }); }}
+      onMouseMove={(event) => { if (drag) setPan(clampPan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }, zoom, mapRef.current)); }}
       onMouseUp={() => setDrag(null)}
       onMouseLeave={() => setDrag(null)}>
       <div className="map-zoom-layer" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
@@ -1371,8 +1733,8 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
       </div>
     </div>
     <div className="action-line map-controls">
-      <button onClick={() => setZoom(Math.min(3, Number((zoom + 0.2).toFixed(2))))}>Zoom In</button>
-      <button onClick={() => setZoom(Math.max(1, Number((zoom - 0.2).toFixed(2))))}>Zoom Out</button>
+      <button onClick={() => { const nextZoom = Math.min(3, Number((zoom + 0.2).toFixed(2))); setZoom(nextZoom); setPan(clampPan(pan, nextZoom, mapRef.current)); }}>Zoom In</button>
+      <button onClick={() => { const nextZoom = Math.max(1, Number((zoom - 0.2).toFixed(2))); setZoom(nextZoom); setPan(clampPan(pan, nextZoom, mapRef.current)); }}>Zoom Out</button>
       <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Fit Map</button>
       <span className="muted">Zoom: {Math.round(zoom * 100)}%</span>
       {zoom > 1 && <span className="muted">Drag map to pan.</span>}
@@ -1392,136 +1754,135 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
 }
 
 function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onError: (text: string) => void }) {
-  const [text, setText] = useState("");
-  const [active, setActive] = useState("list");
-  const [map, setMap] = useState("");
-  const [mode, setMode] = useState("dynamic");
-  const [target, setTarget] = useState("");
-  const [memory, setMemory] = useState("8g");
-  const [partitionId, setPartitionId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
-  const [count, setCount] = useState("1");
+  const [mapsText, setMapsText] = useState("");
+  const [memoryText, setMemoryText] = useState("");
+  const [serversText, setServersText] = useState("");
+  const [deepText, setDeepText] = useState("");
+  const [userEngine, setUserEngine] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [userGame, setUserGame] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [selectedMapName, setSelectedMapName] = useState("");
+  const [memory, setMemory] = useState("8");
+  const [modeDraft, setModeDraft] = useState("dynamic");
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [refreshMessage, setRefreshMessage] = useState("");
   async function run(action: () => Promise<unknown>) {
     onError("");
     try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   }
-  async function runTask(action: () => Promise<{ task: Task }>) {
+  async function runTaskAndRefresh(action: () => Promise<{ task: Task }>) {
     const response = await action();
-    setTask(response.task);
+    await waitForTask(response.task, setTask);
+    await loadMaps();
   }
-  async function loadPanel(next = active) {
-    setActive(next);
-    if (next === "list") setText((await mapsApi.maps()).stdout);
-    else if (next === "validate") setText((await mapsApi.sietches()).stdout);
-    else if (next === "autoscaler") setText((await mapsApi.autoscaler()).stdout);
-    else if (next === "memory-settings") setText((await mapsApi.memory()).stdout);
-    else if (next === "deepdesert") setText((await mapsApi.deepdesert()).stdout);
-    else setText("");
+  async function loadMaps() {
+    setLoading(true);
+    setLoadError("");
+    setRefreshMessage("");
+    try {
+      const [status, memoryStatus] = await Promise.allSettled([mapsApi.status(), mapsApi.memory()]);
+      if (status.status !== "fulfilled" && memoryStatus.status !== "fulfilled") {
+        const reason = status.status === "rejected" ? status.reason : memoryStatus.reason;
+        throw new Error(reason instanceof Error ? reason.message : String(reason));
+      }
+      const mapStatus = status.status === "fulfilled" ? status.value : {};
+      setMapsText(status.status === "fulfilled" ? String(mapStatus.maps?.stdout || "") : "");
+      setServersText(status.status === "fulfilled" ? String(mapStatus.services?.stdout || "") : "");
+      setMemoryText(memoryStatus.status === "fulfilled" ? memoryStatus.value.stdout : "");
+      if (status.status !== "fulfilled" || memoryStatus.status !== "fulfilled") {
+        const failed = status.status === "rejected" ? status.reason : memoryStatus.status === "rejected" ? memoryStatus.reason : "";
+        setLoadError(failed instanceof Error ? failed.message : String(failed));
+      }
+      setRefreshMessage("Maps refreshed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function loadUserEngine() {
+    setUserEngine(await mapsApi.userEngine());
+  }
+  async function loadUserGame(mapName: string, partitionId?: string) {
+    setUserGame(await mapsApi.userGame(mapName, partitionId));
   }
   useEffect(() => {
-    run(() => loadPanel("list"));
+    run(loadMaps);
+    run(loadUserEngine);
   }, []);
-  const mapRows = parseMapRows(text);
-  const memoryRows = parseMemoryRows(text);
-  const menu = [
-    ["list", "List Maps"],
-    ["validate", "Validate / Status"],
-    ["reconcile", "Reconcile / Repair State"],
-    ["userengine", "Edit UserEngine"],
-    ["edit-map", "Edit Map"],
-    ["revert-settings", "Revert All UserSettings To Defaults"],
-    ["memory-current", "Current Memory Usage"],
-    ["memory-settings", "Show Memory Settings"],
-    ["memory-defaults", "Restore Built-In Memory Defaults"],
-    ["autoscaler", "Autoscaler"],
-    ["deepdesert", "Deep Desert"]
-  ];
+  const mapRows = mergeMapAndMemoryRows(mapsText, memoryText, serversText);
+  const selectedMap = mapRows.find((row) => String(row.map) === selectedMapName) || null;
+  const selectedName = String(selectedMap?.map || "");
+  const isSurvival = selectedName === "Survival_1";
+  const isDeepDesert = /^DeepDesert_/i.test(selectedName);
+  function selectMap(row: Record<string, unknown>) {
+    const name = String(row.map || "");
+    if (selectedMapName === name) {
+      setSelectedMapName("");
+      return;
+    }
+    setSelectedMapName(name);
+    setMemory(memoryInputValue(String(row.memory || "")));
+    setModeDraft(modeInputValue(String(row.mode || "")));
+    void loadUserGame(name).catch((error) => onError(error instanceof Error ? error.message : String(error)));
+  }
   return <section className="panel">
-    <div className="panel-title"><h2>Maps & Sietches</h2><button onClick={() => run(() => loadPanel(active))}>Refresh Current Panel</button></div>
-    <div className="menu-card-grid">{menu.map(([key, label]) => <button key={key} className={active === key ? "active menu-card" : "menu-card"} onClick={() => run(() => loadPanel(key))}>{label}</button>)}</div>
+    <div className="panel-title"><h2>Maps & Sietches</h2><button disabled={loading} onClick={() => run(loadMaps)}>{loading ? "Refreshing..." : "Refresh Maps"}</button></div>
+    {refreshMessage && !loading && <p className="muted">{refreshMessage}</p>}
+    <section className="action-section">
+      <h4>Maps Overview</h4>
+      {loading && !mapRows.length && <div className="empty">Loading maps...</div>}
+      {!loading && loadError && !mapRows.length && <div className="result-panel"><strong>Map list could not be loaded.</strong><p>{loadError}</p><button onClick={() => run(loadMaps)}>Retry</button></div>}
+      {mapRows.length ? <div className="table-wrap"><table><thead><tr><th>Map</th><th>Status</th><th>Mode</th><th>Memory</th><th>Actions</th></tr></thead><tbody>{mapRows.map((row) => {
+        const rowName = String(row.map || "");
+        const isSelected = selectedMapName === rowName;
+        return <Fragment key={rowName}><tr><td>{rowName}</td><td>{String(row.status || "Not Available")}</td><td>{String(row.mode || "Not Available")}</td><td>{String(row.memory || "Not Available")}</td><td><button onClick={() => selectMap(row)}>{isSelected ? "Close" : "Edit"}</button></td></tr>
+          {isSelected && <tr className="inline-edit-row" key={`${rowName}-edit`}><td colSpan={5}>
+            <section className="inline-edit-panel">
+              <div className="panel-title"><h4>Edit {rowName}</h4></div>
+              <KeyValueGrid items={[["Status", row.status], ["Mode", row.mode], ["Memory", row.memory], ["Dimensions", row.dimensions]]} />
+              <div className="action-line">
+                <label className="compact-select">Mode<select value={modeDraft} disabled={String(row.mode) === "Core Map"} onChange={(event) => setModeDraft(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option></select></label>
+                <button disabled={String(row.mode) === "Core Map"} onClick={() => run(async () => { if (window.confirm(`Set ${rowName} to ${friendlyMapMode(modeDraft)}?`)) await runTaskAndRefresh(() => mapsApi.setMode({ map: rowName, mode: modeDraft, confirmation: "SET MAP MODE" })); })}>Save Mode</button>
+                <label className="memory-number-field">Memory<input type="number" min="1" step="1" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="8" /></label>
+                <span className="unit-label">GB</span>
+                <button onClick={() => run(async () => { if (window.confirm(`Set memory for ${rowName} to ${memory || "0"} GB? Running maps may need restart.`)) await runTaskAndRefresh(() => mapsApi.setMemory({ map: rowName, memory: `${memory}g`, confirmation: "SET MAP MEMORY" })); })}>Save Memory</button>
+              </div>
+              {String(row.mode) === "Core Map" && <p className="muted">Core map mode is managed by the base server stack; only memory changes are exposed here.</p>}
+              {isSurvival && <PlannedPanel title="Survival Dimensions and Passwords" reason="The local manager supports Sietch max/active dimensions, display names, and passwords. Web controls remain disabled until restart impact for Survival, Director, and Gateway is confirmed with preview and rollback behavior." />}
+              {isDeepDesert && <section className="planned-card">
+                <strong>Deep Desert Settings</strong>
+                <span>Dual Desert script support exists, but write controls remain disabled until bootstrap/repair/restart behavior is fully audited.</span>
+                <button onClick={() => run(async () => setDeepText((await mapsApi.deepdesert()).stdout))}>Refresh Deep Desert Status</button>
+                {deepText && <MapCommandSummary text={deepText} />}
+              </section>}
+            </section>
+          </td></tr>}
+        </Fragment>;
+      })}</tbody></table></div> : null}
+      {loadError && mapRows.length ? <p className="danger-note">Some map data could not be refreshed: {loadError}</p> : null}
+    </section>
 
-    {active === "list" && <section className="action-section">
-      <h4>List Maps</h4>
-      {mapRows.length ? <DataTable rows={mapRows} columns={["map", "status", "mode", "partitions", "assigned", "memory"]} action={(row) => <button onClick={() => { setMap(String(row.map || "")); setActive("edit-map"); }}>Edit</button>} /> : <MapCommandSummary text={text} />}
+    <section className="action-section">
+      <div className="panel-title"><h4>Current Memory Configuration</h4><button onClick={() => run(loadMaps)}>Refresh Memory</button></div>
+      {memoryText ? <DataTable rows={parseMemoryRows(memoryText).slice(0, 12)} columns={["map", "memory"]} /> : <div className="empty">Memory configuration is not available yet.</div>}
+    </section>
+    <section className="action-section">
+      <div className="panel-title"><h4>Edit UserEngine</h4><button onClick={() => run(loadUserEngine)}>Refresh UserEngine</button></div>
+      <p className="muted">Read-only preview of Dune Manager UserEngine global defaults. Saving is disabled until backup-before-write and restart impact handling are added to the web route.</p>
+      {commandStatusSummary(userEngine).reason && <p className="danger-note">{commandStatusSummary(userEngine).reason}</p>}
+      {userEngine?.stdout ? <DataTable rows={parseUserSettingRows(userEngine.stdout).slice(0, 16)} columns={["setting", "value"]} /> : <div className="empty">UserEngine settings have not loaded yet.</div>}
+    </section>
+    {selectedMapName && <section className="action-section">
+      <div className="panel-title"><h4>Edit UserGame for {selectedMapName}</h4><button onClick={() => run(() => loadUserGame(selectedMapName))}>Refresh UserGame</button></div>
+      <p className="muted">Read-only preview of merged UserGame values for the selected map. Per-dimension editing remains disabled until the web route can resolve partition IDs, back up UserGame.ini, and handle required restarts safely.</p>
+      {commandStatusSummary(userGame).reason && <p className="danger-note">{commandStatusSummary(userGame).reason}</p>}
+      {userGame?.stdout ? <DataTable rows={parseUserSettingRows(userGame.stdout).slice(0, 16)} columns={["setting", "value"]} /> : <div className="empty">Select a map to preview UserGame settings.</div>}
     </section>}
-
-    {active === "validate" && <section className="action-section">
-      <h4>Validate / Status</h4>
-      <MapCommandSummary text={text} />
-    </section>}
-
-    {active === "reconcile" && <section className="action-section">
-      <h4>Reconcile / Repair State</h4>
-      <p>This runs the existing Sietch reconcile flow for the selected map. It can affect live services.</p>
-      <div className="action-line">
-        <label>Map<input value={map} onChange={(event) => setMap(event.target.value)} placeholder="Survival_1" /></label>
-        <button className="danger" onClick={() => run(async () => { if (window.confirm(`Reconcile sietches for ${map}?`)) await runTask(() => mapsApi.updateSietches({ action: "reconcile", map, confirmation: "UPDATE SIETCHES" })); })}>Reconcile Sietches</button>
-      </div>
-    </section>}
-
-    {active === "edit-map" && <section className="action-section">
-      <h4>Edit Map</h4>
-      <div className="actions-grid">
-      <label>Map<input value={map} onChange={(event) => setMap(event.target.value)} placeholder="DeepDesert_1" /></label>
-      <label>Mode<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option></select></label>
-      <button onClick={() => run(async () => { if (window.confirm(`Set ${map} to ${mode}? This can spawn or affect map services.`)) await runTask(() => mapsApi.setMode({ map, mode, confirmation: "SET MAP MODE" })); })}>Set Map Mode</button>
-      <label>Spawn/Despawn Target<input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Map name or partition id" /></label>
-      <button onClick={() => run(async () => { if (window.confirm(`Spawn ${target}?`)) await runTask(() => mapsApi.spawn(target, "SPAWN MAP")); })}>Spawn</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Despawn ${target}?`)) await runTask(() => mapsApi.despawn(target, "DESPAWN MAP")); })}>Despawn</button>
-      <label>Memory<input value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="8g" /></label>
-      <button onClick={() => run(async () => { if (window.confirm(`Set memory for ${map || "default"} to ${memory}? Running maps may need restart.`)) await runTask(() => mapsApi.setMemory({ map: map || "default", memory, confirmation: "SET MAP MEMORY" })); })}>Set Memory</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Remove memory override for ${map || "default"}?`)) await runTask(() => mapsApi.unsetMemory({ map: map || "default", confirmation: "UNSET MAP MEMORY" })); })}>Unset Memory</button>
-      </div>
-    </section>}
-
-    {active === "autoscaler" && <section className="action-section">
-      <h4>Autoscaler</h4>
-      <MapCommandSummary text={text} />
-      <div className="action-line">
-      <button onClick={() => run(async () => { if (window.confirm("Start autoscaler?")) await runTask(() => mapsApi.autoscalerAction("start", "AUTOSCALER CHANGE")); })}>Start Autoscaler</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm("Stop autoscaler?")) await runTask(() => mapsApi.autoscalerAction("stop", "AUTOSCALER CHANGE")); })}>Stop Autoscaler</button>
-      <button onClick={() => run(async () => { if (window.confirm("Restart autoscaler?")) await runTask(() => mapsApi.autoscalerAction("restart", "AUTOSCALER CHANGE")); })}>Restart Autoscaler</button>
-      </div>
-    </section>}
-
-    {active === "memory-settings" && <section className="action-section">
-      <h4>Show Memory Settings</h4>
-      {memoryRows.length ? <DataTable rows={memoryRows} columns={["map", "memory"]} /> : <MapCommandSummary text={text} />}
-    </section>}
-
-    {active === "deepdesert" && <section className="action-section">
-      <h4>Deep Desert</h4>
-      <MapCommandSummary text={text} />
-      <div className="action-line">
-        <button onClick={() => run(async () => { if (window.confirm("Enable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "enable", confirmation: "UPDATE DEEP DESERT" })); })}>Enable Dual Deep Desert</button>
-        <button className="danger" onClick={() => run(async () => { if (window.confirm("Disable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "disable", confirmation: "UPDATE DEEP DESERT" })); })}>Disable Dual Deep Desert</button>
-        <button onClick={() => run(async () => runTask(() => mapsApi.updateDeepdesert({ action: "repair", confirmation: "UPDATE DEEP DESERT" })))}>Repair Deep Desert</button>
-        <button onClick={() => run(async () => { if (window.confirm("Bootstrap Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "bootstrap", confirmation: "UPDATE DEEP DESERT" })); })}>Bootstrap Deep Desert</button>
-      </div>
-    </section>}
-
-    {active === "userengine" && <PlannedPanel title="Edit UserEngine" reason="The manager has a guided UserEngine editor, but web write exposure needs allowed-key validation, restart warnings, audit entries, and rollback behavior before shipping." />}
-    {active === "revert-settings" && <PlannedPanel title="Revert All UserSettings To Defaults" reason="The manager can remove UserEngine/UserGame overrides, but the web flow needs preview, confirmation, and rollback documentation before exposing this destructive operation." />}
-    {active === "memory-current" && <PlannedPanel title="Current Memory Usage" reason="The manager reads live docker stats for current memory usage. A dedicated backend route is needed so the web UI can request this without parsing interactive manager output." />}
-    {active === "memory-defaults" && <PlannedPanel title="Restore Built-In Memory Defaults" reason="The manager can remove memory overrides. Web exposure is deferred until preview, audit, and confirmation behavior are implemented." />}
-
-    <details className="technical-details">
-      <summary>Developer Sietch controls</summary>
-      <div className="actions-grid">
-      <label>Dimension Count<input value={count} onChange={(event) => setCount(event.target.value)} /></label>
-      <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "set-max", map, count: Number(count) })))}>Set Max Sietches</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Set active dimensions for ${map} to ${count}? This reconciles services.`)) await runTask(() => mapsApi.updateSietches({ action: "set-active", map, count: Number(count), confirmation: "UPDATE SIETCHES" })); })}>Set Active Sietches</button>
-      <label>Partition ID<input value={partitionId} onChange={(event) => setPartitionId(event.target.value)} /></label>
-      <label>Display Name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-      <button onClick={() => run(async () => { if (window.confirm(`Update display name for partition ${partitionId}?`)) await runTask(() => mapsApi.updateSietches({ action: "set-display", partitionId, displayName, confirmation: "UPDATE SIETCHES" })); })}>Set Sietch Display</button>
-      <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Update password for partition ${partitionId}? Running services may need restart.`)) await runTask(() => mapsApi.updateSietches({ action: "set-password", partitionId, password, confirmation: "UPDATE SIETCHES" })); })}>Set Sietch Password</button>
-      <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "sync" })))}>Sync Sietches</button>
-      <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "validate" })))}>Validate Sietches</button>
-      </div>
-    </details>
-    <p className="danger-note">Map mode, spawn/despawn, autoscaler, active Sietch dimensions, passwords, and Deep Desert changes can affect live services and require backend confirmation.</p>
+    <div className="planned-grid spaced-section">
+      <article className="planned-card"><strong>UserEngine Save</strong><span>Disabled. usersettings.py can write fields, but it does not create backups or preview restart impact for the web UI yet.</span></article>
+      <article className="planned-card"><strong>UserGame Per-Dimension Save</strong><span>Disabled. Needs dynamic partition selector, UserGame.ini backup-before-write, and restart confirmation.</span></article>
+      <article className="planned-card"><strong>Restore Defaults</strong><span>Disabled. reset-all exists, but destructive web exposure needs preview and backup of current UserEngine/UserGame overrides.</span></article>
+      <article className="planned-card"><strong>Live Memory Usage</strong><span>Planned. Manager reads Docker stats directly; current web page shows configured memory from dune memory status.</span></article>
+    </div>
   </section>;
 }
 
@@ -1537,6 +1898,16 @@ function markerBounds(markers: LiveMapMarker[]) {
     maxX: xs.length ? Math.max(...xs) : 1,
     minY: ys.length ? Math.min(...ys) : 0,
     maxY: ys.length ? Math.max(...ys) : 1
+  };
+}
+
+function clampPan(next: { x: number; y: number }, zoom: number, element: HTMLElement | null) {
+  if (!element || zoom <= 1) return { x: 0, y: 0 };
+  const maxX = Math.max(0, (element.clientWidth * (zoom - 1)) / 2);
+  const maxY = Math.max(0, (element.clientHeight * (zoom - 1)) / 2);
+  return {
+    x: Math.max(-maxX, Math.min(maxX, next.x)),
+    y: Math.max(-maxY, Math.min(maxY, next.y))
   };
 }
 
@@ -1580,19 +1951,39 @@ function friendlyMarkerType(type: string) {
 function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
   const [gameStatus, setGameStatus] = useState<Record<string, string>>({ status: "Not checked", current: "", latest: "", reason: "" });
   const [stackStatus, setStackStatus] = useState<Record<string, string>>({ status: "Not checked", current: "", latest: "", reason: "" });
+  const [autoGame, setAutoGame] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [autoGameEnabled, setAutoGameEnabled] = useState(false);
+  const [autoGameTime, setAutoGameTime] = useState("05:00:00");
+  const [previousStack, setPreviousStack] = useState<Record<string, string>[]>([]);
+  const [previousStackReason, setPreviousStackReason] = useState("");
+  const autoGameValues = parseKeyValueText(autoGame?.stdout || "");
   async function checkGame() {
-    setGameStatus({ status: "Checking", current: "", latest: "", reason: "" });
-    const final = await waitForTask((await updatesApi.checkGame()).task, setTask);
+    setGameStatus({ status: "Checking...", current: "", latest: "", reason: "" });
+    const final = await waitForTaskSilently((await updatesApi.checkGame()).task);
     setGameStatus(parseUpdateTask(final));
   }
   async function checkStack() {
-    setStackStatus({ status: "Checking", current: "", latest: "", reason: "" });
-    const final = await waitForTask((await updatesApi.checkStack()).task, setTask);
+    setStackStatus({ status: "Checking...", current: "", latest: "", reason: "" });
+    const final = await waitForTaskSilently((await updatesApi.checkStack()).task);
     setStackStatus(parseUpdateTask(final));
+  }
+  async function loadAutoGame() {
+    const result = await updatesApi.autoGameStatus();
+    setAutoGame(result);
+    const values = parseKeyValueText(result.stdout || "");
+    setAutoGameEnabled(/^1|true|enabled$/i.test(values.auto_updates_enabled || values.enabled || ""));
+    if (values.auto_update_time) setAutoGameTime(values.auto_update_time);
+  }
+  async function loadPreviousStack() {
+    const result = await updatesApi.previousStack();
+    setPreviousStack(parseReleaseRows(result.stdout || ""));
+    setPreviousStackReason(Number(result.exitCode || 0) === 0 ? "" : result.stderr || result.stdout || "Previous stack list unavailable");
   }
   useEffect(() => {
     checkGame().catch((error) => setGameStatus({ status: "Check Failed", current: "", latest: "", reason: error instanceof Error ? error.message : String(error) }));
     checkStack().catch((error) => setStackStatus({ status: "Check Failed", current: "", latest: "", reason: error instanceof Error ? error.message : String(error) }));
+    loadAutoGame().catch((error) => setAutoGame({ stdout: "", stderr: error instanceof Error ? error.message : String(error), exitCode: 1 }));
+    loadPreviousStack().catch((error) => setPreviousStackReason(error instanceof Error ? error.message : String(error)));
   }, []);
   const gameCanApply = gameStatus.status === "Update Available";
   const stackCanApply = stackStatus.status === "Update Available";
@@ -1601,24 +1992,60 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
     <div className="action-sections">
       <section className="action-section">
         <div className="panel-title"><h4>Game Update</h4><StatusPill value={gameStatus.status} /></div>
-        <KeyValueGrid items={[["Current build", gameStatus.current || "Unknown"], ["Latest build", gameStatus.latest || "Unknown"], ["Status", gameStatus.status]]} />
+        <KeyValueGrid items={[["Current build", updateDisplayValue(gameStatus, "current")], ["Latest build", updateDisplayValue(gameStatus, "latest")], ["Status", gameStatus.status]]} />
+        {gameStatus.status === "Check Failed" && gameStatus.reason && <p className="danger-note">{gameStatus.reason}</p>}
+        {gameStatus.status === "Version details unavailable" && <p className="muted">{gameStatus.reason}</p>}
         <div className="action-line">
           <button onClick={checkGame}>Refresh Game Check</button>
-          {gameCanApply ? <button className="danger" onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button> : <span className="muted">Apply appears only when an update is available.</span>}
+          {gameCanApply && <button className="danger" onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button>}
         </div>
       </section>
       <section className="action-section">
         <div className="panel-title"><h4>Stack Update</h4><StatusPill value={stackStatus.status} /></div>
-        <KeyValueGrid items={[["Current version", stackStatus.current || "Unknown"], ["Latest version", stackStatus.latest || "Unknown"], ["Status", stackStatus.status]]} />
+        <KeyValueGrid items={[["Current version", updateDisplayValue(stackStatus, "current")], ["Latest version", updateDisplayValue(stackStatus, "latest")], ["Status", stackStatus.status]]} />
+        {stackStatus.status === "Check Failed" && stackStatus.reason && <p className="danger-note">{stackStatus.reason}</p>}
+        {stackStatus.status === "Version details unavailable" && <p className="muted">{stackStatus.reason}</p>}
         <div className="action-line">
           <button onClick={checkStack}>Refresh Stack Check</button>
-          {stackCanApply ? <button className="danger" onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button> : <span className="muted">Apply appears only when an update is available.</span>}
+          {stackCanApply && <button className="danger" onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button>}
         </div>
       </section>
-      <div className="planned-grid">
-        <article className="planned-card"><strong>Automatic Game Updates</strong><span>Planned / not configured. Requires durable scheduling and maintenance-window handling.</span></article>
-        <article className="planned-card"><strong>Restore Previous Stack</strong><span>Planned / not configured. Requires verified stack restore points and rollback commands.</span></article>
-      </div>
+      <section className="action-section">
+        <div className="panel-title"><h4>Automatic Game Updates</h4><StatusPill value={autoGameEnabled ? "Enabled" : "Disabled"} /></div>
+        <p className="muted">Uses the Dune Manager automatic game update timer. Enabling saves the manager preference and may install a systemd timer when host permissions allow it.</p>
+        <KeyValueGrid items={[
+          ["Current status", autoGameEnabled ? "Enabled" : "Disabled"],
+          ["Check time", autoGameValues.auto_update_time || autoGameTime],
+          ["Timer", autoGameValues.systemd_timer || "Not installed"]
+        ]} />
+        {commandStatusSummary(autoGame).reason && <p className="danger-note">{commandStatusSummary(autoGame).reason}</p>}
+        <div className="action-line">
+          <label className="checkbox-row"><input type="checkbox" checked={autoGameEnabled} onChange={(event) => setAutoGameEnabled(event.target.checked)} /> Enable automatic game updates</label>
+          <label className="compact-select">Daily check time<input value={autoGameTime} onChange={(event) => setAutoGameTime(event.target.value)} placeholder="05:00:00" /></label>
+          <button onClick={async () => {
+            const confirmation = window.prompt("Type SAVE AUTO GAME UPDATES to save automatic update settings.");
+            if (confirmation !== "SAVE AUTO GAME UPDATES") return;
+            const response = await updatesApi.saveAutoGame({ enabled: autoGameEnabled, time: autoGameTime, confirmation });
+            await waitForTask(response.task, setTask);
+            await loadAutoGame();
+          }}>Save Auto Updates</button>
+          <button onClick={loadAutoGame}>Refresh Auto Status</button>
+        </div>
+      </section>
+      <section className="action-section">
+        <div className="panel-title"><h4>Restore Previous Stack</h4><button onClick={loadPreviousStack}>Refresh Releases</button></div>
+        <p className="danger-note">Restoring the previous stack changes the RedBlink stack version. Use only after reviewing backups and release history.</p>
+        {previousStackReason && <p className="danger-note">{previousStackReason}</p>}
+        {previousStack.length ? <DataTable rows={previousStack.slice(0, 8)} columns={["version", "date", "title"]} /> : <div className="empty">No previous stack releases found.</div>}
+        <div className="action-line">
+          <button className="danger" disabled={previousStack.length < 2} onClick={async () => {
+            const confirmation = window.prompt("Type RESTORE PREVIOUS STACK to restore the previous stack release.");
+            if (confirmation !== "RESTORE PREVIOUS STACK") return;
+            setTask((await updatesApi.restorePreviousStack(confirmation)).task);
+          }}>Restore Previous Stack</button>
+          {previousStack[1]?.version && <span className="muted">Previous release: {previousStack[1].version}</span>}
+        </div>
+      </section>
     </div>
   </section>;
 }
@@ -1637,8 +2064,8 @@ function SettingsPanel() {
   </section>;
 }
 
-function HomeHealthCards({ status, readiness, readinessWarning, loading }: { status: string; readiness: string; readinessWarning: string; loading: boolean }) {
-  const summary = summarizeHomeStatus(status, readiness, readinessWarning, loading);
+function HomeHealthCards({ status, readiness, readinessWarning, loading, runningAction, taskResult }: { status: string; readiness: string; readinessWarning: string; loading: boolean; runningAction: "start" | "stop" | "restart" | ""; taskResult: HomeTaskResult | null }) {
+  const summary = summarizeHomeStatus(status, readiness, readinessWarning, loading, runningAction, taskResult);
   return <div className="home-health wide">
     <section className="dashboard-band">
       <h3>Server Identity</h3>
@@ -1651,7 +2078,7 @@ function HomeHealthCards({ status, readiness, readinessWarning, loading }: { sta
       </div>
     </section>
     <section className="dashboard-band">
-      <h3>Readiness and Health</h3>
+      <h3>Readiness & Health</h3>
       <div className="health-grid health-grid-compact">
         {summary.health.map((item) => <article className="status-card" key={item.label}>
           <div className="status-card-title"><span>{item.label}</span><StatusPill value={item.status} /></div>
@@ -1663,14 +2090,18 @@ function HomeHealthCards({ status, readiness, readinessWarning, loading }: { sta
   </div>;
 }
 
-function DoctorSummary({ text }: { text: string }) {
-  const issues = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /warn|fail|error|missing|not ready/i.test(line)).slice(0, 6);
-  return <section className="action-section">
+function DoctorSummary({ text, readiness }: { text: string; readiness: string }) {
+  const readinessHealthy = /^READY:/m.test(readiness);
+  const issues = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^WARN\s+/i.test(line)).filter((line) => {
+    if (!readinessHealthy) return true;
+    return !/Director heartbeat not seen in recent logs|Gateway DB monitoring not seen in recent logs/i.test(line);
+  }).slice(0, 6);
+  return <section className="action-section doctor-section">
     <div className="panel-title"><h4>Doctor Diagnostics</h4></div>
     {text ? <p>{issues.length ? `${issues.length} diagnostic item${issues.length === 1 ? "" : "s"} need attention.` : "No obvious warning lines detected in the latest doctor output."}</p> : <p>Run Doctor to show diagnostics.</p>}
     {issues.length > 0 && <div className="check-grid">{issues.map((issue, index) => {
       const advice = doctorAdvice(issue);
-      return <article className="check-card" key={`${issue}-${index}`}><div><strong>{advice.title}</strong><p>{advice.message}</p><span className="muted">{advice.nextStep}</span></div><StatusPill value={advice.status} /></article>;
+      return <article className="check-card" key={`${issue}-${index}`}><div><strong>{advice.title}</strong><p>{advice.message}</p>{advice.nextStep && <span className="muted">{advice.nextStep}</span>}</div><StatusPill value={advice.status} /></article>;
     })}</div>}
   </section>;
 }
@@ -1678,22 +2109,22 @@ function DoctorSummary({ text }: { text: string }) {
 function doctorAdvice(issue: string) {
   const clean = friendlyIssueLine(issue);
   if (/director.*heartbeat/i.test(issue)) return {
-    title: "Director Heartbeat Not Recently Observed",
-    message: "The latest sampled logs did not show a recent director heartbeat. This can be a stale log-window warning if the server is otherwise ready.",
-    nextStep: "Open Logs -> Director and Gateway if readiness stays unhealthy.",
-    status: "Warn"
+    title: "Director heartbeat not recently observed",
+    message: "Check Director logs if readiness is unhealthy.",
+    nextStep: "",
+    status: "WARN"
   };
   if (/gateway.*db|db monitoring/i.test(issue)) return {
-    title: "Gateway Database Monitoring Not Recently Observed",
-    message: "The doctor check did not find recent gateway database-monitoring lines in the sampled logs.",
-    nextStep: "Open Logs -> Gateway and check whether DB health messages are current.",
-    status: "Warn"
+    title: "Gateway DB monitoring not recently observed",
+    message: "Check Gateway logs if readiness is unhealthy.",
+    nextStep: "",
+    status: "WARN"
   };
   if (/public.*private|advertis/i.test(issue)) return {
     title: "Advertised IP Warning",
     message: clean,
     nextStep: "Review Setup -> Server Identity and Network/Ports for Local vs Public mode.",
-    status: "Warn"
+    status: "WARN"
   };
   return {
     title: "Diagnostic Warning",
@@ -1809,15 +2240,21 @@ function parseMapRows(text: string): Record<string, unknown>[] {
       };
     });
   }
-  const rows = stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => /Survival|Overmap|DeepDesert|Sietch|map/i.test(line) && !/^=+/.test(line)).map((line) => {
-    const map = line.match(/\b(Overmap|Survival_\d+|DeepDesert_\d+|Sietch[_-]?\d*)\b/i)?.[1] || line.split(/\s+/)[0];
+  const rows = stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => {
+    if (!line || /^=+/.test(line) || /^MAP\s+/i.test(line)) return false;
+    return /\bCurrent:\s*(dynamic|always-on)\b/i.test(line) || /\bPartitions:\s*\d+/i.test(line) || /\bAssigned:\s*\d+/i.test(line);
+  }).map((line) => {
+    const map = line.split(/\s+/)[0];
+    const assigned = line.match(/\bAssigned:\s*(\d+)/i)?.[1] || "";
+    const partitions = line.match(/\bPartitions:\s*(\d+)/i)?.[1] || "";
     return {
-      map: friendlyMapName(map),
-      status: line.match(/\bAssigned:\s*(\d+)/i)?.[1] ? "Configured" : inferStatus(line),
-      mode: line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || line.match(/\b(dynamic|always-on)\b/i)?.[1] || "Unknown",
-      partitions: line.match(/\bPartitions:\s*(\d+)/i)?.[1] || "Unknown",
-      assigned: line.match(/\bAssigned:\s*(\d+)/i)?.[1] || "Unknown",
-      memory: line.match(/\b\d+\s*[gGmM][bB]?\b/)?.[0] || "Unknown"
+      map,
+      status: assigned && Number(assigned) > 0 ? "Assigned" : "Not Running",
+      mode: friendlyMapMode(line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || line.match(/\b(dynamic|always-on)\b/i)?.[1] || ""),
+      partitions: partitions || "Unknown",
+      assigned: assigned || "Unknown",
+      memory: line.match(/\b\d+\s*[gGmM][bB]?\b/)?.[0] || "",
+      dimensions: partitions ? `${partitions} partition${Number(partitions) === 1 ? "" : "s"}` : "Not Available"
     };
   });
   const seen = new Set<string>();
@@ -1833,8 +2270,155 @@ function parseMemoryRows(text: string): Record<string, unknown>[] {
   return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^===|^Default memory|^MAP\s+MEMORY/i.test(line)).map((line) => {
     const match = line.match(/^(.+?)\s{2,}(.+)$/);
     if (!match) return null;
-    return { map: friendlyMapName(match[1].trim()), memory: match[2].trim() };
+    return { map: match[1].trim(), memory: formatMemoryValue(match[2].trim()) };
   }).filter(Boolean) as Record<string, unknown>[];
+}
+
+function parseServerPartitionRows(text: string): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  for (const rawLine of stripAnsi(text).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!/^\d+\s*\|/.test(line)) continue;
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 9) continue;
+    const [partitionId, map, dimension, label, assignedServer, gamePort, igwPort, ready, alive] = parts;
+    rows.push({
+      partitionId,
+      map,
+      dimension,
+      label,
+      assignedServer,
+      gamePort,
+      igwPort,
+      ready,
+      alive,
+      status: mapRuntimeStatus({ assignedServer, ready, alive })
+    });
+  }
+  return rows;
+}
+
+function mergeMapAndMemoryRows(mapsText: string, memoryText: string, serversText = ""): Record<string, unknown>[] {
+  const rows = new globalThis.Map<string, Record<string, unknown>>();
+  const serverRows = new globalThis.Map<string, Record<string, unknown>>();
+  for (const row of parseServerPartitionRows(serversText)) {
+    const map = String(row.map || "");
+    if (!map) continue;
+    const existing = serverRows.get(map);
+    serverRows.set(map, {
+      ...row,
+      status: strongestMapStatus(String(existing?.status || ""), String(row.status || "")),
+      dimensions: existing?.dimensions ? `${String(existing.dimensions)}, ${String(row.label || row.partitionId)}` : String(row.label || row.partitionId || "")
+    });
+  }
+  for (const row of parseMemoryRows(memoryText)) {
+    const map = String(row.map || "");
+    if (!map) continue;
+    const server = serverRows.get(map);
+    rows.set(map, {
+      map,
+      status: server?.status || "Not Available",
+      mode: map === "Survival_1" || map === "Overmap" ? "Core Map" : "Not Listed",
+      memory: row.memory,
+      dimensions: server?.dimensions || "Not Available"
+    });
+  }
+  for (const row of parseMapRows(mapsText)) {
+    const map = String(row.map || "");
+    if (!map) continue;
+    const server = serverRows.get(map);
+    rows.set(map, {
+      ...(rows.get(map) || {}),
+      ...row,
+      status: server?.status || row.status || rows.get(map)?.status || "Not Available",
+      mode: row.mode || rows.get(map)?.mode || "Not Available",
+      memory: row.memory ? formatMemoryValue(String(row.memory)) : rows.get(map)?.memory || "Not Available",
+      dimensions: row.dimensions || server?.dimensions || rows.get(map)?.dimensions || "Not Available"
+    });
+  }
+  return Array.from(rows.values());
+}
+
+function mapRuntimeStatus(row: { assignedServer?: unknown; ready?: unknown; alive?: unknown }) {
+  const assigned = Boolean(String(row.assignedServer || "").trim());
+  const ready = /^true$/i.test(String(row.ready || "").trim());
+  const alive = /^true$/i.test(String(row.alive || "").trim());
+  if (ready) return "Ready";
+  if (alive) return "Running";
+  if (assigned) return "Starting";
+  return "Not Running";
+}
+
+function strongestMapStatus(a: string, b: string) {
+  const order = ["Not Available", "Not Running", "Starting", "Running", "Ready"];
+  return order.indexOf(b) > order.indexOf(a) ? b : a || b;
+}
+
+function friendlyMapMode(value: string) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "dynamic") return "Dynamic";
+  if (normalized === "always-on") return "Always On";
+  if (normalized === "core map" || normalized === "core") return "Core Map";
+  return value ? titleCase(value) : "Not Available";
+}
+
+function modeInputValue(value: string) {
+  const normalized = String(value || "").toLowerCase();
+  if (/always/.test(normalized)) return "always-on";
+  return "dynamic";
+}
+
+function memoryInputValue(value: string) {
+  const match = String(value || "").match(/(\d+(?:\.\d+)?)\s*(GB|GiB?|MB|MiB?|[gGmM])?/);
+  if (!match) return "8";
+  return match[1];
+}
+
+function formatMemoryValue(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return "Not Available";
+  const isDefault = /\bdefault\b/i.test(text);
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(GiB?|GB|MiB?|MB|[gGmM])?/i);
+  if (!match) return text;
+  const unit = (match[2] || "GB").toLowerCase();
+  const displayUnit = unit.startsWith("m") ? "MB" : "GB";
+  return `${match[1]} ${displayUnit}${isDefault ? " (Default)" : ""}`;
+}
+
+function parseKeyValueText(text: string) {
+  const out: Record<string, string> = {};
+  for (const rawLine of stripAnsi(text).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const match = line.match(/^([^:=]{2,80}):\s*(.*)$/);
+    if (!match) continue;
+    out[match[1].trim().toLowerCase().replace(/\s+/g, "_")] = match[2].trim();
+  }
+  return out;
+}
+
+function commandStatusSummary(result: { stdout?: string; stderr?: string; exitCode?: number } | null) {
+  if (!result) return { status: "Loading", reason: "" };
+  if (Number(result.exitCode || 0) === 0) return { status: "Checked", reason: "" };
+  return { status: "Check Failed", reason: result.stderr || result.stdout || "Command failed" };
+}
+
+function parseReleaseRows(text: string) {
+  return stripAnsi(text).split(/\r?\n/).map((line) => {
+    const [version, date, title] = line.trim().split(/\t+/);
+    return version ? { version, date: date || "", title: title || "" } : null;
+  }).filter(Boolean) as Record<string, string>[];
+}
+
+function parseUserSettingRows(text: string) {
+  return stripAnsi(text).split(/\r?\n/).map((line) => {
+    const [key, value] = line.split(/\t/);
+    if (!key) return null;
+    return { setting: friendlySettingName(key), value: value || "" };
+  }).filter(Boolean) as Record<string, string>[];
+}
+
+function friendlySettingName(key: string) {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function firstArray(...values: unknown[]) {
@@ -1898,6 +2482,7 @@ function friendlyColumnName(value: string) {
     actor: "Actor",
     templates: "Templates",
     skillModule: "Skill Module",
+    maxLevel: "Max Level",
     itemName: "Item Name",
     itemId: "Item ID",
     quantity: "Quantity",
@@ -1942,56 +2527,259 @@ function formatTechnicalText(sections: [string, string][]) {
   return sections.map(([title, text]) => `# ${title}\n${text}`).join("\n\n");
 }
 
-function summarizeHomeStatus(status: string, readiness: string, readinessWarning: string, loading: boolean) {
-  const overall = findLineValue(status, ["overall"]) || (readiness ? "Readiness checked" : readinessWarning ? "Status loaded, readiness warning" : status ? "Status loaded" : loading ? "Checking" : "Unknown");
-  const containers = summarizeContainers(status);
-  const listeners = summarizeListeners(status);
-  const database = summarizeDatabase(status);
-  const games = summarizeGameServers(status);
-  const rabbit = summarizeRabbit(status);
-  const fls = summarizeFls(status);
-  const population = findPopulation(status) || findLineValue(status, ["population", "players"]);
+function summarizeHomeStatus(status: string, readiness: string, readinessWarning: string, loading: boolean, runningAction: "start" | "stop" | "restart" | "" = "", taskResult: HomeTaskResult | null = null) {
+  void readinessWarning;
+  const serverState = getHomeServerState(status, readiness);
+  const isStarting = runningAction === "start" || runningAction === "restart";
+  const actionFailed = taskResult?.status === "failed" && !serverState.running;
+  const actionStopped = taskResult?.status === "stopped";
+  const rawOverall = findLineValue(status, ["overall"]);
+  const liveOverall = /^READY:/m.test(readiness) ? "OK" : friendlyHomeOverall(rawOverall || (readiness ? "Readiness checked" : readinessWarning ? "Status loaded, readiness warning" : status ? "Status loaded" : loading ? "Checking" : "Unknown"));
+  const transitionOverall = runningAction === "restart" ? "Restarting" : runningAction === "stop" ? "Stopping" : isStarting ? "Starting" : "";
+  const rawGames = summarizeGameServers(status);
+  const warmingOverall = /^Warming$/i.test(rawGames.label) ? "Warming" : "";
+  const overall = serverState.stopped || actionStopped ? "Stopped" : warmingOverall || (runningAction === "restart" ? "Restarting" : runningAction === "stop" ? "Stopping" : (isStarting && !/^(OK|Warming)$/i.test(liveOverall) ? transitionOverall : liveOverall));
+  const attentionHealth = !isStarting && (serverState.stopped || actionStopped || actionFailed) ? attentionHomeHealthCards() : null;
+  const containers = transitionHomeHealthCard(summarizeContainers(status), runningAction) || attentionHealth?.containers || summarizeContainers(status);
+  const listeners = transitionHomeHealthCard(summarizeListeners(status), runningAction) || attentionHealth?.listeners || summarizeListeners(status);
+  const database = transitionHomeHealthCard(summarizeDatabase(status), runningAction) || attentionHealth?.database || summarizeDatabase(status);
+  const games = transitionHomeHealthCard(rawGames, runningAction) || attentionHealth?.games || rawGames;
+  const rabbit = transitionHomeHealthCard(summarizeRabbit(status), runningAction) || attentionHealth?.rabbit || summarizeRabbit(status);
+  const fls = transitionHomeHealthCard(summarizeFls(status), runningAction) || attentionHealth?.fls || summarizeFls(status);
+  const population = formatHomePopulation(findPopulation(status) || findLineValue(status, ["population", "players"]));
   return {
     identity: [
-      { label: "Overall", value: overall, status: inferStatus(overall), detail: "" },
+      { label: "Overall", value: overall, status: homeOverallBadge(overall), detail: "" },
       { label: "Title", value: findLineValue(status, ["title", "server title", "SERVER_TITLE"]) || "Unknown", status: "Info", detail: "" },
       { label: "Region", value: findLineValue(status, ["region", "SERVER_REGION"]) || "Unknown", status: "Info", detail: "" },
       { label: "Mode", value: titleCase(findLineValue(status, ["mode", "server mode"]) || "Unknown"), status: "Info", detail: "" },
       { label: "Server IP", value: findLineValue(status, ["server ip", "ip", "SERVER_IP"]) || "Unknown", status: "Info", detail: "" },
       { label: "Battlegroup", value: findLineValue(status, ["battlegroup", "battlegroup id"]) || "Unknown", status: "Info", detail: "" },
-      { label: "Population", value: population || "No population data", status: "Info", detail: "" }
+      { label: "Population", value: population, status: population.includes("?") || population === "Unavailable" ? "WARN" : "Info", detail: "" }
     ],
     health: [
       { label: "Containers", value: containers.label, status: containers.status, detail: containers.detail },
       { label: "Listeners", value: listeners.label, status: listeners.status, detail: listeners.detail },
       { label: "Database", value: database.label, status: database.status, detail: database.detail },
-      { label: "Game servers", value: readinessWarning ? "Readiness check failed" : games.label, status: readinessWarning ? "Warn" : games.status, detail: readinessWarning || games.detail },
+      { label: "Game Servers", value: games.label, status: games.status, detail: games.detail },
       { label: "RabbitMQ", value: rabbit.label, status: rabbit.status, detail: rabbit.detail },
       { label: "Funcom/FLS", value: fls.label, status: fls.status, detail: fls.detail }
     ]
   };
 }
 
+function homeNeedsWarmRefresh(status: string, readiness: string) {
+  if (!status && !readiness) return false;
+  const summary = summarizeHomeStatus(status, readiness, "", false);
+  const overall = summary.identity.find((item) => item.label === "Overall");
+  const games = summary.health.find((item) => item.label === "Game Servers");
+  const overallOk = /^OK$/i.test(String(overall?.value || "")) || /^Ready$/i.test(String(overall?.status || ""));
+  const gamesOk = /^OK$/i.test(String(games?.value || "")) && /^Ready$/i.test(String(games?.status || ""));
+  const gameServerText = sectionLines(status, "Game servers").join("\n");
+  const warming = /Overall:\s*(WARMING|WAIT|STARTING)/i.test(status) ||
+    /\b(WARMING|WAIT|STARTING)\b/i.test(gameServerText) ||
+    /^(Warming|Starting)$/i.test(String(games?.value || ""));
+  return warming && (!overallOk || !gamesOk);
+}
+
+function isHomeActionComplete(status: string, readiness: string) {
+  if (isHomeStartComplete(status, readiness)) return true;
+  if (isHomeReadinessOperational(readiness)) return true;
+  if (/^READY:/m.test(readiness) || /Overall:\s*(READY|OK)/i.test(status)) return true;
+  const summary = summarizeHomeStatus(status, readiness, "", false);
+  const overall = summary.identity.find((item) => item.label === "Overall");
+  const games = summary.health.find((item) => item.label === "Game Servers");
+  const overallOk = /^OK$/i.test(String(overall?.value || "")) || /^Ready$/i.test(String(overall?.status || ""));
+  const gamesOk = /^OK$/i.test(String(games?.value || "")) && /^Ready$/i.test(String(games?.status || ""));
+  const healthOk = summary.health.length > 0 && summary.health.every((item) =>
+    /^OK$/i.test(String(item.value || "")) && /^Ready$/i.test(String(item.status || ""))
+  );
+  const nonGameHealthOk = summary.health.filter((item) => item.label !== "Game Servers").every((item) =>
+    /^OK$/i.test(String(item.value || "")) && /^Ready$/i.test(String(item.status || ""))
+  );
+  const gamesWarming = /^Warming$/i.test(String(games?.value || ""));
+  return healthOk || (overallOk && gamesOk) || (overallOk && gamesWarming && nonGameHealthOk);
+}
+
+function isHomeReadinessOperational(readiness: string) {
+  if (/^READY:/m.test(readiness)) return true;
+  if (!/^WARMING:/m.test(readiness)) return false;
+  if (/^\s*FAIL\b/m.test(readiness)) return false;
+  const requiredSignals = [
+    /OK\s+container\s+dune-postgres/i,
+    /OK\s+container\s+dune-rmq-admin/i,
+    /OK\s+container\s+dune-rmq-game/i,
+    /OK\s+container\s+dune-text-router/i,
+    /OK\s+container\s+dune-director/i,
+    /OK\s+container\s+dune-server-gateway/i,
+    /OK\s+container\s+dune-server-survival-1/i,
+    /OK\s+container\s+dune-server-overmap/i,
+    /OK\s+world_partition rows:/i,
+    /OK\s+game server sg\.\* RMQ connections/i
+  ];
+  return requiredSignals.every((pattern) => pattern.test(readiness));
+}
+
+function isHomeStopComplete(status: string, readiness: string) {
+  if (getHomeServerState(status, readiness).stopped) return true;
+  const requiredContainers = [
+    "dune-postgres",
+    "dune-rmq-admin",
+    "dune-rmq-game",
+    "dune-text-router",
+    "dune-director",
+    "dune-server-gateway",
+    "dune-server-survival-1",
+    "dune-server-overmap"
+  ];
+  const containerLines = sectionLines(status, "Containers").filter((line) => !/^SERVICE\s+STATUS/i.test(line));
+  const statusContainersStopped = containerLines.length >= requiredContainers.length && requiredContainers.every((name) =>
+    containerLines.some((line) => new RegExp(`^${name}\\s+\\b(missing|stopped|exited|dead|not running)\\b`, "i").test(line))
+  );
+  if (statusContainersStopped) return true;
+
+  const text = `${status}\n${readiness}`;
+  const readinessContainersStopped = requiredContainers.every((name) =>
+    new RegExp(`FAIL\\s+container\\s+${name}\\b`, "i").test(text)
+  );
+  const allListenersMissing = sectionLines(status, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line)).length >= 6 &&
+    sectionLines(status, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line)).every((line) => /\bMISSING\b/i.test(line));
+  const gameServersStopped = /Survival_1\s+NOT RUNNING/i.test(text) && /Overmap\s+NOT RUNNING/i.test(text);
+  return readinessContainersStopped || (allListenersMissing && gameServersStopped);
+}
+
+function isHomeStartComplete(status: string, readiness: string) {
+  const serverState = getHomeServerState(status, readiness);
+  if (serverState.stopped) return false;
+  if (/Overall:\s*READY/i.test(status) || /^READY:/m.test(readiness)) return true;
+
+  const containerLines = sectionLines(status, "Containers").filter((line) => !/^SERVICE\s+STATUS/i.test(line));
+  const requiredContainers = [
+    "dune-postgres",
+    "dune-rmq-admin",
+    "dune-rmq-game",
+    "dune-text-router",
+    "dune-director",
+    "dune-server-gateway",
+    "dune-server-survival-1",
+    "dune-server-overmap"
+  ];
+  const containersReady = requiredContainers.every((name) =>
+    containerLines.some((line) => new RegExp(`^${name}\\s+Up\\b`, "i").test(line))
+  );
+
+  const listenerLines = sectionLines(status, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line));
+  const listenersReady = listenerLines.length > 0 && !listenerLines.some((line) => /\b(MISSING|FAIL|ERROR)\b/i.test(line));
+
+  const partitionValue = findLineValue(sectionLines(status, "Database").join("\n"), ["World partitions"]);
+  const databaseReady = Number(partitionValue) > 0;
+
+  const flsLines = sectionLines(status, "Funcom/FLS summary");
+  const flsReady = flsLines.length > 0 && !flsLines.some((line) => /:\s*(WAIT|FAIL|ERROR|MISSING)/i.test(line));
+
+  return containersReady && listenersReady && databaseReady && flsReady;
+}
+
+function attentionHomeHealthCards() {
+  const item = { label: "Needs Review", status: "WARN", detail: "" };
+  return {
+    containers: item,
+    listeners: item,
+    database: item,
+    games: item,
+    rabbit: item,
+    fls: item
+  };
+}
+
+function transitionHomeHealthCard(item: { label: string; status: string; detail: string }, runningAction: "start" | "stop" | "restart" | "") {
+  if (runningAction !== "start" && runningAction !== "restart") return null;
+  if (/^OK$/i.test(item.label) && /^Ready$/i.test(item.status)) return item;
+  if (/^Warming$/i.test(item.label)) return item;
+  const label = runningAction === "restart" ? "Restarting" : "Getting Ready";
+  const status = runningAction === "restart" ? "WARN" : "Starting";
+  return { label, status, detail: "" };
+}
+
+function getHomeServerState(status: string, readiness: string) {
+  const text = `${status}\n${readiness}`;
+  const overall = findLineValue(status, ["overall"]);
+  const containerLines = sectionLines(status, "Containers").filter((line) => !/^SERVICE\s+STATUS/i.test(line));
+  const allContainersMissing = containerLines.length >= 4 && containerLines.every((line) => /\b(missing|stopped|exited|dead)\b/i.test(line));
+  const runningSignals = [
+    !allContainersMissing && /^READY:/m.test(readiness),
+    !allContainersMissing && /Overall:\s*(READY|WARMING)/i.test(status),
+    !allContainersMissing && /\b(READY|WARMING)\b/i.test(overall),
+    /\bUp\s+\d+|\blistening\b|\bcontainer\s+\S+/i.test(text) && !/\b(stopped|exited|missing)\b/i.test(text)
+  ];
+  const stoppedSignals = [
+    /\b(server|stack)\s+(is\s+)?(stopped|not running|offline)\b/i.test(text),
+    /Overall:\s*(STOPPED|OFFLINE|NOT RUNNING)/i.test(status),
+    /\bNo\s+(running\s+)?containers\b/i.test(text),
+    /\b(all|dune)\s+containers\s+(are\s+)?(stopped|down)\b/i.test(text),
+    allContainersMissing
+  ];
+  const stopped = stoppedSignals.some(Boolean);
+  const running = !stopped && runningSignals.some(Boolean);
+  const starting = !stopped && !running && (/\bUp\s+\d+/i.test(text) || /\b(WARMING|WAIT|STARTING)\b/i.test(text));
+  return { running, stopped, starting };
+}
+
+function homeOverallBadge(value: string) {
+  if (/^restarting$/i.test(value)) return "WARN";
+  if (/^stopping$/i.test(value)) return "WARN";
+  if (/^stopped$/i.test(value)) return "WARN";
+  if (/^starting$/i.test(value)) return "Starting";
+  if (/^issue(?: detected)?$/i.test(value)) return "WARN";
+  if (/warming/i.test(value)) return "Info";
+  if (/stopped|not running|offline/i.test(value)) return "WARN";
+  return inferStatus(value);
+}
+
+function friendlyHomeOverall(value: string) {
+  if (/^ready$/i.test(value)) return "OK";
+  if (/^warming$/i.test(value)) return "Warming";
+  if (/^issue$/i.test(value)) return "Stopped";
+  return value;
+}
+
+function taskTechnicalDetails(task: Task) {
+  return task.logLines.map((line) => line.line).filter(Boolean).join("\n") || task.errorMessage || "";
+}
+
+function friendlyHomeStatusError(error: string) {
+  if (/docker|daemon|socket/i.test(error)) return "Docker status is unavailable. Check that Docker is running and the web admin has access.";
+  if (/dune\s+ready|readiness/i.test(error)) return "Readiness is unavailable right now. The server may be starting, stopping, or stopped.";
+  if (/exit\s+\d+/i.test(error)) return "Server status is unavailable. Refresh again or check Services and Logs if it persists.";
+  return conciseTaskMessage(error) || "Server status is unavailable.";
+}
+
+function conciseTaskMessage(text: string) {
+  const line = stripAnsi(text).split(/\r?\n/).map((part) => part.trim()).filter(Boolean).find((part) => !/^dune\s+\w+ failed with exit \d+$/i.test(part));
+  if (!line) return "";
+  return line.replace(/^dune\s+\w+\s+failed\s+with\s+exit\s+\d+[:\s-]*/i, "").slice(0, 220);
+}
+
 function summarizeContainers(text: string) {
   const lines = sectionLines(text, "Containers").filter((line) => !/^SERVICE\s+STATUS/i.test(line));
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
   const bad = lines.find((line) => /\b(missing|stopped|exited|dead)\b/i.test(line));
-  return bad ? { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) } : { label: "Ready", status: "Ready", detail: "" };
+  return bad ? { label: "Needs Review", status: "WARN", detail: "" } : { label: "OK", status: "Ready", detail: "" };
 }
 
 function summarizeListeners(text: string) {
   const lines = sectionLines(text, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line));
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
   const bad = lines.find((line) => /\b(MISSING|FAIL|ERROR)\b/i.test(line));
-  return bad ? { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) } : { label: "Ready", status: "Ready", detail: "" };
+  return bad ? { label: "Needs Review", status: "WARN", detail: "" } : { label: "OK", status: "Ready", detail: "" };
 }
 
 function summarizeDatabase(text: string) {
   const value = findLineValue(sectionLines(text, "Database").join("\n"), ["World partitions"]);
   if (!value) return { label: "Unknown", status: "Unknown", detail: "" };
   const count = Number(value);
-  if (Number.isFinite(count) && count > 0) return { label: "Ready", status: "Ready", detail: "" };
-  return { label: "Attention Needed", status: "Warn", detail: `World partitions: ${value}` };
+  if (Number.isFinite(count) && count > 0) return { label: "OK", status: "Ready", detail: "" };
+  return { label: "Needs Review", status: "WARN", detail: "" };
 }
 
 function summarizeGameServers(text: string) {
@@ -1999,29 +2787,29 @@ function summarizeGameServers(text: string) {
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
   const bad = lines.find((line) => /\b(ERROR|NOT RUNNING|MISSING)\b/i.test(line));
   const wait = lines.find((line) => /\b(WARMING|WAIT)\b/i.test(line));
-  if (bad) return { label: "Attention Needed", status: "Failed", detail: friendlyIssueLine(bad) };
-  if (wait) return { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(wait) };
-  return { label: "Ready", status: "Ready", detail: "" };
+  if (bad) return { label: "Needs Review", status: "WARN", detail: "" };
+  if (wait) return { label: "Warming", status: "Info", detail: "" };
+  return { label: "OK", status: "Ready", detail: "" };
 }
 
 function summarizeRabbit(text: string) {
   const lines = sectionLines(text, "RabbitMQ game connections");
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
-  if (lines.some((line) => /not running|missing|failed/i.test(line))) return { label: "Attention Needed", status: "Failed", detail: friendlyIssueLine(lines[0]) };
+  if (lines.some((line) => /not running|missing|failed/i.test(line))) return { label: "Needs Review", status: "WARN", detail: "" };
   const director = numberAfterLabel(lines, "Director connections");
   const game = numberAfterLabel(lines, "Game server connections");
   if ((director !== null && director < 1) || (game !== null && game < 1)) {
-    return { label: "Attention Needed", status: "Warn", detail: `Director connections: ${director ?? "unknown"}, game server connections: ${game ?? "unknown"}` };
+    return { label: "Needs Review", status: "WARN", detail: "" };
   }
-  return { label: "Ready", status: "Ready", detail: "" };
+  return { label: "OK", status: "Ready", detail: "" };
 }
 
 function summarizeFls(text: string) {
   const lines = sectionLines(text, "Funcom/FLS summary");
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
   const bad = lines.find((line) => /:\s*(WAIT|FAIL|ERROR|MISSING)/i.test(line));
-  if (bad) return { label: "Attention Needed", status: "Warn", detail: friendlyIssueLine(bad) };
-  return { label: "Ready", status: "Ready", detail: "" };
+  if (bad) return { label: "Needs Review", status: "WARN", detail: "" };
+  return { label: "OK", status: "Ready", detail: "" };
 }
 
 function numberAfterLabel(lines: string[], label: string) {
@@ -2035,10 +2823,23 @@ function findPopulation(text: string) {
   for (const rawLine of stripAnsi(text).split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!/population|players/i.test(line)) continue;
-    const match = line.match(/\b(\d+\s*\/\s*\d+)\b/);
-    if (match) return match[1].replace(/\s+/g, "");
+    const match = line.match(/\b(\d+|\?|unknown)\s*\/\s*(\d+|\?|unknown)\b/i);
+    if (match) return normalizePopulationPair(match[1], match[2]);
   }
   return "";
+}
+
+function normalizePopulationPair(current: string, max: string) {
+  const normalizedCurrent = /^unknown$/i.test(current) ? "?" : current;
+  const normalizedMax = /^unknown$/i.test(max) ? "?" : max;
+  if (normalizedCurrent === "?" && normalizedMax === "?") return "";
+  return `${normalizedCurrent}/${normalizedMax}`;
+}
+
+function formatHomePopulation(value: string) {
+  const normalized = value.match(/\b(\d+|\?|unknown)\s*\/\s*(\d+|\?|unknown)\b/i);
+  if (normalized) return normalizePopulationPair(normalized[1], normalized[2]) || "Unavailable";
+  return value && !/^unknown$/i.test(value) ? value : "Unavailable";
 }
 
 function findLineValue(text: string, keys: string[]) {
@@ -2253,23 +3054,26 @@ function parseCatalogRows(text: string): Record<string, unknown>[] {
 
 function parseSkillModuleRows(text: string): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
+  let current: Record<string, unknown> | null = null;
   for (const rawLine of stripAnsi(text || "").split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || /^[-=]{3,}$/.test(line) || /^(name|skill|module|id|category|track)\b/i.test(line)) continue;
-    const tabParts = line.split(/\t|\s{2,}/).map((part) => part.trim()).filter(Boolean);
-    if (tabParts.length >= 2) {
-      rows.push({ skillModule: friendlyCatalogName(tabParts[0]), id: tabParts[1], category: tabParts[2] || "Skill Module" });
+    if (!line || /^[-=]{3,}$/.test(line)) continue;
+    const header = line.match(/^(.+?)\s+\[([^\]]+)\]$/);
+    if (header) {
+      if (current) rows.push(current);
+      current = { skillModule: friendlyCatalogName(header[1].trim()), category: header[2].trim(), maxLevel: "", id: "" };
       continue;
     }
-    const keyValueName = line.match(/(?:name|module|skill)\s*[:=]\s*([^,|]+)/i)?.[1]?.trim();
-    const keyValueId = line.match(/(?:id|template)\s*[:=]\s*([^,|\s]+)/i)?.[1]?.trim();
-    const category = line.match(/(?:category|track|type)\s*[:=]\s*([^,|]+)/i)?.[1]?.trim() || "Skill Module";
-    if (keyValueName || keyValueId) {
-      rows.push({ skillModule: friendlyCatalogName(keyValueName || keyValueId || ""), id: keyValueId || "", category });
+    if (!current) continue;
+    const id = line.match(/^id:\s*(.+)$/i);
+    if (id) {
+      current.id = id[1].trim();
       continue;
     }
-    rows.push({ skillModule: friendlyCatalogName(line), id: "", category: "Skill Module" });
+    const maxLevel = line.match(/^max level:\s*(.+)$/i);
+    if (maxLevel) current.maxLevel = maxLevel[1].trim();
   }
+  if (current) rows.push(current);
   const seen = new Set<string>();
   return rows.filter((row) => {
     const key = `${String(row.skillModule)}-${String(row.id)}`;
@@ -2311,18 +3115,25 @@ function parseBackupRows(text: string) {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
     const name = line.match(/([A-Za-z0-9_.-]+(?:\.backup|\.dump|\.sql))/)?.[1];
     if (!name) return null;
-    const created = formatBackupTimestamp(name.match(/(\d{8}-\d{6})/)?.[1] || "");
+    const timestamp = name.match(/(\d{8}-\d{6})/)?.[1] || "";
+    const created = formatBackupTimestamp(timestamp);
+    const createdSort = backupTimestampSort(timestamp);
     const type = friendlyBackupType(name, line);
-    const source = name.includes("__") ? name.split("__")[0].replace(/^dune-db-/, "") : name.split("-")[0];
-    return { name, backupName: name, created, type, source };
-  }).filter(Boolean) as Record<string, unknown>[];
+    const source = name.includes("__") ? name.split("__")[0].replace(/^dune-db-/, "") : "Local";
+    return { name, backupName: name, created, createdSort, type, source };
+  }).filter(Boolean).sort((a, b) => Number((b as Record<string, unknown>).createdSort || 0) - Number((a as Record<string, unknown>).createdSort || 0)) as Record<string, unknown>[];
 }
 
 function formatBackupTimestamp(value: string) {
   const match = value.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
   if (!match) return "Unknown";
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
+}
+
+function backupTimestampSort(value: string) {
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return 0;
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
 }
 
 function friendlyBackupType(name: string, line: string) {

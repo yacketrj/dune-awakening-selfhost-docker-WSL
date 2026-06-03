@@ -7,6 +7,7 @@ cd "$(dirname "$0")/../.."
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/runtime-env.sh
 source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
@@ -60,29 +61,27 @@ docker network create dune-net 2>/dev/null || true
 docker rm -f dune-text-router 2>/dev/null || true
 
 echo "Waiting for game RabbitMQ TLS listener..."
+rmq_tls_ready=0
 for i in $(seq 1 60); do
-  if docker exec dune-rmq-game rabbitmq-diagnostics -q listeners 2>/dev/null | grep -q "5672.*amqp/ssl"; then
+  if timeout 5 docker exec dune-rmq-game rabbitmq-diagnostics -q listeners 2>/dev/null | grep -q "5672.*amqp/ssl"; then
     echo "Game RabbitMQ TLS listener is ready."
+    rmq_tls_ready=1
     break
   fi
   sleep 2
 done
 
-echo "Waiting for game RabbitMQ AMQPS login path..."
-for i in $(seq 1 60); do
-  if timeout 3 bash -lc 'cat < /dev/null > /dev/tcp/127.0.0.1/31982' 2>/dev/null; then
-    echo "Host port 31982 is reachable."
-    break
-  fi
-  sleep 2
-done
+if [ "$rmq_tls_ready" != "1" ]; then
+  echo "Game RabbitMQ TLS listener was not confirmed before TextRouter start."
+  echo "Continuing anyway; TextRouter will retry RabbitMQ while starting."
+fi
 
 docker run -d \
   --name dune-text-router \
   --network dune-net \
   --restart unless-stopped \
   -p 127.0.0.1:5059:5059/tcp \
-  -v "$FAKE_K8S_SERVICEACCOUNT_DIR:/run/secrets/kubernetes.io/serviceaccount:ro" \
+  -v "$(host_path "$FAKE_K8S_SERVICEACCOUNT_DIR"):/run/secrets/kubernetes.io/serviceaccount:ro" \
   -e "KUBERNETES_SERVICE_HOST=igwo.local" \
   -e "KUBERNETES_SERVICE_PORT=6443" \
   -e "KUBERNETES_SERVICE_PORT_HTTPS=6443" \

@@ -7,6 +7,7 @@ cd "$(dirname "$0")/../.."
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
 IMAGE="registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${WORLD_IMAGE_TAG}"
@@ -88,8 +89,8 @@ docker run -d \
   --network dune-net \
   --restart unless-stopped \
   -p 127.0.0.1:32573:5672 \
-  -v "$PWD/runtime/rabbitmq-admin/config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro" \
-  -v "$PWD/runtime/rabbitmq-admin/config/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-admin/config/rabbitmq.conf"):/etc/rabbitmq/rabbitmq.conf:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-admin/config/enabled_plugins"):/etc/rabbitmq/enabled_plugins:ro" \
   "$IMAGE"
 
 docker run -d \
@@ -98,16 +99,33 @@ docker run -d \
   --restart unless-stopped \
   -p 31982:5672/tcp \
   -p 31983:15672/tcp \
-  -v "$PWD/runtime/rabbitmq-game/config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro" \
-  -v "$PWD/runtime/rabbitmq-game/config/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro" \
-  -v "$PWD/runtime/rabbitmq-game/certs/cacert.pem:/etc/rabbitmq/cacert.pem:ro" \
-  -v "$PWD/runtime/rabbitmq-game/certs/cert.pem:/etc/rabbitmq/cert.pem:ro" \
-  -v "$PWD/runtime/rabbitmq-game/certs/key.pem:/etc/rabbitmq/key.pem:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-game/config/rabbitmq.conf"):/etc/rabbitmq/rabbitmq.conf:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-game/config/enabled_plugins"):/etc/rabbitmq/enabled_plugins:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-game/certs/cacert.pem"):/etc/rabbitmq/cacert.pem:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-game/certs/cert.pem"):/etc/rabbitmq/cert.pem:ro" \
+  -v "$(host_path "$PWD/runtime/rabbitmq-game/certs/key.pem"):/etc/rabbitmq/key.pem:ro" \
   "$IMAGE"
 
 sleep 8
 
-docker exec dune-rmq-admin rabbitmq-diagnostics -q ping
-docker exec dune-rmq-game rabbitmq-diagnostics -q ping
+wait_for_rabbitmq() {
+  local container="$1"
+  local attempt
+
+  echo "Waiting for $container..."
+  for attempt in $(seq 1 36); do
+    if timeout 10 docker exec "$container" rabbitmq-diagnostics -q ping; then
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "$container did not become ready in time."
+  docker logs --tail 120 "$container" 2>&1 || true
+  return 1
+}
+
+wait_for_rabbitmq dune-rmq-admin
+wait_for_rabbitmq dune-rmq-game
 
 docker ps --filter "name=dune-rmq" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

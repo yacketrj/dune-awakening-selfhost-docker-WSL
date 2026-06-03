@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskManager } from "../src/tasks.js";
+import { TaskManager, taskTimeoutMs } from "../src/tasks.js";
 
 test("task manager creates and completes allowlisted dune tasks", async () => {
   const dir = mkdtempSync(join(tmpdir(), "arrakis-task-"));
@@ -45,6 +45,15 @@ test("game update check exit 100 is treated as update-available success", async 
   assert.equal(task.status, "succeeded");
   assert.equal(task.exitCode, 100);
   assert.match(task.logLines.map((line) => line.line).join("\n"), /Update available/);
+});
+
+test("long-running server tasks get an extended timeout", () => {
+  const config = { commandTimeoutMs: 5000 };
+
+  assert.equal(taskTimeoutMs(config, "status"), 5000);
+  assert.equal(taskTimeoutMs(config, "start"), 30 * 60 * 1000);
+  assert.equal(taskTimeoutMs(config, "stop"), 30 * 60 * 1000);
+  assert.equal(taskTimeoutMs(config, "restartAll"), 30 * 60 * 1000);
 });
 
 function waitForTask(manager, id) {

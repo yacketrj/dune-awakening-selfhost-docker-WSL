@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseFlsSummary, parseHomeStatus, parsePortRows, parseRabbitConnections, parseReadyRows, parseStatusGameServers, parseStatusListenerRows } from "../src/statusParsers.js";
+import { parseBackupAutoStatus, parseBackupListRows, parseDoctorWarnings, parseFlsSummary, parseHomeStatus, parseMapListRows, parseMemoryStatusRows, parsePortRows, parseRabbitConnections, parseReadyRows, parseServerPartitionRows, parseSkillModules, parseStatusGameServers, parseStatusListenerRows } from "../src/statusParsers.js";
 
 const healthyStatus = `=== Dune status ===
 Overall:     READY
@@ -96,12 +96,38 @@ MAP          STATE        UPTIME
 Survival_1   READY        Up 29 minutes
 Overmap      READY        Up 29 minutes`;
 
+const mapsListOutput = `SH_Arrakeen                  Current: dynamic   Partitions: 1   Assigned: 0
+DeepDesert_1                 Current: dynamic   Partitions: 1   Assigned: 0
+CB_Dungeon_ThePit            Current: always-on Partitions: 1   Assigned: 1`;
+
+const memoryStatusOutput = `=== Memory configuration ===
+Default memory: built-in per-map defaults, or server catalog for other dynamic maps
+
+MAP                          MEMORY
+Survival_1                   12Gi default
+Overmap                      2Gi default
+DeepDesert_1                 15Gi default
+CB_Dungeon_ThePit            13Gi`;
+
+const serversOutput = `=== Dune server partitions ===
+ partition_id |                map                 | dim |             label              |    assigned_server     | game_port | igw_port | ready | alive
+--------------+------------------------------------+-----+--------------------------------+------------------------+-----------+----------+-------+-------
+            1 | Survival_1                         |   0 | Abbir                          | KaLlYa2RToK+eMbbBZe0Zw | 7778      | 7888     | true  | false
+            2 | Overmap                            |   0 | Overland                       | KJqZ3FXJR0OKwghAsOfsRg | 7777      | 7889     | true  | true
+            8 | DeepDesert_1                       |   0 | DeepDesert_0                   |                        |           |          |       |
+(30 rows)`;
+
 test("healthy home status does not create false warnings", () => {
   const summary = parseHomeStatus(healthyStatus);
   assert.equal(summary.population, "0/60");
   assert.equal(summary.database, "Ready");
   assert.equal(summary.rabbitmq, "Ready");
   assert.equal(summary.fls, "Ready");
+});
+
+test("home population parser normalizes unknown current population", () => {
+  assert.equal(parseHomeStatus("Population: unknown/60").population, "?/60");
+  assert.equal(parseHomeStatus("Population: unknown/unknown").population, "");
 });
 
 test("ready parser ignores section headings and keeps only check rows", () => {
@@ -173,4 +199,96 @@ test("RabbitMQ TextRouter zero and FLS OK values are not failures", () => {
   assert.equal(rabbit["Director connections"], "1");
   assert.equal(fls["Director heartbeat"], "OK");
   assert.equal(fls["Gateway DB monitoring"], "OK");
+});
+
+test("FLS summary parser ignores status tips", () => {
+  const summary = parseFlsSummary(`${healthyStatus}
+
+Tip: use 'dune ready' for pass/wait/fail readiness checks.
+Tip: use 'dune doctor' for troubleshooting suggestions.`);
+  assert.deepEqual(Object.keys(summary), [
+    "Director heartbeat",
+    "Population declaration",
+    "Max capacity declaration",
+    "Gateway DB monitoring"
+  ]);
+});
+
+test("doctor parser suppresses stale log-window warnings when readiness is healthy", () => {
+  const doctor = `=== RabbitMQ and service signals ===
+OK   RabbitMQ game reachable
+WARN Director heartbeat not seen in recent logs
+     If the stack just started, wait a few minutes and run: dune ready
+WARN Gateway DB monitoring not seen in recent logs`;
+  assert.deepEqual(parseDoctorWarnings(doctor, healthyReady), []);
+  assert.equal(parseDoctorWarnings(doctor, "NOT READY: one or more required checks failed.").length, 2);
+});
+
+test("skill module parser attaches id and max level metadata to module rows", () => {
+  const rows = parseSkillModules(`Bindu Dodge [BeneGesserit]
+  id: Skills.Spice.BinduDodge
+  max level: 1
+Bindu Sprint [BeneGesserit]
+  id: Skills.Ability.Hypersprint
+  max level: 3`);
+  assert.deepEqual(rows, [
+    { skillModule: "Bindu Dodge", category: "BeneGesserit", id: "Skills.Spice.BinduDodge", maxLevel: "1" },
+    { skillModule: "Bindu Sprint", category: "BeneGesserit", id: "Skills.Ability.Hypersprint", maxLevel: "3" }
+  ]);
+  assert(!rows.some((row) => row.skillModule === "max level: 1"));
+});
+
+test("map list parser keeps every dynamic map row and formats mode", () => {
+  const rows = parseMapListRows(mapsListOutput);
+  assert.deepEqual(rows.map((row) => row.map), ["SH_Arrakeen", "DeepDesert_1", "CB_Dungeon_ThePit"]);
+  assert.deepEqual(rows.map((row) => row.mode), ["Dynamic", "Dynamic", "Always On"]);
+  assert.equal(rows[0].assigned, "0");
+});
+
+test("memory status parser formats Gi defaults as friendly GB labels", () => {
+  const rows = parseMemoryStatusRows(memoryStatusOutput);
+  assert.deepEqual(rows.find((row) => row.map === "Survival_1"), { map: "Survival_1", memory: "12 GB (Default)" });
+  assert.deepEqual(rows.find((row) => row.map === "CB_Dungeon_ThePit"), { map: "CB_Dungeon_ThePit", memory: "13 GB" });
+});
+
+test("server partition parser derives status from real ready/alive fields", () => {
+  const rows = parseServerPartitionRows(serversOutput);
+  assert.equal(rows.find((row) => row.map === "Survival_1").status, "Ready");
+  assert.equal(rows.find((row) => row.map === "Overmap").status, "Ready");
+  assert.equal(rows.find((row) => row.map === "DeepDesert_1").status, "Not Running");
+});
+
+test("backup list parser sorts newest first and formats filename timestamps", () => {
+  const rows = parseBackupListRows(`dune-db-overmap_and_survival_1-20260603-115203.backup
+dune-db-overmap_and_survival_1-20260603-115318.backup
+dune-db-imported-20260531-010203.backup`);
+  assert.deepEqual(rows.map((row) => row.backupName), [
+    "dune-db-overmap_and_survival_1-20260603-115318.backup",
+    "dune-db-overmap_and_survival_1-20260603-115203.backup",
+    "dune-db-imported-20260531-010203.backup"
+  ]);
+  assert.equal(rows[0].created, "2026-06-03 11:53:18");
+  assert.equal(rows[0].type, "Manual Backup");
+});
+
+test("auto backup status parser handles retention, timer, and permission failures", () => {
+  const status = parseBackupAutoStatus({
+    exitCode: 0,
+    stdout: `=== Automatic database backups ===
+Enabled:          true
+Interval hours:   6
+Retention:        3 days
+Backup directory: runtime/backups/db
+
+Systemd timer:   enabled`
+  });
+  assert.equal(status.enabled, true);
+  assert.equal(status.intervalHours, "6");
+  assert.equal(status.retentionDays, "3");
+  assert.equal(status.retentionLabel, "3 Days");
+  assert.equal(status.timer, "enabled");
+
+  const failed = parseBackupAutoStatus({ exitCode: 1, stderr: "runtime/scripts/db.sh: line 966: runtime/generated/db-backup.env: Permission denied" });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.reason, "Backup scheduler status file is not readable by the web admin user.");
 });

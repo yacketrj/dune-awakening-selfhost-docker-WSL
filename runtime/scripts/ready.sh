@@ -264,14 +264,14 @@ check_game_server_ready() {
 game_server_rmq_connections_ready() {
   local attempt
 
-  for attempt in 1 2 3 4 5; do
-    if docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
+  for attempt in 1 2; do
+    if timeout 7 docker exec dune-rmq-game rabbitmqctl list_connections user state 2>/dev/null \
       | awk '$1 ~ /^sg[.]/ && $2 == "running" { found=1 } END { exit(found ? 0 : 1) }'; then
       return 0
     fi
 
-    if [ "$attempt" -lt 5 ]; then
-      sleep 2
+    if [ "$attempt" -lt 2 ]; then
+      sleep 1
     fi
   done
 

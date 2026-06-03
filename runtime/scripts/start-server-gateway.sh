@@ -7,6 +7,7 @@ cd "$(dirname "$0")/../.."
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 
 [ -f runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/runtime-env.sh
 source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
@@ -50,7 +51,7 @@ docker run -d \
   --name dune-server-gateway \
   --network dune-net \
   --restart unless-stopped \
-  -v "$PWD/runtime/server-gateway/config:/etc/app/conf.d:ro" \
+  -v "$(host_path "$PWD/runtime/server-gateway/config"):/etc/app/conf.d:ro" \
   -e "FuncomLiveServices__ServiceAuthToken=$FUNCOM_TOKEN" \
   -e "FuncomLiveServices__RmqTlsEnabled=true" \
   -e "FuncomLiveServices__BattlegroupAuthorizationPreset=BattlegroupInternal" \
