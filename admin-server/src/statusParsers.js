@@ -27,6 +27,35 @@ export function parsePortRows(text) {
   }).filter(Boolean);
 }
 
+export function parseStatusListenerRows(text) {
+  const seen = new Set();
+  return sectionLines(text, "Listeners").filter((line) => !/^CHECK\s+PORT\s+STATUS/i.test(line)).map((line) => {
+    const match = line.match(/^(.+?)\s+(\d{2,5})\/(tcp|udp)\s+(\S+)/i);
+    if (!match) return null;
+    const [, name, port, protocol, state] = match;
+    const key = `${port}/${protocol.toUpperCase()}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return { name: name.trim(), port, protocol: protocol.toUpperCase(), state };
+  }).filter(Boolean);
+}
+
+export function parseStatusGameServers(text) {
+  return sectionLines(text, "Game servers").filter((line) => !/^MAP\s+STATE\s+UPTIME/i.test(line) && !/^Note:/i.test(line)).map((line) => {
+    const match = line.match(/^(\S+)\s+(.+?)\s{2,}(.+)$/);
+    if (!match) return null;
+    return { map: match[1], state: match[2].trim(), uptime: match[3].trim() };
+  }).filter(Boolean);
+}
+
+export function parseRabbitConnections(text) {
+  return Object.fromEntries(sectionLines(text, "RabbitMQ game connections").map((line) => line.split(":").map((part) => part.trim())).filter((parts) => parts.length === 2));
+}
+
+export function parseFlsSummary(text) {
+  return Object.fromEntries(sectionLines(text, "Funcom/FLS summary").map((line) => line.split(":").map((part) => part.trim())).filter((parts) => parts.length === 2));
+}
+
 function findPopulation(text) {
   const line = text.split(/\r?\n/).find((candidate) => /population/i.test(candidate)) || "";
   return line.match(/\b(\d+\s*\/\s*\d+)\b/)?.[1]?.replace(/\s+/g, "") || "";

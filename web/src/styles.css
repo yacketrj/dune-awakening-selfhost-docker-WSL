@@ -171,7 +171,8 @@ tr.clickable:hover { background: rgba(198, 139, 74, .12); }
 .toggle-row button { width: auto; }
 .map-canvas {
   position: relative;
-  height: 520px;
+  height: min(72vh, 780px);
+  min-height: 560px;
   border: 1px solid #302b25;
   border-radius: 8px;
   background: #10151d;
@@ -179,7 +180,9 @@ tr.clickable:hover { background: rgba(198, 139, 74, .12); }
   background-size: cover;
   background-position: center;
   overflow: hidden;
+  cursor: grab;
 }
+.map-canvas:active { cursor: grabbing; }
 .map-zoom-layer {
   position: absolute;
   inset: 0;
@@ -190,6 +193,10 @@ tr.clickable:hover { background: rgba(198, 139, 74, .12); }
   background-position: center;
 }
 .map-canvas { background-image: none; }
+.map-controls { margin-top: 12px; }
+.menu-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+.menu-card { justify-content: center; min-height: 48px; white-space: normal; }
+.spaced-section { margin-top: 18px; }
 .muted { color: #ad9f89; }
 .planned-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .planned-card { background: #14171a; border: 1px dashed #514232; border-radius: 8px; padding: 14px; display: grid; gap: 6px; }

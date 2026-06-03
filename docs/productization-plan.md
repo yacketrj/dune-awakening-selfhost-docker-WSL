@@ -45,6 +45,7 @@ Goal: make map operations understandable without exposing raw command text.
 - Maps page: map table and edit panel for mode, memory, name/password, and safe per-map settings.
 - Inspect manager support for global UserEngine, per-map UserGame overrides, memory defaults, second map/survival support, and revert-to-default flows.
 - Do not expose INI editing until supported keys and rollback behavior are verified.
+- Phase 12A3 corrective pass exposes a menu-style Maps page with dynamic read panels for list/status/autoscaler/memory/deep-desert data. UserEngine/UserGame editing, current live memory usage, restore memory defaults, and revert UserSettings remain planned because they need dedicated backend routes, preview/confirmation, audit logging, and rollback behavior.
 
 ## Phase 12E: Backups Automation, Remote SSH Import, Character Transfer/Account Takeover Analysis
 

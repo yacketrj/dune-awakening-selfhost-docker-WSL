@@ -27,6 +27,26 @@ test("task manager creates and completes allowlisted dune tasks", async () => {
   assert.match(task.logLines.map((line) => line.line).join("\n"), /task:status/);
 });
 
+test("game update check exit 100 is treated as update-available success", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "arrakis-task-update-"));
+  const duneScript = join(dir, "dune");
+  writeFileSync(duneScript, "#!/usr/bin/env bash\necho 'Local build: 100'\necho 'Remote build: 200'\necho 'Update available.'\nexit 100\n", { mode: 0o700 });
+  chmodSync(duneScript, 0o700);
+
+  const manager = new TaskManager({
+    duneScript,
+    repoRoot: dir,
+    taskRetention: 20,
+    commandTimeoutMs: 5000
+  });
+
+  const created = manager.create("updates", "updateCheck", {});
+  const task = await waitForTask(manager, created.id);
+  assert.equal(task.status, "succeeded");
+  assert.equal(task.exitCode, 100);
+  assert.match(task.logLines.map((line) => line.line).join("\n"), /Update available/);
+});
+
 function waitForTask(manager, id) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 3000;

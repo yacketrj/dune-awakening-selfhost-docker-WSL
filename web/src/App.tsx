@@ -166,7 +166,7 @@ export function App() {
           return result;
         }} />}
         {tab === "Setup" && <SetupWizard />}
-        {tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} onError={setError} />}
+        {tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} status={status} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} onError={setError} />}
         {tab === "Services" && <ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setSelectedLogService(service); setTab("Logs"); }} onError={setError} />}
         {tab === "Players" && <PlayersPanel setTask={setTask} onError={setError} />}
         {tab === "Admin Tools" && <AdminToolsPanel setTask={setTask} onError={setError} />}
@@ -267,7 +267,7 @@ function HomePanel({ status, readiness, setTask, onLoad }: { status: string; rea
   );
 }
 
-function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: string) => void; setReadiness: (text: string) => void; setPorts: (text: string) => void; setDoctor: (text: string) => void; ports: string; readiness: string; doctor: string; onError: (text: string) => void }) {
+function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: string) => void; status: string; setReadiness: (text: string) => void; setPorts: (text: string) => void; setDoctor: (text: string) => void; ports: string; readiness: string; doctor: string; onError: (text: string) => void }) {
   const [service, setService] = useState(RESTARTABLE_SERVICES[0].value);
   async function run(action: () => Promise<unknown>) {
     props.onError("");
@@ -302,8 +302,8 @@ function ServerPanel(props: { setTask: (task: Task) => void; setStatus: (text: s
         <h4>Scheduled Restarts, Server Title, and Redeploy</h4>
         <p>These controls are planned for Phase 12B. The CLI has server title support and database backup scheduling, but web exposure needs dedicated routes, audit entries, and restart/confirmation design before it is safe to ship.</p>
       </section>
-      <ReadinessTimeline text={props.readiness} />
-      <PortChecklist text={props.ports} />
+      <ReadinessTimeline text={props.readiness} statusText={props.status} />
+      <PortChecklist text={props.ports} statusText={props.status} />
       <DoctorSummary text={props.doctor} />
     </section>
   );
@@ -349,6 +349,8 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
   const [itemName, setItemName] = useState("");
   const [itemId, setItemId] = useState("");
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
+  const [grantQuantity, setGrantQuantity] = useState("1");
+  const [grantDurability, setGrantDurability] = useState("1");
   const [search, setSearch] = useState("");
   const [catalogRows, setCatalogRows] = useState<Record<string, unknown>[]>([]);
   const [catalogColumns, setCatalogColumns] = useState<string[]>(["itemName", "itemId", "category", "source"]);
@@ -409,7 +411,9 @@ function AdminToolsPanel({ setTask, onError }: { setTask: (task: Task) => void; 
         <h4>Grant Item</h4>
         <ItemCatalogSelector selected={selectedItem} onSelect={chooseAdminItem} />
         <div className="action-line">
-          <button disabled={!selectedItem || !playerId} onClick={() => run(async () => window.confirm(`Give 1 x ${itemName} to ${playerId}?`) && setTask((await playersApi.giveItem(playerId, { itemName, quantity: 1, durability: 1 })).task))}>Give Selected Item</button>
+          <label className="compact-field">Quantity<input type="number" min="1" value={grantQuantity} onChange={(event) => setGrantQuantity(event.target.value)} /></label>
+          <label className="compact-field">Durability<input type="number" min="0" value={grantDurability} onChange={(event) => setGrantDurability(event.target.value)} /></label>
+          <button disabled={!selectedItem || !playerId} onClick={() => run(async () => window.confirm(`Give ${grantQuantity} x ${itemName} to ${playerId}?`) && setTask((await playersApi.giveItem(playerId, { itemName, quantity: Number(grantQuantity), durability: Number(grantDurability) })).task))}>Grant Item</button>
         </div>
         <details className="technical-details"><summary>Developer raw item ID</summary><div className="action-line">
           <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} placeholder="ItemTemplate_5" /></label>
@@ -514,6 +518,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
   const [itemId, setItemId] = useState("");
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [quantity, setQuantity] = useState("1");
+  const [durability, setDurability] = useState("1");
   const [multiItems, setMultiItems] = useState("");
   const [multiList, setMultiList] = useState<{ itemName?: string; itemId?: string; quantity: number; durability: number }[]>([]);
   const [xp, setXp] = useState("1000");
@@ -601,8 +606,9 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
         <p>Search the item catalog, select the exact item, then grant it to the player.</p>
         <ItemCatalogSelector selected={selectedItem} onSelect={choosePlayerItem} />
         <div className="actions-grid">
-          <label>Quantity<input value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-          <button disabled={!canRunCliAction || !selectedItem} title={!canRunCliAction ? cliDisabledReason : !selectedItem ? "Select an item from the catalog first." : undefined} onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: 1 })); })}>Give Item</button>
+          <label className="compact-field">Quantity<input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label className="compact-field">Durability<input type="number" min="0" value={durability} onChange={(event) => setDurability(event.target.value)} /></label>
+          <button disabled={!canRunCliAction || !selectedItem} title={!canRunCliAction ? cliDisabledReason : !selectedItem ? "Select an item from the catalog first." : undefined} onClick={() => run(async () => { if (window.confirm(`Give ${quantity} x ${itemName} to player ${actionPlayerId}?`)) await runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: Number(durability) })); })}>Give Item</button>
         </div>
         <details className="technical-details"><summary>Developer manual item ID</summary><div className="actions-grid">
           <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} /></label>
@@ -610,7 +616,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, setTask, onError, onRefresh
         </div></details>
         <h4>Give Multiple Items</h4>
         <div className="action-line">
-          <button disabled={!selectedItem} onClick={() => setMultiList([...multiList, { itemName, itemId, quantity: Number(quantity), durability: 1 }])}>Add Selected Item</button>
+          <button disabled={!selectedItem} onClick={() => setMultiList([...multiList, { itemName, itemId, quantity: Number(quantity), durability: Number(durability) }])}>Add Selected Item</button>
           <button disabled={!multiList.length} onClick={() => setMultiList([])}>Clear List</button>
         </div>
         {multiList.length ? <div className="table-wrap starter-items-table"><table><thead><tr><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Durability</th><th>Actions</th></tr></thead><tbody>{multiList.map((item, index) => <tr key={`${item.itemName || item.itemId}-${index}`}><td>{starterItemName(item)}</td><td>{starterItemId(item)}</td><td>{item.quantity}</td><td>{item.durability}</td><td><button className="danger" onClick={() => setMultiList(multiList.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></td></tr>)}</tbody></table></div> : <div className="empty">No multi-item entries yet. Search/select an item, set quantity, then Add Selected Item.</div>}
@@ -739,7 +745,7 @@ function parseUpdateTask(task: Task) {
   const latestStatus = /up to date|already latest|no update|latest/i.test(text) && !updateAvailable;
   if (updateAvailable) return { status: "Update Available", current, latest, reason: summarizeCommandText(text) };
   if (latestStatus) return { status: "Latest", current, latest, reason: summarizeCommandText(text) };
-  return { status: "Completed", current, latest, reason: current || latest ? summarizeCommandText(text) : "Unable to parse version details from completed check." };
+  return { status: current || latest ? "Completed" : "Check completed, version details unavailable", current, latest, reason: current || latest ? summarizeCommandText(text) : "Unable to parse version details from completed check." };
 }
 
 function firstVersionMatch(text: string, patterns: RegExp[]) {
@@ -1133,34 +1139,46 @@ function StarterKitPanel({ onError }: { onError: (text: string) => void }) {
   }
 }
 
-function ItemCatalogSelector({ label = "Item", selected, onSelect, placeholder = "Type to filter item catalog" }: { label?: string; selected: CatalogItem | null; onSelect: (item: CatalogItem | null) => void; placeholder?: string }) {
+function ItemCatalogSelector({ label = "Select Item", selected, onSelect, placeholder = "Filter loaded item catalog" }: { label?: string; selected: CatalogItem | null; onSelect: (item: CatalogItem | null) => void; placeholder?: string }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
-  async function load(nextQuery = query) {
+  const [category, setCategory] = useState("all");
+  async function load() {
     setLoading(true);
     try {
-      const result = await adminApi.itemCatalog(nextQuery, 2000);
+      const result = await adminApi.itemCatalog("", 2000);
       setItems((result.rows || []).map((item) => ({ ...item, id: item.itemId || item.id })));
     } finally {
       setLoading(false);
     }
   }
   useEffect(() => {
-    load("").catch(() => undefined);
+    load().catch(() => undefined);
   }, []);
   const selectedValue = selected ? `${selected.name}::${selected.id}` : "";
+  const categories = ["all", ...Array.from(new Set(items.map((item) => item.category).filter((value): value is string => Boolean(value)))).sort()];
+  const filteredItems = items.filter((item) => {
+    const matchesCategory = category === "all" || item.category === category;
+    const haystack = `${item.name} ${item.id} ${item.category || ""} ${item.source || ""}`.toLowerCase();
+    return matchesCategory && (!query.trim() || haystack.includes(query.trim().toLowerCase()));
+  });
   return <div className="catalog-selector">
-    <label className="wide-field">{label}
-      <input value={query} onChange={(event) => { setQuery(event.target.value); load(event.target.value).catch(() => undefined); }} placeholder={placeholder} />
+    <label className="compact-select">Choose Category
+      <select value={category} onChange={(event) => { setCategory(event.target.value); onSelect(null); }}>
+        {categories.map((option) => <option key={option} value={option}>{option === "all" ? "All Categories" : titleCase(option)}</option>)}
+      </select>
     </label>
-    <label className="wide-field">Select Item
+    <label className="wide-field">Filter Items
+      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={placeholder} />
+    </label>
+    <label className="wide-field">{label}
       <select value={selectedValue} onChange={(event) => {
-        const item = items.find((candidate) => `${candidate.name}::${candidate.id}` === event.target.value) || null;
+        const item = filteredItems.find((candidate) => `${candidate.name}::${candidate.id}` === event.target.value) || null;
         onSelect(item);
       }}>
         <option value="">{loading ? "Loading items..." : "Choose an item from catalog"}</option>
-        {items.map((item) => <option key={`${item.id}-${item.name}-${item.source}`} value={`${item.name}::${item.id}`}>
+        {filteredItems.map((item) => <option key={`${item.id}-${item.name}-${item.source}`} value={`${item.name}::${item.id}`}>
           {item.name} - {item.id}{item.category ? ` - ${titleCase(item.category)}` : ""}{item.source ? ` (${item.source})` : ""}
         </option>)}
       </select>
@@ -1310,6 +1328,8 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
   const [filters, setFilters] = useState<Record<string, boolean>>({ player: true, vehicle: true, base: true, storage: true, service: true });
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [drag, setDrag] = useState<{ x: number; y: number; panX: number; panY: number } | null>(null);
   async function load() {
     onError("");
     try {
@@ -1336,21 +1356,26 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
     <div className="panel-title"><h2>Live Map</h2><div className="action-row"><button onClick={load}>Refresh</button><label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} /> Auto-refresh</label></div></div>
     <div className="action-row"><input value={map} onChange={(event) => setMap(event.target.value)} placeholder="Optional map filter, e.g. Survival_1" /></div>
     <div className="toggle-row">{Object.keys(filters).map((key) => <button key={key} className={filters[key] ? "active" : ""} onClick={() => setFilters({ ...filters, [key]: !filters[key] })}>{friendlyMarkerType(key)}</button>)}</div>
-    <div className="action-line">
-      <button onClick={() => setZoom(Math.min(3, Number((zoom + 0.2).toFixed(2))))}>Zoom In</button>
-      <button onClick={() => setZoom(Math.max(1, Number((zoom - 0.2).toFixed(2))))}>Zoom Out</button>
-      <button onClick={() => setZoom(1)}>Fit Map</button>
-      <span className="muted">Zoom: {Math.round(zoom * 100)}%</span>
-    </div>
     {Object.entries(overlays).filter(([, reason]) => reason).map(([key, reason]) => <p className="danger-note" key={key}>{key}: {reason}</p>)}
-    <div className="map-canvas" style={{ "--map-image": "url('/hagga-basin.png')" } as React.CSSProperties}>
-      <div className="map-zoom-layer" style={{ transform: `scale(${zoom})` }}>
+    <div className="map-canvas" style={{ "--map-image": "url('/hagga-basin.png')" } as React.CSSProperties}
+      onMouseDown={(event) => { if (zoom > 1) setDrag({ x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }); }}
+      onMouseMove={(event) => { if (drag) setPan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }); }}
+      onMouseUp={() => setDrag(null)}
+      onMouseLeave={() => setDrag(null)}>
+      <div className="map-zoom-layer" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
       {plotted.length === 0 && <div className="empty">No plottable markers. Raw marker rows are shown below when available.</div>}
       {plotted.map((marker, index) => {
         const point = markerPoint(marker, bounds);
         return <button key={`${marker.type}-${marker.id}-${index}`} title={`${marker.type}: ${friendlyMarkerName(marker)}`} onClick={() => setSelected(marker)} style={{ position: "absolute", left: `${point.x}%`, top: `${point.y}%`, transform: "translate(-50%, -50%)", width: 12, height: 12, borderRadius: "50%", border: "1px solid white", background: markerColor(String(marker.type)), cursor: "pointer" }} />;
       })}
       </div>
+    </div>
+    <div className="action-line map-controls">
+      <button onClick={() => setZoom(Math.min(3, Number((zoom + 0.2).toFixed(2))))}>Zoom In</button>
+      <button onClick={() => setZoom(Math.max(1, Number((zoom - 0.2).toFixed(2))))}>Zoom Out</button>
+      <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Fit Map</button>
+      <span className="muted">Zoom: {Math.round(zoom * 100)}%</span>
+      {zoom > 1 && <span className="muted">Drag map to pan.</span>}
     </div>
     <p className="danger-note">Marker positions are approximate. Coordinates use raw Dune world positions from actor transforms; exact image/world calibration is not verified.</p>
     {selected && <section className="drawer"><div className="panel-title"><h3>{friendlyMarkerName(selected)}</h3><button onClick={() => setSelected(null)}>Close</button></div><KeyValueGrid items={[
@@ -1368,6 +1393,7 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
 
 function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onError: (text: string) => void }) {
   const [text, setText] = useState("");
+  const [active, setActive] = useState("list");
   const [map, setMap] = useState("");
   const [mode, setMode] = useState("dynamic");
   const [target, setTarget] = useState("");
@@ -1384,29 +1410,62 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     const response = await action();
     setTask(response.task);
   }
+  async function loadPanel(next = active) {
+    setActive(next);
+    if (next === "list") setText((await mapsApi.maps()).stdout);
+    else if (next === "validate") setText((await mapsApi.sietches()).stdout);
+    else if (next === "autoscaler") setText((await mapsApi.autoscaler()).stdout);
+    else if (next === "memory-settings") setText((await mapsApi.memory()).stdout);
+    else if (next === "deepdesert") setText((await mapsApi.deepdesert()).stdout);
+    else setText("");
+  }
   useEffect(() => {
-    run(async () => setText(JSON.stringify(await mapsApi.status(), null, 2)));
+    run(() => loadPanel("list"));
   }, []);
   const mapRows = parseMapRows(text);
+  const memoryRows = parseMemoryRows(text);
+  const menu = [
+    ["list", "List Maps"],
+    ["validate", "Validate / Status"],
+    ["reconcile", "Reconcile / Repair State"],
+    ["userengine", "Edit UserEngine"],
+    ["edit-map", "Edit Map"],
+    ["revert-settings", "Revert All UserSettings To Defaults"],
+    ["memory-current", "Current Memory Usage"],
+    ["memory-settings", "Show Memory Settings"],
+    ["memory-defaults", "Restore Built-In Memory Defaults"],
+    ["autoscaler", "Autoscaler"],
+    ["deepdesert", "Deep Desert"]
+  ];
   return <section className="panel">
-    <div className="panel-title"><h2>Maps & Sietches</h2><button onClick={() => run(async () => setText(JSON.stringify(await mapsApi.status(), null, 2)))}>Refresh Status</button></div>
-    <section className="action-section">
-      <h4>Map Overview</h4>
+    <div className="panel-title"><h2>Maps & Sietches</h2><button onClick={() => run(() => loadPanel(active))}>Refresh Current Panel</button></div>
+    <div className="menu-card-grid">{menu.map(([key, label]) => <button key={key} className={active === key ? "active menu-card" : "menu-card"} onClick={() => run(() => loadPanel(key))}>{label}</button>)}</div>
+
+    {active === "list" && <section className="action-section">
+      <h4>List Maps</h4>
+      {mapRows.length ? <DataTable rows={mapRows} columns={["map", "status", "mode", "partitions", "assigned", "memory"]} action={(row) => <button onClick={() => { setMap(String(row.map || "")); setActive("edit-map"); }}>Edit</button>} /> : <MapCommandSummary text={text} />}
+    </section>}
+
+    {active === "validate" && <section className="action-section">
+      <h4>Validate / Status</h4>
+      <MapCommandSummary text={text} />
+    </section>}
+
+    {active === "reconcile" && <section className="action-section">
+      <h4>Reconcile / Repair State</h4>
+      <p>This runs the existing Sietch reconcile flow for the selected map. It can affect live services.</p>
       <div className="action-line">
-        <button onClick={() => run(async () => setText((await mapsApi.maps()).stdout))}>Refresh Maps</button>
-        <button onClick={() => run(async () => setText((await mapsApi.mode(map)).stdout))}>Check Selected Mode</button>
-        <button onClick={() => run(async () => setText((await mapsApi.autoscaler()).stdout))}>Autoscaler Status</button>
-        <button onClick={() => run(async () => setText((await mapsApi.memory()).stdout))}>Memory Status</button>
+        <label>Map<input value={map} onChange={(event) => setMap(event.target.value)} placeholder="Survival_1" /></label>
+        <button className="danger" onClick={() => run(async () => { if (window.confirm(`Reconcile sietches for ${map}?`)) await runTask(() => mapsApi.updateSietches({ action: "reconcile", map, confirmation: "UPDATE SIETCHES" })); })}>Reconcile Sietches</button>
       </div>
-      {mapRows.length ? <DataTable rows={mapRows} columns={["map", "status", "mode", "memory"]} action={(row) => <button onClick={() => setMap(String(row.map || ""))}>Edit</button>} /> : <MapCommandSummary text={text} />}
-    </section>
-    <section className="action-section">
-      <h4>Edit Selected Map</h4>
+    </section>}
+
+    {active === "edit-map" && <section className="action-section">
+      <h4>Edit Map</h4>
       <div className="actions-grid">
       <label>Map<input value={map} onChange={(event) => setMap(event.target.value)} placeholder="DeepDesert_1" /></label>
       <label>Mode<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option></select></label>
       <button onClick={() => run(async () => { if (window.confirm(`Set ${map} to ${mode}? This can spawn or affect map services.`)) await runTask(() => mapsApi.setMode({ map, mode, confirmation: "SET MAP MODE" })); })}>Set Map Mode</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm("Reconcile all always-on maps now?")) await runTask(() => mapsApi.reconcile("RECONCILE MAPS")); })}>Reconcile Maps</button>
       <label>Spawn/Despawn Target<input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Map name or partition id" /></label>
       <button onClick={() => run(async () => { if (window.confirm(`Spawn ${target}?`)) await runTask(() => mapsApi.spawn(target, "SPAWN MAP")); })}>Spawn</button>
       <button className="danger" onClick={() => run(async () => { if (window.confirm(`Despawn ${target}?`)) await runTask(() => mapsApi.despawn(target, "DESPAWN MAP")); })}>Despawn</button>
@@ -1414,17 +1473,41 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       <button onClick={() => run(async () => { if (window.confirm(`Set memory for ${map || "default"} to ${memory}? Running maps may need restart.`)) await runTask(() => mapsApi.setMemory({ map: map || "default", memory, confirmation: "SET MAP MEMORY" })); })}>Set Memory</button>
       <button className="danger" onClick={() => run(async () => { if (window.confirm(`Remove memory override for ${map || "default"}?`)) await runTask(() => mapsApi.unsetMemory({ map: map || "default", confirmation: "UNSET MAP MEMORY" })); })}>Unset Memory</button>
       </div>
-    </section>
-    <section className="action-section">
+    </section>}
+
+    {active === "autoscaler" && <section className="action-section">
       <h4>Autoscaler</h4>
+      <MapCommandSummary text={text} />
       <div className="action-line">
       <button onClick={() => run(async () => { if (window.confirm("Start autoscaler?")) await runTask(() => mapsApi.autoscalerAction("start", "AUTOSCALER CHANGE")); })}>Start Autoscaler</button>
       <button className="danger" onClick={() => run(async () => { if (window.confirm("Stop autoscaler?")) await runTask(() => mapsApi.autoscalerAction("stop", "AUTOSCALER CHANGE")); })}>Stop Autoscaler</button>
       <button onClick={() => run(async () => { if (window.confirm("Restart autoscaler?")) await runTask(() => mapsApi.autoscalerAction("restart", "AUTOSCALER CHANGE")); })}>Restart Autoscaler</button>
       </div>
-    </section>
-    <section className="action-section">
-      <h4>Sietches</h4>
+    </section>}
+
+    {active === "memory-settings" && <section className="action-section">
+      <h4>Show Memory Settings</h4>
+      {memoryRows.length ? <DataTable rows={memoryRows} columns={["map", "memory"]} /> : <MapCommandSummary text={text} />}
+    </section>}
+
+    {active === "deepdesert" && <section className="action-section">
+      <h4>Deep Desert</h4>
+      <MapCommandSummary text={text} />
+      <div className="action-line">
+        <button onClick={() => run(async () => { if (window.confirm("Enable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "enable", confirmation: "UPDATE DEEP DESERT" })); })}>Enable Dual Deep Desert</button>
+        <button className="danger" onClick={() => run(async () => { if (window.confirm("Disable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "disable", confirmation: "UPDATE DEEP DESERT" })); })}>Disable Dual Deep Desert</button>
+        <button onClick={() => run(async () => runTask(() => mapsApi.updateDeepdesert({ action: "repair", confirmation: "UPDATE DEEP DESERT" })))}>Repair Deep Desert</button>
+        <button onClick={() => run(async () => { if (window.confirm("Bootstrap Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "bootstrap", confirmation: "UPDATE DEEP DESERT" })); })}>Bootstrap Deep Desert</button>
+      </div>
+    </section>}
+
+    {active === "userengine" && <PlannedPanel title="Edit UserEngine" reason="The manager has a guided UserEngine editor, but web write exposure needs allowed-key validation, restart warnings, audit entries, and rollback behavior before shipping." />}
+    {active === "revert-settings" && <PlannedPanel title="Revert All UserSettings To Defaults" reason="The manager can remove UserEngine/UserGame overrides, but the web flow needs preview, confirmation, and rollback documentation before exposing this destructive operation." />}
+    {active === "memory-current" && <PlannedPanel title="Current Memory Usage" reason="The manager reads live docker stats for current memory usage. A dedicated backend route is needed so the web UI can request this without parsing interactive manager output." />}
+    {active === "memory-defaults" && <PlannedPanel title="Restore Built-In Memory Defaults" reason="The manager can remove memory overrides. Web exposure is deferred until preview, audit, and confirmation behavior are implemented." />}
+
+    <details className="technical-details">
+      <summary>Developer Sietch controls</summary>
       <div className="actions-grid">
       <label>Dimension Count<input value={count} onChange={(event) => setCount(event.target.value)} /></label>
       <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "set-max", map, count: Number(count) })))}>Set Max Sietches</button>
@@ -1436,28 +1519,14 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       <button className="danger" onClick={() => run(async () => { if (window.confirm(`Update password for partition ${partitionId}? Running services may need restart.`)) await runTask(() => mapsApi.updateSietches({ action: "set-password", partitionId, password, confirmation: "UPDATE SIETCHES" })); })}>Set Sietch Password</button>
       <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "sync" })))}>Sync Sietches</button>
       <button onClick={() => run(async () => runTask(() => mapsApi.updateSietches({ action: "validate" })))}>Validate Sietches</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm(`Reconcile sietches for ${map}?`)) await runTask(() => mapsApi.updateSietches({ action: "reconcile", map, confirmation: "UPDATE SIETCHES" })); })}>Reconcile Sietches</button>
       </div>
-    </section>
-    <section className="action-section">
-      <h4>Deep Desert</h4>
-      <div className="action-line">
-      <button onClick={() => run(async () => setText((await mapsApi.sietches()).stdout))}>Refresh Sietches</button>
-      <button onClick={() => run(async () => setText((await mapsApi.deepdesert()).stdout))}>Refresh Deep Desert</button>
-      <button onClick={() => run(async () => { if (window.confirm("Enable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "enable", confirmation: "UPDATE DEEP DESERT" })); })}>Enable Dual Deep Desert</button>
-      <button className="danger" onClick={() => run(async () => { if (window.confirm("Disable Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "disable", confirmation: "UPDATE DEEP DESERT" })); })}>Disable Dual Deep Desert</button>
-      <button onClick={() => run(async () => runTask(() => mapsApi.updateDeepdesert({ action: "repair", confirmation: "UPDATE DEEP DESERT" })))}>Repair Deep Desert</button>
-      <button onClick={() => run(async () => { if (window.confirm("Bootstrap Dual Deep Desert?")) await runTask(() => mapsApi.updateDeepdesert({ action: "bootstrap", confirmation: "UPDATE DEEP DESERT" })); })}>Bootstrap Deep Desert</button>
-      </div>
-    </section>
-    <div className="planned-grid">
-      <article className="planned-card"><strong>UserEngine Global Settings Editor</strong><span>Planned for Phase 12D after allowed keys, restart requirements, and rollback behavior are verified.</span></article>
-      <article className="planned-card"><strong>UserGame Per-Map Settings Editor</strong><span>Planned for Phase 12D. Existing INI override behavior needs safe schema and validation before web exposure.</span></article>
-      <article className="planned-card"><strong>Restore Built-In Memory Defaults</strong><span>Planned. Requires manager command verification and audit coverage.</span></article>
-      <article className="planned-card"><strong>Revert User Settings to Defaults</strong><span>Planned. Requires preview, confirmation, and backup/rollback design.</span></article>
-    </div>
+    </details>
     <p className="danger-note">Map mode, spawn/despawn, autoscaler, active Sietch dimensions, passwords, and Deep Desert changes can affect live services and require backend confirmation.</p>
   </section>;
+}
+
+function PlannedPanel({ title, reason }: { title: string; reason: string }) {
+  return <section className="action-section planned-card"><h4>{title}</h4><p>Planned / not exposed in this pass.</p><p>{reason}</p></section>;
 }
 
 function markerBounds(markers: LiveMapMarker[]) {
@@ -1532,18 +1601,18 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
     <div className="action-sections">
       <section className="action-section">
         <div className="panel-title"><h4>Game Update</h4><StatusPill value={gameStatus.status} /></div>
-        <KeyValueGrid items={[["Current build", gameStatus.current || "Unknown"], ["Latest build", gameStatus.latest || "Unknown"], ["Status", gameStatus.status], ["Details", gameStatus.reason]]} />
+        <KeyValueGrid items={[["Current build", gameStatus.current || "Unknown"], ["Latest build", gameStatus.latest || "Unknown"], ["Status", gameStatus.status]]} />
         <div className="action-line">
           <button onClick={checkGame}>Refresh Game Check</button>
-          <button className="danger" disabled={!gameCanApply} title={!gameCanApply ? "Apply is enabled only when the latest check reports an available update." : undefined} onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button>
+          {gameCanApply ? <button className="danger" onClick={async () => window.confirm("Apply the game server update now?") && setTask((await updatesApi.applyGame()).task)}>Apply Game Update</button> : <span className="muted">Apply appears only when an update is available.</span>}
         </div>
       </section>
       <section className="action-section">
         <div className="panel-title"><h4>Stack Update</h4><StatusPill value={stackStatus.status} /></div>
-        <KeyValueGrid items={[["Current version", stackStatus.current || "Unknown"], ["Latest version", stackStatus.latest || "Unknown"], ["Status", stackStatus.status], ["Details", stackStatus.reason]]} />
+        <KeyValueGrid items={[["Current version", stackStatus.current || "Unknown"], ["Latest version", stackStatus.latest || "Unknown"], ["Status", stackStatus.status]]} />
         <div className="action-line">
           <button onClick={checkStack}>Refresh Stack Check</button>
-          <button className="danger" disabled={!stackCanApply} title={!stackCanApply ? "Apply is enabled only when the latest check reports an available update." : undefined} onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button>
+          {stackCanApply ? <button className="danger" onClick={async () => window.confirm("Apply the latest RedBlink stack update now?") && setTask((await updatesApi.applyStack()).task)}>Apply Stack Update</button> : <span className="muted">Apply appears only when an update is available.</span>}
         </div>
       </section>
       <div className="planned-grid">
@@ -1716,14 +1785,12 @@ function MapCommandSummary({ text }: { text: string }) {
     return <section className="result-panel">
       <strong>Map Status Summary</strong>
       <KeyValueGrid items={Object.entries(record).map(([key, value]) => [key, summarizeValue(value)])} />
-      <TechnicalDetails text={text} />
     </section>;
   }
   const status = text ? inferStatus(text) : "Unknown";
   return <section className="result-panel">
     <div className="panel-title"><strong>Map Command Result</strong><StatusPill value={status} /></div>
     <p>{text ? summarizeCommandText(text) : "Map, autoscaler, memory, Sietch, or Deep Desert state is loading or unavailable."}</p>
-    <TechnicalDetails text={text || "No map command output loaded yet."} />
   </section>;
 }
 
@@ -1746,8 +1813,10 @@ function parseMapRows(text: string): Record<string, unknown>[] {
     const map = line.match(/\b(Overmap|Survival_\d+|DeepDesert_\d+|Sietch[_-]?\d*)\b/i)?.[1] || line.split(/\s+/)[0];
     return {
       map: friendlyMapName(map),
-      status: inferStatus(line),
-      mode: line.match(/\b(dynamic|always-on)\b/i)?.[1] || "Unknown",
+      status: line.match(/\bAssigned:\s*(\d+)/i)?.[1] ? "Configured" : inferStatus(line),
+      mode: line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || line.match(/\b(dynamic|always-on)\b/i)?.[1] || "Unknown",
+      partitions: line.match(/\bPartitions:\s*(\d+)/i)?.[1] || "Unknown",
+      assigned: line.match(/\bAssigned:\s*(\d+)/i)?.[1] || "Unknown",
       memory: line.match(/\b\d+\s*[gGmM][bB]?\b/)?.[0] || "Unknown"
     };
   });
@@ -1758,6 +1827,14 @@ function parseMapRows(text: string): Record<string, unknown>[] {
     seen.add(key);
     return true;
   }).slice(0, 50);
+}
+
+function parseMemoryRows(text: string): Record<string, unknown>[] {
+  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^===|^Default memory|^MAP\s+MEMORY/i.test(line)).map((line) => {
+    const match = line.match(/^(.+?)\s{2,}(.+)$/);
+    if (!match) return null;
+    return { map: friendlyMapName(match[1].trim()), memory: match[2].trim() };
+  }).filter(Boolean) as Record<string, unknown>[];
 }
 
 function firstArray(...values: unknown[]) {
