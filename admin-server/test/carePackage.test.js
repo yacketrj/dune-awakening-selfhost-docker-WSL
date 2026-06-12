@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { clearCarePackageHistory, enableCarePackage, grantEligibleCarePackages, grantCarePackage, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory, validateCarePackageConfig } from "../src/carePackage.js";
 
-test("care package is disabled by default and reports manual capability", () => {
+test("care package is enabled by default and reports manual capability", () => {
   const config = tempConfig();
   try {
-    assert.equal(carePackageConfig(config).enabled, false);
+    assert.equal(carePackageConfig(config).enabled, true);
+    assert.equal(carePackageConfig(config).autoGrantEnabled, false);
+    assert.equal(carePackageConfig(config).autoGrantRules[0].enabled, false);
     const caps = carePackageCapabilities();
     assert.equal(caps.manualGrant, true);
     assert.equal(caps.bulkGrant, true);
@@ -152,7 +154,8 @@ test("care package supports separate manual and auto-grant kit selection", async
       kits: [
         { id: "manual-kit", name: "Manual Kit", xp: 10, items: [] },
         { id: "auto-kit", name: "Auto Kit", xp: 25, items: [] }
-      ]
+      ],
+      autoGrantRules: [{ id: "auto-rule-1", enabled: true, kitId: "auto-kit", grantWhen: "first_online", lastSeenDays: 30 }]
     });
     const manual = await grantCarePackage(config, "Manual#1", { confirmation: "GRANT CARE PACKAGE", kitId: "manual-kit" });
     assert.equal(manual.kitName, "Manual Kit");
@@ -184,17 +187,18 @@ test("care package auto scan supports multiple enabled rules with different cond
       ]
     });
     const result = await runCarePackageAutoScan(config, [
-      { actor_id: 1, character_name: "Online", action_player_id: "Online#1", online_status: "Online", last_seen: "2026-01-01T00:00:00.000Z" },
+      { actor_id: 1, character_name: "Online", action_player_id: "Online#1", online_status: "Online", last_seen: new Date().toISOString() },
       { actor_id: 2, character_name: "Offline", action_player_id: "Offline#1", online_status: "Offline", last_seen: "2026-01-01T00:00:00.000Z" }
     ]);
     assert.equal(result.results.filter((row) => row.status === "granted" && row.kitName === "Online Kit").length, 1);
-    assert.equal(result.results.filter((row) => row.status === "granted" && row.kitName === "Detected Kit").length, 1);
+    assert.equal(result.results.filter((row) => row.status === "granted" && row.kitName === "Detected Kit").length, 0);
+    assert.equal(result.results.filter((row) => row.kitName === "Detected Kit" && row.reason === "Waiting for player to return online").length, 1);
   } finally {
     rmSync(config.repoRoot, { recursive: true, force: true });
   }
 });
 
-test("last seen eligibility preview includes stale offline players but auto scan waits for online", async () => {
+test("last seen auto scan grants when a qualified stale player returns online", async () => {
   const config = tempConfig();
   try {
     saveCarePackageConfig(config, {
@@ -211,7 +215,12 @@ test("last seen eligibility preview includes stale offline players but auto scan
     const scan = await runCarePackageAutoScan(config, players);
     assert.equal(scan.granted, 0);
     assert.equal(scan.skipped, 1);
-    assert.equal(scan.results[0].reason, "Not currently online");
+    assert.equal(scan.results[0].reason, "Waiting for player to return online");
+    const returned = await runCarePackageAutoScan(config, [
+      { actor_id: 2, character_name: "Offline", action_player_id: "Offline#1", online_status: "Online", last_seen: new Date().toISOString() }
+    ]);
+    assert.equal(returned.granted, 1);
+    assert.equal(returned.results[0].kitName, "Back Again");
   } finally {
     rmSync(config.repoRoot, { recursive: true, force: true });
   }
@@ -384,9 +393,9 @@ test("care package auto scan only grants when enabled and players have action id
   try {
     saveCarePackageConfig(config, { enabled: false, version: "care-package-v1", xp: 10, items: [], autoGrantEnabled: true });
     assert.equal((await runCarePackageAutoScan(config, [{ actor_id: 1, action_player_id: "A#1" }])).skipped, true);
-    saveCarePackageConfig(config, { enabled: true, version: "care-package-v1", xp: 10, items: [], autoGrantEnabled: false });
+    saveCarePackageConfig(config, { enabled: true, version: "care-package-v1", xp: 10, items: [], autoGrantRules: [{ id: "auto-rule-1", enabled: false, kitId: "care-package-v1", grantWhen: "first_online", lastSeenDays: 30 }] });
     assert.equal((await runCarePackageAutoScan(config, [{ actor_id: 1, action_player_id: "A#1" }])).skipped, true);
-    saveCarePackageConfig(config, { enabled: true, version: "care-package-v1", xp: 10, items: [], autoGrantEnabled: true });
+    saveCarePackageConfig(config, { enabled: true, version: "care-package-v1", xp: 10, items: [], autoGrantEnabled: false, autoGrantRules: [{ id: "auto-rule-1", enabled: true, kitId: "care-package-v1", grantWhen: "first_online", lastSeenDays: 30 }] });
     const result = await runCarePackageAutoScan(config, [
       { actor_id: 1, character_name: "A", action_player_id: "A#1", online_status: "Online" },
       { actor_id: 2, character_name: "B", action_player_id: "", online_status: "Online" }

@@ -42,7 +42,9 @@ for map_name in ("Survival_1", "DeepDesert_1"):
         changed = True
 
     explicit = str(explicit).strip().lower() in {"1", "true", "yes", "on"}
-    if not explicit and int(entry.get("active_dimensions") or 1) != 1:
+    # Do not downgrade an already-expanded Survival_1/DeepDesert_1 topology during
+    # passive sync/validation. Only explicit set-active should change the target.
+    if not explicit and "active_dimensions" in entry and int(entry.get("active_dimensions") or 1) < 1:
         entry["active_dimensions"] = 1
         changed = True
 
@@ -166,6 +168,40 @@ def default_display_name(map_name, label):
         return ""
     return label if label.lower().startswith("sietch ") else f"Sietch {label}"
 
+def profile_partition_engine_values():
+    values = {}
+    profile_path = Path("runtime/generated/gameplay-profile.ini")
+    if not profile_path.exists():
+        return values
+    current = None
+    try:
+        lines = profile_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return values
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith((";", "#")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = None
+            header = line[1:-1]
+            parts = header.split(":")
+            if len(parts) == 4 and parts[0] == "Partition" and parts[1] == "Survival_1" and parts[3] == "ConsoleVariables":
+                current = parts[2]
+                values.setdefault(current, {})
+            continue
+        if current and "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"')
+            if key == "Bgd.ServerDisplayName" and value:
+                values.setdefault(current, {})["display_name"] = value
+            elif key == "Bgd.ServerLoginPassword" and value:
+                values.setdefault(current, {})["password"] = value
+    return values
+
+profile_engine_values = profile_partition_engine_values()
+
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 # First, copy existing partition-scoped user values into stable map/dimension slots.
@@ -194,8 +230,19 @@ for partition_id, entry in list(partitions_cfg.items()):
     dim_entry = map_entry.setdefault("dimensions", {}).setdefault(str(dimension), {})
     before = dict(dim_entry)
     merge_user_state(dim_entry, user_state)
+
+for partition_id, user_state in profile_engine_values.items():
+    row = by_id.get(str(partition_id))
+    if not row or str(row.get("map")) != "Survival_1":
+        continue
+    entry = partitions_cfg.setdefault(str(partition_id), {})
+    merge_user_state(entry, user_state)
+    dimension = str(int(row.get("dimension") or 0))
+    dim_entry = config.setdefault("maps", {}).setdefault("Survival_1", {}).setdefault("dimensions", {}).setdefault(dimension, {})
+    before = dict(dim_entry)
+    merge_user_state(dim_entry, user_state)
     if dim_entry != before:
-        events.append(f"copied partition={partition_id} to {map_name} dimension={dimension}")
+        events.append(f"copied profile partition={partition_id} to Survival_1 dimension={dimension}")
 
 # Then mirror dimension-scoped state back to current partition IDs and prune stale IDs.
 new_partitions = {}
@@ -217,8 +264,6 @@ for row in rows:
     }
     mirrored.update(meaningful(dim_entry))
     derived_display = default_display_name(map_name, label)
-    if derived_display and not mirrored.get("display_name"):
-        mirrored["display_name"] = derived_display
     if label:
         mirrored["label"] = label
     new_partitions[partition_id] = mirrored
@@ -970,6 +1015,9 @@ for partition_id, entry in sietch_partitions.items():
         continue
     current_survival_ids.add(str(partition_id))
     user_entry = partitions_cfg.setdefault(str(partition_id), {})
+    if user_entry.get("map") != "Survival_1":
+        user_entry["map"] = "Survival_1"
+        changed = True
     engine_entry = user_entry.setdefault("userengine", {})
     display_name = entry.get("display_name") or derived_display_name(entry)
     password = entry.get("password") or ""
@@ -1020,6 +1068,39 @@ PY
   python3 runtime/scripts/usersettings.py materialize-current >/dev/null 2>&1 || true
 }
 
+apply_survival_sietch_labels_from_config() {
+  docker_postgres_running || return 0
+  ensure_config
+
+  while IFS=$'\t' read -r partition_id display_name; do
+    [ -n "${partition_id:-}" ] || continue
+    [ -n "${display_name:-}" ] || continue
+    docker exec dune-postgres psql -U postgres -d dune -v ON_ERROR_STOP=1 -c "
+update dune.world_partition
+set label = '${display_name//\'/\'\'}'
+where partition_id = ${partition_id}
+  and map = 'Survival_1';
+" >/dev/null || true
+  done < <(python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("runtime/generated/sietch-config.json")
+try:
+    config = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+for partition_id, entry in sorted(config.get("partitions", {}).items(), key=lambda item: int(item[0]) if str(item[0]).isdigit() else 0):
+    if str(entry.get("map") or "") != "Survival_1":
+        continue
+    display = str(entry.get("display_name") or "").strip()
+    if display:
+        print(f"{partition_id}\t{display}")
+PY
+)
+}
+
 refresh_survival_director_state() {
   if docker ps --format '{{.Names}}' | grep -qx dune-director; then
     runtime/scripts/start-director.sh >/dev/null 2>&1 || true
@@ -1034,6 +1115,7 @@ refresh_survival_gateway_state() {
 
 refresh_survival_control_plane_state() {
   sync_survival_usersettings_state
+  apply_survival_sietch_labels_from_config
   refresh_survival_browser_state
   refresh_survival_director_state
   refresh_survival_gateway_state
@@ -1044,6 +1126,23 @@ restart_survival_server_if_running() {
     echo "Restarting Survival_1 so sietch display/password changes are published by the running server..."
     runtime/scripts/start-server-survival-1.sh >/dev/null
   fi
+}
+
+restart_sietch_partition_if_running() {
+  local partition_id="$1"
+  local container=""
+
+  if [ "$partition_id" = "1" ]; then
+    restart_survival_server_if_running
+    return 0
+  fi
+
+  container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^dune-server-survival-1-${partition_id}$" | head -n1 || true)"
+  [ -n "$container" ] || return 0
+
+  echo "Restarting Survival_1 partition ${partition_id} so sietch display/password changes are published by the running server..."
+  runtime/scripts/despawn-server.sh "$partition_id" >/dev/null
+  runtime/scripts/spawn-server.sh "$partition_id" >/dev/null
 }
 
 ensure_map_partitions() {
@@ -1303,6 +1402,7 @@ where wp.partition_id = ranked.partition_id;
   sync_sietch_config_from_db "reconcile-$map" >/dev/null || true
   if [ "$map" = "Survival_1" ]; then
     sync_survival_usersettings_state
+    apply_survival_sietch_labels_from_config
   fi
   if [ "$map" = "Survival_1" ] && [ "$topology_changed" -eq 1 ]; then
     wait_for_survival_topology_settle "$target" 90 || true
@@ -1380,8 +1480,41 @@ where partition_id = ${partition_id};
 
 reset_partition_label_if_possible() {
   local partition_id="$1"
+  local row=""
+  local map_name=""
+  local dimension_index=""
+  local default_label=""
 
   docker_postgres_running || return 0
+
+  row="$(psql_value "
+    select coalesce(map, ''), coalesce(dimension_index, 0)
+    from dune.world_partition
+    where partition_id = ${partition_id}
+    limit 1;
+  " | tr -d '\r')"
+  if [ -n "$row" ]; then
+    map_name="$(printf '%s\n' "$row" | awk -F'|' '{print $1}' | xargs)"
+    dimension_index="$(printf '%s\n' "$row" | awk -F'|' '{print $2}' | xargs)"
+  fi
+
+  if [ "$map_name" = "Survival_1" ]; then
+    case "$dimension_index" in
+      0) default_label="Sietch Abbir" ;;
+      1) default_label="Sietch Alraab" ;;
+      *) default_label="" ;;
+    esac
+  fi
+
+  if [ -n "$default_label" ]; then
+    docker exec dune-postgres psql -U postgres -d dune -v ON_ERROR_STOP=1 -c "
+update dune.world_partition
+set label = '${default_label//\'/\'\'}'
+where partition_id = ${partition_id};
+" >/dev/null
+    return 0
+  fi
+
   docker exec dune-postgres psql -U postgres -d dune -v ON_ERROR_STOP=1 -c "
 set search_path = dune, public;
 update dune.world_partition
@@ -1516,7 +1649,9 @@ else:
     for row in active:
         pid = str(row.get("id"))
         entry = partition_cfg.get(pid, {})
-        display = entry.get("display_name") or (f"Sietch {row.get('label')}" if row.get("label") else "")
+        label = str(row.get("label") or "").strip()
+        default_display = label if label.lower().startswith("sietch ") else (f"Sietch {label}" if label else "")
+        display = entry.get("display_name") or default_display
         if not display:
             warnings.append(f"Survival_1 partition {pid} has no display name or label")
         user_entry = usersettings.get("partitions", {}).get(pid, {})
@@ -1552,7 +1687,9 @@ if survival_rows:
     for row in survival_rows:
         pid = str(row.get("id"))
         entry = partition_cfg.get(pid, {})
-        display = entry.get("display_name") or (f"Sietch {row.get('label')}" if row.get("label") else "(unset)")
+        label = str(row.get("label") or "").strip()
+        default_display = label if label.lower().startswith("sietch ") else (f"Sietch {label}" if label else "(unset)")
+        display = entry.get("display_name") or default_display
         password_state = "(set)" if entry.get("password") else "(unset)"
         server_state = row.get("server_id") or "(unassigned)"
         print(f"  partition={pid} dimension={int(row.get('dimension') or 0)} display={display} password={password_state} server_id={server_state}")
@@ -1594,6 +1731,7 @@ case "$cmd" in
     validate_positive_integer "$count" || { echo "Active dimensions must be a positive integer."; exit 1; }
     set_map_value "$2" active_dimensions "$count"
     reconcile_map_dimensions "$2"
+    set_map_value "$2" active_dimensions "$count"
     echo "Active dimensions for $2 set to $count."
     ;;
   set-display)
@@ -1601,6 +1739,7 @@ case "$cmd" in
     partition_id="$2"
     shift 2
     display_name="$*"
+    python3 runtime/scripts/usersettings.py partition-engine-set "$(partition_map_name "$partition_id")" "$partition_id" server_display_name "$display_name" >/dev/null 2>&1 || true
     set_partition_value "$partition_id" display_name "$display_name"
     if [ -n "$display_name" ]; then
       set_partition_label_if_possible "$partition_id" "$display_name"
@@ -1608,13 +1747,13 @@ case "$cmd" in
       reset_partition_label_if_possible "$partition_id"
     fi
     sync_sietch_config_from_db "set-display-label" >/dev/null || true
-    if [ -n "$display_name" ]; then
-      python3 runtime/scripts/usersettings.py partition-engine-set "$(partition_map_name "$partition_id")" "$partition_id" server_display_name "$display_name" >/dev/null 2>&1 || true
-    elif [ "$(partition_map_name "$partition_id")" = "Survival_1" ]; then
+    if [ "$(partition_map_name "$partition_id")" = "Survival_1" ]; then
       sync_survival_usersettings_state
     fi
     python3 runtime/scripts/usersettings.py materialize-current >/dev/null 2>&1 || true
     if [ "$(partition_map_name "$partition_id")" = "Survival_1" ]; then
+      refresh_survival_control_plane_state
+      restart_sietch_partition_if_running "$partition_id"
       refresh_survival_control_plane_state
     fi
     echo "Display name updated."
@@ -1622,10 +1761,12 @@ case "$cmd" in
   set-password)
     [ "$#" -eq 2 ] || [ "$#" -eq 3 ] || { usage; exit 2; }
     password_value="${3:-${SIETCH_PASSWORD:-}}"
-    set_partition_value "$2" password "$password_value"
     python3 runtime/scripts/usersettings.py partition-engine-set "$(partition_map_name "$2")" "$2" server_login_password "$password_value" >/dev/null 2>&1 || true
+    set_partition_value "$2" password "$password_value"
     python3 runtime/scripts/usersettings.py materialize-current >/dev/null 2>&1 || true
     if [ "$(partition_map_name "$2")" = "Survival_1" ]; then
+      refresh_survival_control_plane_state
+      restart_sietch_partition_if_running "$2"
       refresh_survival_control_plane_state
     fi
     if [ -n "$password_value" ]; then

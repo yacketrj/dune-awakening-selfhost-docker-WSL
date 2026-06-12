@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Convert repository paths used inside Arrakis Server Console (/repo) to the
+# Convert repository paths used inside RedBlink Dune Docker Console (/repo) to the
 # real host path that the Docker daemon needs for bind mounts. Host CLI runs
 # keep using $PWD unchanged.
 host_path() {

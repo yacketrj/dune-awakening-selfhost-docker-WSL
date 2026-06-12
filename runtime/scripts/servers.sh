@@ -8,6 +8,27 @@ if ! docker ps --format '{{.Names}}' | grep -qx dune-postgres; then
   exit 1
 fi
 
+survival_log_ready=false
+overmap_log_ready=false
+log_ready_partition_ids=""
+if docker ps --format '{{.Names}}' | grep -qx dune-server-survival-1 \
+  && docker logs dune-server-survival-1 2>&1 | grep -Eq 'Server farm is READY .*partition 1'; then
+  survival_log_ready=true
+  log_ready_partition_ids="1"
+fi
+if docker ps --format '{{.Names}}' | grep -qx dune-server-overmap \
+  && docker logs dune-server-overmap 2>&1 | grep -Eq 'Server farm is READY .*partition 2'; then
+  overmap_log_ready=true
+  log_ready_partition_ids="${log_ready_partition_ids}${log_ready_partition_ids:+,}2"
+fi
+while IFS= read -r container_name; do
+  partition_id="${container_name##*-}"
+  if [ -n "$partition_id" ] && docker logs "$container_name" 2>&1 | grep -Eq "Server farm is READY .*partition ${partition_id}"; then
+    log_ready_partition_ids="${log_ready_partition_ids}${log_ready_partition_ids:+,}${partition_id}"
+  fi
+done < <(docker ps --format '{{.Names}}' | grep -E '^dune-server-.+-[0-9]+$' || true)
+log_ready_partition_ids="${log_ready_partition_ids:-0}"
+
 echo "=== Dune server partitions ==="
 docker exec dune-postgres psql -U postgres -d dune -P pager=off -c "
 select
@@ -21,7 +42,12 @@ select
   end as assigned_server,
   coalesce(fs.game_port::text, '') as game_port,
   coalesce(fs.igw_port::text, '') as igw_port,
-  coalesce(fs.ready::text, '') as ready,
+  case
+    when wp.partition_id = 1 and '${survival_log_ready}' = 'true' then 'true'
+    when wp.partition_id = 2 and '${overmap_log_ready}' = 'true' then 'true'
+    when wp.partition_id in (${log_ready_partition_ids}) then 'true'
+    else coalesce(fs.ready::text, '')
+  end as ready,
   coalesce(fs.alive::text, '') as alive
 from dune.world_partition wp
 left join dune.farm_state fs on fs.server_id = wp.server_id

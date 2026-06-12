@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Archive, ChevronDown, ChevronUp, Database, FileText, Gift, Home, Map as MapIcon, PackagePlus, Play, RefreshCw, Server, Settings, Shield, Sparkles, Users, X } from "lucide-react";
+import { Archive, ChevronDown, ChevronUp, Database, FileText, Gift, Home, Lock, Map as MapIcon, PackagePlus, Play, RefreshCw, Server, Settings, Shield, Sparkles, Users, X } from "lucide-react";
 import { api, post, setCsrfToken } from "./api/client";
 import { serverApi } from "./api/server";
 import type { PerformanceSnapshot } from "./api/server";
@@ -30,10 +30,52 @@ type CraftingRecipeRow = { recipeId: string; displayName: string; category: stri
 type ResearchItemRow = { itemKey: string; displayName: string; category: string; productGroup: string; type: string; unlockedState: string; unlocked: boolean; isNew: boolean };
 type SkillModuleCatalogRow = { skillModule: string; category: string; id: string; maxLevel: number };
 type SkillCard = { name: string; type: string; rank: string };
+type SpecializationTrackRow = { trackType: string; xp: number; level: number };
 type JourneyRow = { id: string; name: string; rawName: string; category: string; depth: number; parentId: string; dependency?: string; status: string; complete: boolean; revealed?: boolean; pendingReward?: boolean; tags?: number; state?: number | null };
 type BackupResult = { status: "running" | "succeeded" | "failed"; title: string; message?: string; details?: string; tone?: "danger" | "attention" };
 type HomeTaskResult = { status: "running" | "succeeded" | "failed" | "stopped"; title: string; message?: string; details?: string };
 type DatabasePasswordState = { taskId?: string; result: HomeTaskResult | null };
+type PersistedMapsTask = { taskId?: string; result: HomeTaskResult | null; runningTitle?: string; successTitle?: string };
+type ConfirmDialogDetail = { label: string; value: string; tone?: "accent" | "success" | "danger" };
+type ConfirmDialogRequest = { title: string; message: string; confirmLabel: string; cancelLabel: string; danger: boolean; details?: ConfirmDialogDetail[]; resolve: (confirmed: boolean) => void };
+
+let openConfirmDialog: ((request: ConfirmDialogRequest) => void) | null = null;
+
+function confirmDialog(message: string, options: Partial<Omit<ConfirmDialogRequest, "message" | "resolve">> = {}) {
+  return new Promise<boolean>((resolve) => {
+    const danger = options.danger ?? /delete|remove|reset|restore|wipe|kick|stop|disable|despawn|destructive|cannot be undone/i.test(message);
+    if (!openConfirmDialog) {
+      resolve(false);
+      return;
+    }
+    openConfirmDialog({
+      title: options.title || (danger ? "Confirm Action" : "Continue?"),
+      message,
+      confirmLabel: options.confirmLabel || "Yes",
+      cancelLabel: options.cancelLabel || "No",
+      danger,
+      details: options.details,
+      resolve
+    });
+  });
+}
+
+function formatUiSentence(value: unknown, pending = false) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const clean = text.replace(/(?:\s*\.\s*){2,}$/g, "").replace(/\s+[.!?]$/g, "").trim();
+  const capitalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+  if (pending) return capitalized.replace(/[.!?]+$/g, "");
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function formatResultTitle(value: unknown, pending = false) {
+  return formatUiSentence(value, pending);
+}
+
+function formatResultMessage(value: unknown) {
+  return formatUiSentence(value, false);
+}
 
 const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Home", icon: <Home size={18} /> },
@@ -51,6 +93,66 @@ const nav: { tab: Tab; icon: React.ReactNode }[] = [
   { tab: "Updates", icon: <RefreshCw size={18} /> },
   { tab: "Settings", icon: <Settings size={18} /> }
 ];
+
+const DUNE_ASSET_BASE = "/assets/dune";
+
+function duneCategoryAssetKey(label: string) {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized || normalized === "all categories") return "all_categories";
+  if (normalized === "specializations") return "all_categories";
+  return normalized.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function duneCategoryIconPath(label: string, selected: boolean) {
+  const key = duneCategoryAssetKey(label);
+  if (selected && key === "all_categories") return `${DUNE_ASSET_BASE}/${key}_selected.png`;
+  return `${DUNE_ASSET_BASE}/${key}_icon${selected ? "_selected" : ""}.png`;
+}
+
+function PlayerCategoryIconRail({
+  options,
+  value,
+  onChange,
+  allLabel = "All Categories",
+  emptyLabel = "Select Category",
+  includeAll = true
+}: {
+  options: string[];
+  value: string;
+  onChange: (value: string) => void;
+  allLabel?: string;
+  emptyLabel?: string;
+  includeAll?: boolean;
+}) {
+  const items = includeAll ? [{ value: "", label: allLabel }, ...options.map((option) => ({ value: option, label: option }))] : options.map((option) => ({ value: option, label: option }));
+  const selectedItem = items.find((item) => item.value === value);
+  const selectedLabel = selectedItem?.label || emptyLabel;
+
+  return (
+    <div className="playerAdmin_iconRail" aria-label="Category selector">
+      <div className="playerAdmin_iconRailItems">
+        <div className="playerAdmin_iconRailIconGroup">
+          {items.map((item) => {
+            const selected = item.value === value;
+            return (
+              <button
+                key={item.label}
+                type="button"
+                className={`playerAdmin_iconRailButton ${selected ? "active" : ""}`}
+                aria-pressed={selected}
+                title={item.label}
+                onClick={() => onChange(item.value)}
+              >
+                <img src={duneCategoryIconPath(item.label, selected)} alt="" />
+              </button>
+            );
+          })}
+        </div>
+        <span className="playerAdmin_iconRailLabel">{selectedLabel}</span>
+      </div>
+    </div>
+  );
+}
 
 const RESTARTABLE_SERVICES = [
   { value: "gateway", label: "Gateway" },
@@ -113,6 +215,7 @@ export function App() {
   const stackStatusLoadRef = useRef<Promise<HomeLoadResult> | null>(null);
   const [setupJump, setSetupJump] = useState({ step: 0, nonce: 0 });
   const [error, setError] = useState("");
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmDialogRequest | null>(null);
 
   useEffect(() => {
     api<{ authenticated: boolean; csrfToken: string | null }>("/api/auth/state").then((state) => {
@@ -124,6 +227,19 @@ export function App() {
   useEffect(() => {
     persistFuncomTokenResult(funcomTokenResult);
   }, [funcomTokenResult]);
+
+  useEffect(() => {
+    openConfirmDialog = (request) => setConfirmRequest(request);
+    return () => {
+      openConfirmDialog = null;
+    };
+  }, []);
+
+  function closeConfirmDialog(confirmed: boolean) {
+    const request = confirmRequest;
+    setConfirmRequest(null);
+    request?.resolve(confirmed);
+  }
 
   async function login() {
     const result = await post<{ authenticated: boolean; csrfToken: string }>("/api/auth/login", { password });
@@ -198,9 +314,9 @@ export function App() {
     return (
       <main className="login-screen">
         <section className="login-panel">
-          <h1>Arrakis Server Console</h1>
-          <p>Sign in with the local admin password from <code>runtime/secrets/admin-web-password.txt</code>.</p>
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Admin password" />
+          <h1>RedBlink Dune Docker Console</h1>
+          <p>Sign in with the local admin password from <code>runtime/secrets/admin-web-password.txt</code></p>
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Admin Password" />
           <button onClick={() => safe(login)}>Sign In</button>
           {error && <p className="error">{error}</p>}
         </section>
@@ -211,7 +327,7 @@ export function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <h1>Arrakis Server Console</h1>
+        <h1>RedBlink Dune Docker Console</h1>
         <nav>{nav.map((item) => <button key={item.tab} className={tab === item.tab ? "active" : ""} onClick={() => {
           if (item.tab === "Setup") setSetupJump((current) => ({ step: 0, nonce: current.nonce + 1 }));
           setTab(item.tab);
@@ -227,7 +343,7 @@ export function App() {
         <header className="topbar">
           <div>
             <strong>{tab}</strong>
-            <span>Docker-native control for RedBlink Dune self-hosting</span>
+            <span>A Docker-powered Dune server stack with a built-in web admin panel.</span>
           </div>
         </header>
         {error && <div className="error-banner">{error}</div>}
@@ -250,10 +366,31 @@ export function App() {
         {tab === "Logs" && <LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} />}
         {tab === "Updates" && <UpdatesPanel setTask={setTask} />}
         {tab === "Settings" && <SettingsPanel />}
-        {!(tab === "Maps" && task?.type === "maps") && <TaskProgress task={task} onDismiss={() => setTask(null)} />}
+        {tab !== "Maps" && <TaskProgress task={task} onDismiss={() => setTask(null)} />}
       </main>
+      <ConfirmDialog request={confirmRequest} onClose={closeConfirmDialog} />
     </div>
   );
+}
+
+function ConfirmDialog({ request, onClose }: { request: ConfirmDialogRequest | null; onClose: (confirmed: boolean) => void }) {
+  if (!request) return null;
+  return <div className="modal-overlay" role="presentation" onMouseDown={() => onClose(false)}>
+    <section className={`confirm-modal ${request.danger ? "danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="confirm-modal-title">
+        <h3 id="confirm-modal-title">{request.title}</h3>
+        <button className="icon-action" aria-label="Close dialog" onClick={() => onClose(false)}><X size={18} /></button>
+      </div>
+      <p>{request.message}</p>
+      {request.details?.length ? <dl className="confirm-modal-details">
+        {request.details.map((detail) => <div key={`${detail.label}-${detail.value}`}><dt>{detail.label}</dt><dd className={detail.tone || "accent"}>{detail.value}</dd></div>)}
+      </dl> : null}
+      <div className="confirm-modal-actions">
+        <button onClick={() => onClose(false)}>{request.cancelLabel}</button>
+        <button className={request.danger ? "danger" : "success"} onClick={() => onClose(true)}>{request.confirmLabel}</button>
+      </div>
+    </section>
+  </div>;
 }
 
 function HomePanel({ status, readiness, taskResult, setTaskResult, funcomTokenResult, setFuncomTokenResult, runningAction, setRunningAction, onLoad }: {
@@ -331,8 +468,8 @@ function HomePanel({ status, readiness, taskResult, setTaskResult, funcomTokenRe
   }
 
   async function runServerAction(action: "start" | "stop" | "restart") {
-    if (action === "stop" && !window.confirm("Stop the Dune server stack?")) return;
-    if (action === "restart" && !window.confirm("Restart the Dune server stack?")) return;
+    if (action === "stop" && !(await confirmDialog("Stop the Dune server stack?"))) return;
+    if (action === "restart" && !(await confirmDialog("Restart the Dune server stack?"))) return;
     const actionRunId = ++homeActionRunId.current;
     homeActionStartedAt.current = Date.now();
     let commandAction = action;
@@ -470,7 +607,7 @@ function HomePanel({ status, readiness, taskResult, setTaskResult, funcomTokenRe
   }, [runningAction, status, readiness, setRunningAction, setTaskResult]);
 
   useEffect(() => {
-    if (!taskResult || taskResult.status === "running" || taskResult.status === "failed") return;
+    if (!taskResult || taskResult.status === "running") return;
     const id = window.setTimeout(() => setTaskResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [taskResult?.status, taskResult?.title, setTaskResult]);
@@ -509,9 +646,9 @@ function HomePanel({ status, readiness, taskResult, setTaskResult, funcomTokenRe
       <article className="hero-panel wide loading-panel">
         <span className="spinner" aria-hidden="true" />
         <div>
-          <h2>Checking Server Status...</h2>
-          <p>Checking Readiness...</p>
-          <p>This can take a few seconds while Docker and Dune health checks run.</p>
+          <h2>Verifying server status...</h2>
+          <p>Checking system readiness...</p>
+          <p>This may take a few seconds while Docker and Dune complete their health checks.</p>
         </div>
       </article>
     </section>;
@@ -606,9 +743,10 @@ function clampPercent(value: number) {
 }
 
 function HomeTaskResultCard({ result }: { result: HomeTaskResult }) {
+  const pending = result.status === "running";
   return <div className={`result-panel home-task-result result-${result.status === "succeeded" || result.status === "stopped" ? "ok" : result.status === "failed" ? "fail" : "running"}`} aria-live="polite">
-    <strong className={result.status === "running" ? "loading-dots" : ""}>{result.title}</strong>
-    {result.message && <p>{result.message}</p>}
+    <strong className={pending ? "loading-dots" : ""}>{formatResultTitle(result.title, pending)}</strong>
+    {result.message && <p>{formatResultMessage(result.message)}</p>}
     {result.details && <TechnicalDetails title="Technical details" text={result.details} />}
   </div>;
 }
@@ -662,7 +800,7 @@ function ServerPanel(props: {
   const scheduleLoaded = Boolean(restartSchedule);
   const scheduleDisplayActive = scheduleSaving ? restartEnabled : scheduleActive;
   const scheduleStatusLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleDisplayActive ? "Enabled" : "Disabled";
-  const scheduleDisplayTimerLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleSaving ? restartEnabled ? "Activating" : "Deactivating" : scheduleTimerLabel;
+  const scheduleDisplayTimerLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleSaving ? restartEnabled ? "Activating" : "Deactivating" : restartEnabled ? scheduleTimerLabel : "Inactive";
   const serverState = getHomeServerState(props.status, props.readiness);
   async function run(action: () => Promise<unknown>) {
     props.onError("");
@@ -706,7 +844,7 @@ function ServerPanel(props: {
       setTitleResult({ status: "failed", title: "Title Save Failed", message: "Server title cannot be empty." });
       return;
     }
-    if (!window.confirm(`Change server title to "${title}"? This restarts Director and Gateway so the new title can be published.`)) return;
+    if (!(await confirmDialog(`Change server title to "${title}"? This restarts Director and Gateway so the new title can be published.`))) return;
     setTitleResult({ status: "running", title: "Saving Title" });
     props.onError("");
     try {
@@ -726,7 +864,7 @@ function ServerPanel(props: {
       setFuncomTokenResult({ status: "failed", title: "Token Save Failed", message: "Funcom token cannot be empty." });
       return;
     }
-    if (!window.confirm("Save the new Funcom token and restart the Dune stack so services reload it?")) return;
+    if (!(await confirmDialog("Save the new Funcom token and restart the Dune stack so services reload it?"))) return;
     const checkSince = new Date().toISOString();
     setFuncomTokenResult({ status: "running", title: "Saving Funcom Token..." });
     props.onError("");
@@ -752,8 +890,8 @@ function ServerPanel(props: {
     if (statusResult.status === "rejected") throw statusResult.reason;
   }
   async function runServerAction(action: "start" | "stop" | "restart") {
-    if (action === "stop" && !window.confirm("Stop the Dune server stack?")) return;
-    if (action === "restart" && !window.confirm("Restart the Dune server stack?")) return;
+    if (action === "stop" && !(await confirmDialog("Stop the Dune server stack?"))) return;
+    if (action === "restart" && !(await confirmDialog("Restart the Dune server stack?"))) return;
     serviceRestartRunId.current += 1;
     setServiceRestartingService("");
     const actionRunId = ++controlActionRunId.current;
@@ -801,7 +939,7 @@ function ServerPanel(props: {
     }
   }
   async function restartSelectedService() {
-    if (!window.confirm(`Restart ${friendlyServiceName(service)}?`)) return;
+    if (!(await confirmDialog(`Restart ${friendlyServiceName(service)}?`))) return;
     const selectedService = service;
     const runId = ++serviceRestartRunId.current;
     setServiceRestartingService(selectedService);
@@ -966,22 +1104,22 @@ function ServerPanel(props: {
     setServiceRestartingService("");
   }, [serviceRestartingService, serviceRestartResult?.status, props.status]);
   useEffect(() => {
-    if (!taskResult || taskResult.status === "running" || taskResult.status === "failed") return;
+    if (!taskResult || taskResult.status === "running") return;
     const id = window.setTimeout(() => setTaskResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [taskResult?.status, taskResult?.title]);
   useEffect(() => {
-    if (!serviceRestartResult || serviceRestartResult.status === "running" || serviceRestartResult.status === "failed") return;
+    if (!serviceRestartResult || serviceRestartResult.status === "running") return;
     const id = window.setTimeout(() => setServiceRestartResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [serviceRestartResult?.status, serviceRestartResult?.title]);
   useEffect(() => {
-    if (!titleResult || titleResult.status === "running" || titleResult.status === "failed") return;
+    if (!titleResult || titleResult.status === "running") return;
     const id = window.setTimeout(() => setTitleResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [titleResult?.status, titleResult?.title]);
   useEffect(() => {
-    if (!scheduleResult || scheduleResult.status === "running" || scheduleResult.status === "failed") return;
+    if (!scheduleResult || scheduleResult.status === "running") return;
     const id = window.setTimeout(() => setScheduleResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [scheduleResult?.status, scheduleResult?.title]);
@@ -994,7 +1132,7 @@ function ServerPanel(props: {
           <label>Current Server Title<input value={serverTitle} onChange={(event) => setServerTitle(event.target.value)} /></label>
           <button disabled={actionRunning || serviceRestartRunning || titleSaving} onClick={saveServerTitle}>Save Title</button>
           {titleResult && <span className={`inline-task-result result-${titleResult.status === "succeeded" ? "ok" : titleResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={titleResult.status === "running" ? "loading-dots" : ""}>{titleResult.title}</strong>
+            <strong className={titleResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(titleResult.title, titleResult.status === "running")}</strong>
           </span>}
         </div>
       </section>
@@ -1011,26 +1149,9 @@ function ServerPanel(props: {
         </select></label>
         <button disabled={actionRunning || serviceRestartRunning || titleSaving || funcomTokenSaving || scheduleSaving} onClick={restartSelectedService}>Restart Service</button>
         {serviceRestartResult && <span className={`inline-task-result result-${serviceRestartResult.status === "succeeded" ? "ok" : serviceRestartResult.status === "failed" ? "fail" : "running"}`}>
-          <strong className={serviceRestartResult.status === "running" ? "loading-dots" : ""}>{serviceRestartResult.title}</strong>
+          <strong className={serviceRestartResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(serviceRestartResult.title, serviceRestartResult.status === "running")}</strong>
         </span>}
       </div>
-      <section className="action-section">
-        <div className="panel-title"><h4>Scheduled Restarts</h4><StatusPill value={scheduleStatusLabel} /></div>
-        <KeyValueGrid items={[
-          ["Current Status", scheduleStatusLabel],
-          ["Restart Time (Local Server Time)", toHourMinuteTime(restartScheduleValues.restart_time || restartTime)],
-          ["Timer", scheduleDisplayTimerLabel]
-        ]} />
-        {commandStatusSummary(restartSchedule).reason && <p className="danger-note">{commandStatusSummary(restartSchedule).reason}</p>}
-        <div className="action-line schedule-action-line">
-          <label className="checkbox-row"><input type="checkbox" disabled={scheduleLoading || scheduleSaving} checked={restartEnabled} onChange={(event) => setRestartEnabled(event.target.checked)} /> Enable</label>
-          <label className="compact-select">Daily Restart Time<input type="time" step="60" pattern="[0-2][0-9]:[0-5][0-9]" disabled={scheduleSaving} value={restartTime} onChange={(event) => setRestartTime(sanitizeTimeInput(event.target.value))} placeholder="05:00" /></label>
-          <button disabled={actionRunning || serviceRestartRunning || titleSaving || funcomTokenSaving || scheduleSaving || scheduleLoading} onClick={saveSchedule}>Save Schedule</button>
-          {scheduleResult && <span className={`inline-task-result result-${scheduleResult.status === "succeeded" ? "ok" : scheduleResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={scheduleResult.status === "running" ? "loading-dots" : ""}>{scheduleResult.title}</strong>
-          </span>}
-        </div>
-      </section>
       <ReadinessTimeline text={props.readiness} statusText={props.status} />
       <PortChecklist text={props.ports} statusText={props.status} />
       <section className="action-section">
@@ -1039,8 +1160,8 @@ function ServerPanel(props: {
           <label className="funcom-token-field"><SecretInput aria-label="Funcom token" value={funcomToken} onChange={(event) => setFuncomToken(event.target.value)} placeholder="Paste new token" /></label>
           <button disabled={actionRunning || serviceRestartRunning || titleSaving || funcomTokenSaving || scheduleSaving} onClick={saveFuncomToken}>Save Token</button>
           {funcomTokenResult && <span className={`inline-task-result result-${funcomTokenResult.status === "succeeded" ? "ok" : funcomTokenResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={funcomTokenResult.status === "running" ? "loading-dots" : ""}>{funcomTokenResult.title}</strong>
-            {funcomTokenResult.message && <span className="inline-task-message">{funcomTokenResult.message}</span>}
+            <strong className={funcomTokenResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(funcomTokenResult.title, funcomTokenResult.status === "running")}</strong>
+            {funcomTokenResult.message && <span className="inline-task-message">{formatResultMessage(funcomTokenResult.message)}</span>}
           </span>}
         </div>
       </section>
@@ -1058,7 +1179,7 @@ function ServicesPanel({ services, setServices, setTask, openLogs, onError }: { 
   async function restart(service: string) {
     onError("");
     try {
-      if (window.confirm(`Restart ${service}?`)) setTask((await serverApi.restartService(service)).task);
+      if (await confirmDialog(`Restart ${service}?`)) setTask((await serverApi.restartService(service)).task);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     }
@@ -1091,7 +1212,14 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [grantQuantity, setGrantQuantity] = useState("1");
   const [grantDurability, setGrantDurability] = useState("1");
-  const [liveToolsOpen, setLiveToolsOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(true);
+  const [restartSchedule, setRestartSchedule] = useState<{ stdout?: string; stderr?: string; exitCode?: number } | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
+  const [restartEnabled, setRestartEnabled] = useState(false);
+  const [restartTime, setRestartTime] = useState("05:00");
+  const [restartNotifyMinutes, setRestartNotifyMinutes] = useState("15");
+  const [scheduleResult, setScheduleResult] = useState<HomeTaskResult | null>(null);
+  const [liveToolsOpen, setLiveToolsOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [xp, setXp] = useState("1000");
   const [broadcastTitle, setBroadcastTitle] = useState("");
@@ -1100,6 +1228,16 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
   const [history, setHistory] = useState("");
   const [actionResult, setActionResult] = useState<{ key: string; tone: "success" | "danger" | "neutral"; text: string; pending?: boolean } | null>(null);
   const resultTimer = useRef<number | null>(null);
+  const scheduleSaving = scheduleResult?.status === "running";
+  const restartScheduleValues = parseKeyValueText(restartSchedule?.stdout || "");
+  const scheduleTimerValue = restartScheduleValues.systemd_timer || "";
+  const scheduleTimerLabel = scheduleTimerValue ? formatTimerStatus(scheduleTimerValue) : "Not Installed";
+  const scheduleTimerActive = /^active$/i.test(scheduleTimerValue);
+  const scheduleActive = restartEnabled && scheduleTimerActive;
+  const scheduleLoaded = Boolean(restartSchedule);
+  const scheduleDisplayActive = scheduleSaving ? restartEnabled : scheduleActive;
+  const scheduleStatusLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleDisplayActive ? "Enabled" : "Disabled";
+  const scheduleDisplayTimerLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleSaving ? restartEnabled ? "Activating" : "Deactivating" : restartEnabled ? scheduleTimerLabel : "Inactive";
   async function run(action: () => Promise<unknown>) {
     onError("");
     try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
@@ -1124,8 +1262,8 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
     if (open) setHistoryOpen(true);
   }
   async function clearHistory() {
-    if (!window.confirm("Clear command history?")) return;
-    await adminApi.clearHistory();
+    if (!(await confirmDialog("Clear command history?"))) return;
+    await adminApi.clearHistory("admin-tools");
     setHistory("");
     setHistoryOpen(false);
   }
@@ -1139,13 +1277,69 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
     await loadHistory(true);
     return final;
   }
+  async function loadRestartSchedule() {
+    setScheduleLoading(true);
+    try {
+      const result = await serverApi.restartSchedule();
+      setRestartSchedule(result);
+      const values = parseKeyValueText(result.stdout || "");
+      const timerActive = /^active$/i.test(values.systemd_timer || "");
+      setRestartEnabled(/^true$/i.test(values.scheduled_restart_enabled || "") && timerActive);
+      if (values.restart_time && values.restart_time !== "unset") setRestartTime(toHourMinuteTime(values.restart_time));
+      const notifyMatch = String(values.notify_players_before || "").match(/\d+/);
+      if (notifyMatch) setRestartNotifyMinutes(notifyMatch[0]);
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+  async function saveSchedule() {
+    const sanitizedTime = toHourMinuteTime(restartTime);
+    const notifyMinutes = Number(restartNotifyMinutes);
+    if (restartEnabled && !isValidHourMinuteTime(sanitizedTime)) {
+      setScheduleResult({ status: "failed", title: "Schedule Save Failed", message: "Restart time must be a valid 24-hour time, for example 05:00 or 23:30." });
+      return;
+    }
+    if (restartEnabled && (!Number.isInteger(notifyMinutes) || notifyMinutes < 1 || notifyMinutes > 1440)) {
+      setScheduleResult({ status: "failed", title: "Schedule Save Failed", message: "Notification time must be between 1 and 1440 minutes." });
+      return;
+    }
+    setRestartTime(sanitizedTime);
+    setRestartNotifyMinutes(String(Number.isInteger(notifyMinutes) ? notifyMinutes : 15));
+    setScheduleResult({ status: "running", title: "Saving Schedule" });
+    const requestedEnabled = restartEnabled;
+    onError("");
+    try {
+      const final = await waitForTaskSilently((await serverApi.saveRestartSchedule({ enabled: requestedEnabled, time: sanitizedTime, notifyMinutes })).task);
+      const details = taskTechnicalDetails(final);
+      const nextSchedule = await serverApi.restartSchedule();
+      setRestartSchedule(nextSchedule);
+      const nextValues = parseKeyValueText(nextSchedule.stdout || "");
+      const timerActive = /^active$/i.test(nextValues.systemd_timer || "");
+      const timerInactive = /^inactive$/i.test(nextValues.systemd_timer || "");
+      if (requestedEnabled && !timerActive) setRestartEnabled(false);
+      if (!requestedEnabled && timerInactive) setRestartEnabled(false);
+      const notifyMatch = String(nextValues.notify_players_before || "").match(/\d+/);
+      if (notifyMatch) setRestartNotifyMinutes(notifyMatch[0]);
+      setScheduleResult(final.status === "succeeded" && (!requestedEnabled ? timerInactive : timerActive)
+        ? { status: "succeeded", title: "Schedule Saved Successfully", details }
+        : { status: "failed", title: requestedEnabled ? "Timer Install Failed" : "Schedule Save Failed", details: details || nextSchedule.stdout || nextSchedule.stderr || "" });
+    } catch (error) {
+      setScheduleResult({ status: "failed", title: "Schedule Save Failed", details: error instanceof Error ? error.message : String(error) });
+    }
+  }
   useEffect(() => {
     playersApi.list().then((result) => setPlayers(result.rows || [])).catch(() => undefined);
     loadHistory().catch(() => undefined);
+    loadRestartSchedule().catch((error) => onError(error instanceof Error ? error.message : String(error)));
     return () => {
       if (resultTimer.current) window.clearTimeout(resultTimer.current);
     };
   }, []);
+  useEffect(() => {
+    if (!scheduleResult || scheduleResult.status === "running") return;
+    const id = window.setTimeout(() => setScheduleResult(null), 10400);
+    return () => window.clearTimeout(id);
+  }, [scheduleResult?.status, scheduleResult?.title]);
   const selectedPlayerRow = players.find((player) => String(player.actor_id || player.player_pawn_id || player.action_player_id) === selectedPlayer);
   const selectedPlayerName = String(selectedPlayerRow?.character_name || playerId || "Selected Player");
   function selectPlayer(value: string) {
@@ -1165,9 +1359,9 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
       showActionResult("global", "No players are currently online.", "neutral");
       return;
     }
-    if (!window.confirm(`Give 10 cups of water to ${targets.length} online player${targets.length === 1 ? "" : "s"}?`)) return;
+    if (!(await confirmDialog(`Hydrate all ${targets.length} online player${targets.length === 1 ? "" : "s"}?`))) return;
     await runAdminAction("global", `Hydrating ${targets.length} online player${targets.length === 1 ? "" : "s"}`, async () => {
-      const results = await Promise.allSettled(targets.map((target) => playersApi.giveItems(target, [{ itemId: "WaterPack_Consumable", quantity: 10, durability: 1 }])));
+      const results = await Promise.allSettled(targets.map((target) => playersApi.giveItems(target, [{ itemId: "WaterPack_Consumable", quantity: 10, durability: 1 }], { historyScope: "admin-tools", historyFriendly: "Hydrate All" })));
       const failed = results.filter((result) => result.status === "rejected" || (result.status === "fulfilled" && result.value.ok === false)).length;
       await loadHistory(true);
       if (failed) throw new Error(`Hydration completed with ${failed} failed player${failed === 1 ? "" : "s"}.`);
@@ -1180,7 +1374,7 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
       showActionResult("global", "No players are currently online.", "neutral");
       return;
     }
-    if (!window.confirm(`Kick ${onlineCount} online player${onlineCount === 1 ? "" : "s"}?`)) return;
+    if (!(await confirmDialog(`Kick ${onlineCount} online player${onlineCount === 1 ? "" : "s"}?`))) return;
     await runAdminAction("global", `Kicking ${onlineCount} online player${onlineCount === 1 ? "" : "s"}`, () => runInlineTask(() => adminApi.kickAllOnline("KICK ALL ONLINE PLAYERS")), "All online players were kicked.", "danger");
   }
   async function sendBroadcast() {
@@ -1189,77 +1383,40 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
       await loadHistory(true);
     }, "Broadcast message was sent successfully.");
   }
-  const historyRows = parseHistoryRows(history, players);
+  const historyRows = parseHistoryRows(history, players, "admin-tools");
   return (
     <section className="panel admin-tools-panel">
       <h2>Admin Tools</h2>
-      <div className="action-section">
-        <h4>Quick Player Actions</h4>
-        <p>Select a player before running item, XP, water, or kick actions.</p>
-        <div className="action-line">
-          <label className="wide-field">Player<select value={selectedPlayer} onChange={(event) => selectPlayer(event.target.value)}>
-            <option value="">Select player</option>
-            {players.map((player) => <option key={String(player.actor_id || player.player_pawn_id || player.action_player_id)} value={String(player.actor_id || player.player_pawn_id || player.action_player_id)}>
-              {String(player.character_name || "Unknown")} - {String(player.online_status || "unknown")} - admin {String(player.action_player_id || "missing")}
-            </option>)}
-          </select></label>
-        </div>
-        <details className="technical-details"><summary>Advanced manual player ID</summary><label>Player FLS/Admin ID<input value={playerId} onChange={(event) => setPlayerId(event.target.value)} /></label></details>
-      </div>
-      <div className="action-section">
-        <h4>Grant Item</h4>
-        <ItemCatalogSelector selected={selectedItem} onSelect={chooseAdminItem} />
-        <div className="action-line">
-          <label className="compact-field">Quantity<input type="number" min="1" value={grantQuantity} onChange={(event) => setGrantQuantity(event.target.value)} /></label>
-          <label className="compact-field">Durability<input type="number" min="0" value={grantDurability} onChange={(event) => setGrantDurability(event.target.value)} /></label>
-          <button disabled={!selectedItem || !playerId} onClick={() => run(async () => {
-            if (!window.confirm(`Give ${grantQuantity} x ${itemName} to ${selectedPlayerName}?`)) return;
-            await runAdminAction("grant", `Granting x${Number(grantQuantity) || 1} ${itemName} to ${selectedPlayerName}`, () => runInlineTask(() => playersApi.giveItem(playerId, { itemName, quantity: Number(grantQuantity), durability: Number(grantDurability) })), `x${Number(grantQuantity) || 1} ${itemName} was granted to ${selectedPlayerName}.`, "success", (error) => `Failed to grant x${Number(grantQuantity) || 1} ${itemName} to ${selectedPlayerName}. ${friendlyInlineError(error)}`);
-          })}>Grant Item</button>
-          <InlineActionResult result={actionResult} resultKey="grant" />
-        </div>
-        <details className="technical-details"><summary>Developer raw item ID</summary><div className="action-line">
-          <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} placeholder="ItemTemplate_5" /></label>
-          <button disabled={!itemId || !playerId} onClick={() => run(async () => {
-            if (!window.confirm(`Give item id ${itemId} to ${selectedPlayerName}?`)) return;
-            await runAdminAction("grantRaw", `Granting x1 ${itemId} to ${selectedPlayerName}`, () => runInlineTask(() => playersApi.giveItemId(playerId, { itemId, quantity: 1, durability: 1 })), `x1 ${itemId} was granted to ${selectedPlayerName}.`, "success", (error) => `Failed to grant x1 ${itemId} to ${selectedPlayerName}. ${friendlyInlineError(error)}`);
-          })}>Give Item by ID</button>
-          <InlineActionResult result={actionResult} resultKey="grantRaw" />
-        </div></details>
-      </div>
-      <div className="action-section">
-        <h4>XP / Player Tools</h4>
-        <div className="action-line admin-xp-row">
-          <label className="admin-xp-field"><span>XP Amount</span><input type="number" min="1" value={xp} onChange={(event) => setXp(event.target.value)} /></label>
-          <button disabled={!playerId} onClick={() => run(async () => {
-            if (!window.confirm(`Add ${xp} XP to ${selectedPlayerName}?`)) return;
-            await runAdminAction("xp", `Adding ${Number(xp) || 0} XP to ${selectedPlayerName}`, () => runInlineTask(() => playersApi.addXp(playerId, Number(xp))), `${selectedPlayerName} received ${Number(xp) || 0} XP.`);
-          })}>Add XP</button>
-          <InlineActionResult result={actionResult} resultKey="xp" />
-        </div>
-        <div className="action-line admin-player-tools-row">
-          <button disabled={!playerId} onClick={() => run(async () => {
-            if (!window.confirm(`Give 10 cups of water to ${selectedPlayerName}?`)) return;
-            await runAdminAction("playerTools", `Giving 10 cups of water to ${selectedPlayerName}`, () => runInlineTask(() => playersApi.giveItemId(playerId, { itemId: "WaterPack_Consumable", quantity: 10, durability: 1 })), `${selectedPlayerName} received 10 cups of water.`);
-          })}>Give Water</button>
-          <button disabled={!playerId} onClick={() => run(async () => {
-            if (!window.confirm(`Refill container for ${selectedPlayerName}?`)) return;
-            await runAdminAction("playerTools", `Refilling ${selectedPlayerName}'s container`, () => runInlineTask(() => playersApi.refillWater(playerId)), `${selectedPlayerName}'s container was filled successfully.`);
-          })}>Refill Container</button>
-          <button disabled={!playerId} className="danger" onClick={() => run(async () => {
-            if (!window.confirm(`Kick ${selectedPlayerName} from the server?`)) return;
-            await runAdminAction("playerTools", `Kicking ${selectedPlayerName}`, () => runInlineTask(() => playersApi.kick(playerId)), `${selectedPlayerName} was kicked from the server.`, "danger");
-          })}>Kick Player</button>
-          <InlineActionResult result={actionResult} resultKey="playerTools" />
-        </div>
+      <div className={`playerAdmin_toggle ${scheduleOpen ? "open" : ""}`}>
+        <button className="playerAdmin_toggleHeader" aria-label={scheduleOpen ? "Collapse Schedule Server Restart" : "Expand Schedule Server Restart"} onClick={() => setScheduleOpen(!scheduleOpen)}>{scheduleOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Schedule Server Restart</span></button>
+        {scheduleOpen && <div className="playerAdmin_toggleBody">
+          <div className="panel-title schedule-panel-title">
+            <h4>Schedule Server Restart</h4>
+            <label className={`switch-checkbox ${restartEnabled ? "enabled" : "disabled"}`}><input type="checkbox" disabled={scheduleLoading || scheduleSaving} checked={restartEnabled} onChange={(event) => setRestartEnabled(event.target.checked)} /><span className="switch-label">Daily Restart</span><strong className="switch-state">{restartEnabled ? "ON" : "OFF"}</strong></label>
+          </div>
+          <KeyValueGrid items={[
+            ["Current Status", scheduleStatusLabel],
+            ["Restart Time (Local Server Time)", toHourMinuteTime(restartScheduleValues.restart_time || restartTime)],
+            ["In-Game Notice Before", `${restartNotifyMinutes} minutes`],
+            ["Timer", scheduleDisplayTimerLabel]
+          ]} />
+          {commandStatusSummary(restartSchedule).reason && <p className="danger-note">{commandStatusSummary(restartSchedule).reason}</p>}
+          <div className="action-line schedule-action-line">
+            <label className="compact-select">Daily Restart Time<input type="time" step="60" pattern="[0-2][0-9]:[0-5][0-9]" disabled={scheduleSaving} value={restartTime} onChange={(event) => setRestartTime(sanitizeTimeInput(event.target.value))} placeholder="05:00" /></label>
+            <label className="compact-select schedule-notify-field">In-Game Notice Before (Min)<input type="number" min="1" max="1440" step="1" disabled={scheduleSaving} value={restartNotifyMinutes} onChange={(event) => setRestartNotifyMinutes(event.target.value)} /></label>
+            <button disabled={scheduleSaving || scheduleLoading} onClick={saveSchedule}>Save Schedule</button>
+            {scheduleResult && <span className={`inline-task-result result-${scheduleResult.status === "succeeded" ? "ok" : scheduleResult.status === "failed" ? "fail" : "running"}`}>
+              <strong className={scheduleResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(scheduleResult.title, scheduleResult.status === "running")}</strong>
+            </span>}
+          </div>
+        </div>}
       </div>
       <div className={`playerAdmin_toggle ${liveToolsOpen ? "open" : ""}`}>
         <button className="playerAdmin_toggleHeader" aria-label={liveToolsOpen ? "Collapse Global Live Tools" : "Expand Global Live Tools"} onClick={() => setLiveToolsOpen(!liveToolsOpen)}>{liveToolsOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Global Live Tools</span></button>
         {liveToolsOpen && <div className="playerAdmin_toggleBody"><div className="global-live-tools">
-          <p className="action-help-note">Live Command. Sends immediately.</p>
           <div className="action-line admin-global-actions">
             <button className="danger" onClick={() => run(kickAllPlayers)}>Kick All</button>
-            <button className="success" onClick={() => run(hydrateOnlinePlayers)}>Hydrate All Players</button>
+            <button className="success" onClick={() => run(hydrateOnlinePlayers)}>Hydrate All</button>
             <InlineActionResult result={actionResult} resultKey="global" />
           </div>
           <div className="action-line broadcast-line">
@@ -1287,18 +1444,17 @@ function AdminToolsPanel({ onError }: { onError: (text: string) => void }) {
 
 function InlineActionResult({ result, resultKey }: { result: { key: string; tone: "success" | "danger" | "neutral"; text: string; pending?: boolean } | null; resultKey: string }) {
   if (!result || result.key !== resultKey) return null;
-  return <span className="inline-action-result-wrap"><span className={`inline-action-result ${result.tone} ${result.pending ? "pending" : ""}`}>{result.text}</span></span>;
+  return <span className="inline-action-result-wrap"><span className={`inline-action-result ${result.tone} ${result.pending ? "pending" : ""}`}>{formatUiSentence(result.text, Boolean(result.pending))}</span></span>;
 }
 
 function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, playerName, setTask, onError, onRefresh, onClose }: { detail: Record<string, unknown> | null; fallback: Record<string, unknown>; dbPlayerId: string; actionPlayerId: string; playerName: string; setTask: (task: Task) => void; onError: (text: string) => void; onRefresh: () => void; onClose: () => void }) {
   const playerAdmin_tabs = ["Character", "Crafting", "Research", "Skills", "Journey", "Admin"];
   const [playerAdmin_activeTab, playerAdmin_setActiveTab] = useState("Character");
-  const [playerAdmin_openToggles, playerAdmin_setOpenToggles] = useState<Record<string, boolean>>({});
-  const [playerAdmin_craftingCategory, playerAdmin_setCraftingCategory] = useState("");
+  const [playerAdmin_openToggles, playerAdmin_setOpenToggles] = useState<Record<string, boolean>>({ give_items: true });
+  const [playerAdmin_craftingCategory, playerAdmin_setCraftingCategory] = useState("Essentials");
   const [playerAdmin_researchCategory, playerAdmin_setResearchCategory] = useState("");
   const [playerAdmin_productGroup, playerAdmin_setProductGroup] = useState("");
-  const [playerAdmin_skillSchool, playerAdmin_setSkillSchool] = useState("");
-  const [playerAdmin_waterAmount, playerAdmin_setWaterAmount] = useState("10");
+  const [playerAdmin_skillSchool, playerAdmin_setSkillSchool] = useState("Trooper");
   const [playerAdmin_xpAmount, playerAdmin_setXpAmount] = useState("1000");
   const [playerAdmin_currencyType, playerAdmin_setCurrencyType] = useState("Solari Credit");
   const [playerAdmin_currencyAmount, playerAdmin_setCurrencyAmount] = useState("100");
@@ -1311,8 +1467,11 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
   const [playerAdmin_quantity, playerAdmin_setQuantity] = useState("1");
   const [playerAdmin_durability, playerAdmin_setDurability] = useState("1");
   const [playerAdmin_multiList, playerAdmin_setMultiList] = useState<{ itemName?: string; itemId?: string; image?: string; quantity: number; durability: number }[]>([]);
+  const [playerAdmin_itemEditIndex, playerAdmin_setItemEditIndex] = useState<number | null>(null);
+  const [playerAdmin_itemEditDraft, playerAdmin_setItemEditDraft] = useState({ quantity: "1", durability: "1" });
   const [playerAdmin_actionResult, playerAdmin_setActionResult] = useState<{ key: string; tone: "success" | "danger" | "neutral"; text: string; pending?: boolean } | null>(null);
-  const [playerAdmin_actionLog, playerAdmin_setActionLog] = useState<Record<string, string>[]>([]);
+  const [playerAdmin_characterLog, playerAdmin_setCharacterLog] = useState<Record<string, string>[]>([]);
+  const [playerAdmin_adminLog, playerAdmin_setAdminLog] = useState<Record<string, string>[]>([]);
   const [playerAdmin_craftingRows, playerAdmin_setCraftingRows] = useState<CraftingRecipeRow[]>([]);
   const [playerAdmin_craftingLoading, playerAdmin_setCraftingLoading] = useState(false);
   const [playerAdmin_craftingError, playerAdmin_setCraftingError] = useState("");
@@ -1325,9 +1484,14 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
   const [playerAdmin_skillCatalogError, playerAdmin_setSkillCatalogError] = useState("");
   const [playerAdmin_skillBaseline, playerAdmin_setSkillBaseline] = useState<Record<string, number>>({});
   const [playerAdmin_skillChanges, playerAdmin_setSkillChanges] = useState<Record<string, number>>({});
+  const [playerAdmin_specializationRows, playerAdmin_setSpecializationRows] = useState<SpecializationTrackRow[]>([]);
+  const [playerAdmin_specializationLoading, playerAdmin_setSpecializationLoading] = useState(false);
+  const [playerAdmin_specializationError, playerAdmin_setSpecializationError] = useState("");
+  const [playerAdmin_specializationXpAmount, playerAdmin_setSpecializationXpAmount] = useState("1000");
   const [playerAdmin_journeyRows, playerAdmin_setJourneyRows] = useState<Record<string, JourneyRow[]>>({ story: [], contract: [], codex: [], tutorial: [] });
   const [playerAdmin_journeyLoading, playerAdmin_setJourneyLoading] = useState(false);
   const [playerAdmin_journeyError, playerAdmin_setJourneyError] = useState("");
+  const [playerAdmin_expandedJourney, playerAdmin_setExpandedJourney] = useState<Record<string, boolean>>({});
   const [playerAdmin_coords, playerAdmin_setCoords] = useState({ x: "", y: "", z: "", yaw: "0" });
   const [playerAdmin_vehicleId, playerAdmin_setVehicleId] = useState("");
   const [playerAdmin_vehicleTemplate, playerAdmin_setVehicleTemplate] = useState("");
@@ -1337,6 +1501,7 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
   const playerAdmin_craftingCategories = ["Essentials", "Water Discipline", "Combat", "Construction", "Exploration", "Vehicles"];
   const playerAdmin_canRunLiveAction = Boolean(actionPlayerId);
   const playerAdmin_toggle = (playerAdmin_key: string) => playerAdmin_setOpenToggles((playerAdmin_current) => ({ ...playerAdmin_current, [playerAdmin_key]: !playerAdmin_current[playerAdmin_key] }));
+  const playerAdmin_toggleJourney = (key: string) => playerAdmin_setExpandedJourney((current) => ({ ...current, [key]: !current[key] }));
   function playerAdmin_showResult(key: string, text: string, tone: "success" | "danger" | "neutral" = "success", pending = false) {
     playerAdmin_setActionResult({ key, text, tone, pending });
     if (playerAdmin_resultTimer.current) window.clearTimeout(playerAdmin_resultTimer.current);
@@ -1344,12 +1509,20 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
     if (!pending) playerAdmin_resultTimer.current = window.setTimeout(() => playerAdmin_setActionResult(null), 5000);
   }
   function playerAdmin_addLog(actionType: string, target: string, amount: string, notes: string) {
-    playerAdmin_setActionLog((current) => [{ "Date / Time": new Date().toLocaleString(), Admin: "Console", "Action Type": actionType, Target: target, Amount: amount, Notes: notes }, ...current].slice(0, 25));
+    const row = { "Date / Time": new Date().toLocaleString(), Admin: "Console", "Action Type": actionType, Target: target, Amount: amount, Notes: notes };
+    playerAdmin_setCharacterLog((current) => [row, ...current].slice(0, 25));
+    if (/kick|wipe|reset progression|teleport|spawn vehicle|load position/i.test(actionType)) playerAdmin_setAdminLog((current) => [row, ...current].slice(0, 25));
+  }
+  function playerAdmin_actionResultOrNote(key: string, text: string) {
+    return playerAdmin_actionResult?.key === key ? <InlineActionResult result={playerAdmin_actionResult} resultKey={key} /> : <span className="inline-action-result-wrap"><span className="inline-action-result note">{text}</span></span>;
   }
   async function playerAdmin_runTask(action: () => Promise<{ task: Task }>) {
     const response = await action();
     const final = await waitForTaskSilently(response.task);
-    if (final.status === "succeeded") onRefresh();
+    if (final.status === "succeeded") {
+      onRefresh();
+      return { ok: true };
+    }
     else throw new Error(adminTaskFailureDetail(final) || playerAdmin_taskFailureMessage(final));
   }
   async function playerAdmin_runAction(key: string, pendingText: string, action: () => Promise<unknown>, successText: string, log: { actionType: string; target: string; amount: string }, successTone: "success" | "danger" = "success", failureText?: string | ((error: unknown) => string)) {
@@ -1381,6 +1554,16 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       durability: Number(playerAdmin_durability) || 1
     }]);
   }
+  function playerAdmin_editQueuedItem(index: number) {
+    const item = playerAdmin_multiList[index];
+    if (!item) return;
+    playerAdmin_setItemEditIndex(index);
+    playerAdmin_setItemEditDraft({ quantity: String(item.quantity ?? 1), durability: String(item.durability ?? 1) });
+  }
+  function playerAdmin_saveQueuedItem(index: number) {
+    playerAdmin_setMultiList((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: Number(playerAdmin_itemEditDraft.quantity) || 1, durability: Number(playerAdmin_itemEditDraft.durability) || 1 } : item));
+    playerAdmin_setItemEditIndex(null);
+  }
   async function playerAdmin_giveMultipleItems() {
     const items = playerAdmin_multiList.length ? playerAdmin_multiList : playerAdmin_selectedItem ? [{
       itemName: playerAdmin_itemName,
@@ -1403,7 +1586,7 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       `${items.length} item entr${items.length === 1 ? "y was" : "ies were"} granted to ${playerName}.`,
       { actionType: "Give Multiple Items", target: playerName, amount: String(items.length) },
       "success",
-      (error) => `Failed to grant items to ${playerName}. ${playerAdmin_friendlyFailure(error, "Give Items", playerName)}`
+      (error) => playerAdmin_friendlyFailure(error, "Give Items", playerName)
     );
   }
   function normalizeSkillSchool(value: string) {
@@ -1511,6 +1694,99 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       playerAdmin_setSkillCatalogError(friendlyInlineError(error));
     } finally {
       playerAdmin_setSkillCatalogLoading(false);
+    }
+  }
+  async function playerAdmin_loadSpecializations() {
+    if (!dbPlayerId) return;
+    playerAdmin_setSpecializationLoading(true);
+    playerAdmin_setSpecializationError("");
+    try {
+      const response = await playersApi.specs(dbPlayerId);
+      playerAdmin_setSpecializationRows((response.rows || []).map((row) => ({
+        trackType: String(row.track_type || row.trackType || ""),
+        xp: Number(row.xp_amount ?? row.xp ?? 0),
+        level: Number(row.level ?? 0)
+      })).filter((row) => row.trackType));
+    } catch (error) {
+      playerAdmin_setSpecializationRows([]);
+      playerAdmin_setSpecializationError(friendlyInlineError(error));
+    } finally {
+      playerAdmin_setSpecializationLoading(false);
+    }
+  }
+  async function playerAdmin_addSpecializationXp(trackType: string) {
+    const amount = Number(playerAdmin_specializationXpAmount) || 0;
+    if (!amount) {
+      playerAdmin_showResult(`spec_${trackType}`, "Enter an XP amount first.", "danger");
+      return;
+    }
+    onError("");
+      playerAdmin_showResult(`spec_${trackType}`, "Updating XP", "neutral", true);
+    try {
+      await playersApi.addSpecializationXp(dbPlayerId, { trackType, amount, confirmation: "ADD SPECIALIZATION XP" });
+      playerAdmin_showResult(`spec_${trackType}`, "XP updated. Relog required.", "success");
+      playerAdmin_addLog("Add Specialization XP", trackType, String(amount), "Succeeded");
+      await playerAdmin_loadSpecializations();
+    } catch (error) {
+      const message = friendlyInlineError(error);
+      playerAdmin_showResult(`spec_${trackType}`, message, "danger");
+      playerAdmin_addLog("Add Specialization XP", trackType, String(amount), `Failed: ${message}`);
+    }
+  }
+  async function playerAdmin_grantMaxSpecialization(trackType: string) {
+    onError("");
+    playerAdmin_showResult(`spec_${trackType}`, "Granting max level", "neutral", true);
+    try {
+      await playersApi.grantMaxSpecialization(dbPlayerId, { trackType, confirmation: "GRANT MAX SPECIALIZATION" });
+      playerAdmin_showResult(`spec_${trackType}`, "Max level granted. Relog required.", "success");
+      playerAdmin_addLog("Grant Max Specialization", trackType, "1", "Succeeded");
+      await playerAdmin_loadSpecializations();
+    } catch (error) {
+      const message = friendlyInlineError(error);
+      playerAdmin_showResult(`spec_${trackType}`, message, "danger");
+      playerAdmin_addLog("Grant Max Specialization", trackType, "1", `Failed: ${message}`);
+    }
+  }
+  async function playerAdmin_resetSpecialization(trackType: string) {
+    if (!(await confirmDialog(`Reset ${trackType} specialization for ${playerName}?`))) return;
+    onError("");
+    playerAdmin_showResult(`spec_${trackType}`, "Resetting track", "neutral", true);
+    try {
+      await playersApi.resetSpecialization(dbPlayerId, { trackType, confirmation: "RESET SPECIALIZATION" });
+      playerAdmin_showResult(`spec_${trackType}`, "Track reset. Relog required.", "success");
+      playerAdmin_addLog("Reset Specialization", trackType, "1", "Succeeded");
+      await playerAdmin_loadSpecializations();
+    } catch (error) {
+      const message = friendlyInlineError(error);
+      playerAdmin_showResult(`spec_${trackType}`, message, "danger");
+      playerAdmin_addLog("Reset Specialization", trackType, "1", `Failed: ${message}`);
+    }
+  }
+  async function playerAdmin_grantAllKeystones() {
+    onError("");
+    playerAdmin_showResult("specKeystones", "Granting keystones", "neutral", true);
+    try {
+      await playersApi.grantAllSpecializationKeystones(dbPlayerId, "GRANT ALL KEYSTONES");
+      playerAdmin_showResult("specKeystones", "Keystones granted. Relog required.", "success");
+      playerAdmin_addLog("Grant All Keystones", playerName, "1", "Succeeded");
+    } catch (error) {
+      const message = friendlyInlineError(error);
+      playerAdmin_showResult("specKeystones", message, "danger");
+      playerAdmin_addLog("Grant All Keystones", playerName, "1", `Failed: ${message}`);
+    }
+  }
+  async function playerAdmin_resetAllKeystones() {
+    if (!(await confirmDialog(`Reset all specialization keystones for ${playerName}?`))) return;
+    onError("");
+    playerAdmin_showResult("specKeystones", "Resetting keystones", "neutral", true);
+    try {
+      await playersApi.resetAllSpecializationKeystones(dbPlayerId, "RESET ALL KEYSTONES");
+      playerAdmin_showResult("specKeystones", "Keystones reset. Relog required.", "success");
+      playerAdmin_addLog("Reset All Keystones", playerName, "1", "Succeeded");
+    } catch (error) {
+      const message = friendlyInlineError(error);
+      playerAdmin_showResult("specKeystones", message, "danger");
+      playerAdmin_addLog("Reset All Keystones", playerName, "1", `Failed: ${message}`);
     }
   }
   function playerAdmin_skillKey(school: string, name: string) {
@@ -1679,8 +1955,14 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
     if (playerAdmin_activeTab === "Research") void playerAdmin_loadResearchItems();
   }, [playerAdmin_activeTab, dbPlayerId]);
   useEffect(() => {
-    if (playerAdmin_activeTab === "Skills" && !playerAdmin_skillCatalog.length && !playerAdmin_skillCatalogLoading) void playerAdmin_loadSkillCatalog();
-  }, [playerAdmin_activeTab, playerAdmin_skillCatalog.length, playerAdmin_skillCatalogLoading]);
+    if (playerAdmin_activeTab === "Skills") {
+      void playerAdmin_loadSkillCatalog();
+      void playerAdmin_loadSpecializations();
+    }
+  }, [playerAdmin_activeTab, dbPlayerId]);
+  useEffect(() => {
+    if (playerAdmin_activeTab === "Skills" && playerAdmin_skillSchool) playerAdmin_openSkillTreeToggles(playerAdmin_skillSchool);
+  }, [playerAdmin_activeTab, playerAdmin_skillSchool]);
   useEffect(() => {
     if (playerAdmin_activeTab === "Journey") void playerAdmin_loadJourneyRows();
   }, [playerAdmin_activeTab, dbPlayerId]);
@@ -1727,15 +2009,55 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       </article>;
     })}</div>
   );
+  const playerAdmin_specializationTable = (
+    <div className="playerAdmin_tableWrap playerAdmin_specializationTableWrap">
+      <table className="playerAdmin_table playerAdmin_specializationTable">
+        <colgroup>
+          <col className="playerAdmin_specTrackCol" />
+          <col className="playerAdmin_specXpCol" />
+          <col className="playerAdmin_specLevelCol" />
+          <col className="playerAdmin_specAddXpCol" />
+          <col className="playerAdmin_specResultCol" />
+          <col className="playerAdmin_specActionCol" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Track</th>
+            <th>XP</th>
+            <th>Level</th>
+            <th>Add XP</th>
+            <th>Result</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {playerAdmin_specializationRows.map((row) => (
+            <tr key={row.trackType}>
+              <td>{row.trackType}</td>
+              <td>{row.xp.toLocaleString()}</td>
+              <td>{row.level}</td>
+              <td><input className="playerAdmin_specXpInput" type="number" value={playerAdmin_specializationXpAmount} onChange={(event) => playerAdmin_setSpecializationXpAmount(event.target.value)} /></td>
+              <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={`spec_${row.trackType}`} /></td>
+              <td className="playerAdmin_actionCell">
+                <button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_addSpecializationXp(row.trackType)}>Add XP</button>
+                <button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_grantMaxSpecialization(row.trackType)}>Grant Max</button>
+                <button className="danger" disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_resetSpecialization(row.trackType)}>Reset</button>
+              </td>
+            </tr>
+          ))}
+          {!playerAdmin_specializationRows.length && <tr><td colSpan={6}>{playerAdmin_specializationLoading ? "Loading specializations..." : "No specialization tracks were found."}</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
   const playerAdmin_actionRow = (playerAdmin_key: string, playerAdmin_label: string, playerAdmin_input: React.ReactNode, playerAdmin_buttonLabel: string, playerAdmin_onClick: () => void, playerAdmin_disabled = false, playerAdmin_note = "") => (
     <div className="playerAdmin_actionGroup">
       <div className="playerAdmin_actionRow">
-        <span>{playerAdmin_label}</span>
-        {playerAdmin_input}
+        <span className="playerAdmin_actionLabel">{playerAdmin_label}{playerAdmin_note && <em>{playerAdmin_note}</em>}</span>
+        <span className="playerAdmin_fieldGroup">{playerAdmin_input}</span>
         <button disabled={playerAdmin_disabled || playerAdmin_actionResult?.pending} onClick={playerAdmin_onClick}>{playerAdmin_buttonLabel}</button>
         <InlineActionResult result={playerAdmin_actionResult} resultKey={playerAdmin_key} />
       </div>
-      {playerAdmin_note && <p className="playerAdmin_actionNote">{playerAdmin_note}</p>}
     </div>
   );
   const playerAdmin_filteredCraftingRows = playerAdmin_craftingRows.filter((row) => !playerAdmin_craftingCategory || row.category === playerAdmin_craftingCategory);
@@ -1743,21 +2065,24 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
     (!playerAdmin_researchCategory || row.category === playerAdmin_researchCategory) &&
     (!playerAdmin_productGroup || row.productGroup === playerAdmin_productGroup)
   );
+  const playerAdmin_craftingCategoryCount = (category: string) => playerAdmin_craftingRows.filter((row) => !category || row.category === category).length;
+  const playerAdmin_researchCategoryCount = (category: string) => playerAdmin_researchRows.filter((row) => !category || row.category === category).length;
+  const playerAdmin_journeyEntryCount = playerAdmin_journeyRows.story.length + playerAdmin_journeyRows.contract.length + playerAdmin_journeyRows.codex.length + playerAdmin_journeyRows.tutorial.length;
   const playerAdmin_vehicleIds = Object.keys(playerAdmin_vehicleCatalog).sort((a, b) => friendlyVehicleName(a).localeCompare(friendlyVehicleName(b)));
   const playerAdmin_selectedTemplates = [...(playerAdmin_vehicleCatalog[playerAdmin_vehicleId] || [])].sort((a, b) => friendlyVehicleTemplateName(a).localeCompare(friendlyVehicleTemplateName(b)));
   const playerAdmin_craftingTable = (
     <div className="playerAdmin_tableWrap">
-      <table className="playerAdmin_table">
-        <thead><tr><th>Recipe</th><th>Recipe ID</th><th>Source</th><th>Quality</th><th>Status</th><th>Action</th></tr></thead>
+      <table className="playerAdmin_table playerAdmin_compactTable playerAdmin_fullResultTable playerAdmin_schematicTable">
+        <thead><tr><th>Recipe</th><th>Recipe ID</th><th>Source</th><th>Quality</th><th>Result</th><th>Action</th></tr></thead>
         <tbody>
           {playerAdmin_filteredCraftingRows.map((row) => (
             <tr key={row.recipeId}>
               <td>{row.displayName}</td>
               <td><code>{row.recipeId}</code></td>
-              <td>{row.source}</td>
+              <td>{friendlyCraftingSource(row.source)}</td>
               <td>{row.qualityLevel}</td>
-              <td>{row.unlocked ? "Unlocked" : "Locked"}</td>
-              <td className="playerAdmin_actionCell"><button disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockCraftingRecipe(row)}>{row.unlocked ? "Unlocked" : "Unlock"}</button><InlineActionResult result={playerAdmin_actionResult} resultKey={`crafting:${row.recipeId}`} /></td>
+              <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={`crafting:${row.recipeId}`} /></td>
+              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockCraftingRecipe(row)}>{row.unlocked ? "Unlocked" : "Unlock"}</button></td>
             </tr>
           ))}
           {!playerAdmin_filteredCraftingRows.length && <tr><td colSpan={6}>{playerAdmin_craftingLoading ? "Loading recipes..." : "No crafting recipes found for this category."}</td></tr>}
@@ -1767,8 +2092,8 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
   );
   const playerAdmin_researchTable = (
     <div className="playerAdmin_tableWrap">
-      <table className="playerAdmin_table">
-        <thead><tr><th>Research</th><th>Item Key</th><th>Type</th><th>Product Group</th><th>Status</th><th>Action</th></tr></thead>
+      <table className="playerAdmin_table playerAdmin_compactTable playerAdmin_fullResultTable playerAdmin_schematicTable">
+        <thead><tr><th>Research</th><th>Item Key</th><th>Type</th><th>Product Group</th><th>Result</th><th>Action</th></tr></thead>
         <tbody>
           {playerAdmin_filteredResearchRows.map((row) => (
             <tr key={row.itemKey}>
@@ -1776,8 +2101,8 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
               <td><code>{row.itemKey}</code></td>
               <td>{row.type}</td>
               <td>{row.productGroup}</td>
-              <td>{row.unlockedState}</td>
-              <td className="playerAdmin_actionCell"><button disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockResearchItem(row)}>{row.unlocked ? "Unlocked" : "Unlock"}</button><InlineActionResult result={playerAdmin_actionResult} resultKey={`research:${row.itemKey}`} /></td>
+              <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={`research:${row.itemKey}`} /></td>
+              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockResearchItem(row)}>{row.unlocked ? "Researched" : "Research"}</button></td>
             </tr>
           ))}
           {!playerAdmin_filteredResearchRows.length && <tr><td colSpan={6}>{playerAdmin_researchLoading ? "Loading research..." : "No research entries found for this filter."}</td></tr>}
@@ -1785,32 +2110,55 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       </table>
     </div>
   );
-  const playerAdmin_journeyTable = (rows: JourneyRow[], emptyText: string) => (
+  const playerAdmin_journeyTable = (rows: JourneyRow[], emptyText: string) => {
+    const childrenByParent = new Map<string, JourneyRow[]>();
+    const rowKeys = new Set(rows.flatMap((row) => [row.id, row.rawName]).filter(Boolean));
+    for (const row of rows) {
+      const parentKey = row.parentId || row.dependency || "";
+      if (!parentKey || !rowKeys.has(parentKey)) continue;
+      childrenByParent.set(parentKey, [...(childrenByParent.get(parentKey) || []), row]);
+    }
+    const pushVisible = (row: JourneyRow, output: JourneyRow[]) => {
+      output.push(row);
+      const rowKey = row.id || row.rawName;
+      if (!playerAdmin_expandedJourney[`${row.category}:${rowKey}`]) return;
+      for (const child of childrenByParent.get(rowKey) || []) pushVisible(child, output);
+    };
+    const childIds = new Set(Array.from(childrenByParent.values()).flat().flatMap((row) => [row.id, row.rawName]).filter(Boolean));
+    const visibleRows: JourneyRow[] = [];
+    for (const row of rows) {
+      if (!childIds.has(row.id) && !childIds.has(row.rawName)) pushVisible(row, visibleRows);
+    }
+    return (
     <div className="playerAdmin_tableWrap">
-      <table className="playerAdmin_table">
-        <thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Depends On</th><th>Status</th><th>Tags</th><th>Action</th></tr></thead>
+      <table className="playerAdmin_table playerAdmin_compactTable playerAdmin_fullResultTable playerAdmin_journeyTable">
+        <thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Depends On</th><th>Status</th><th>Tags</th><th>Result</th><th>Action</th></tr></thead>
         <tbody>
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const key = `journey:${row.category}:${row.id}`;
+            const rowKey = row.id || row.rawName;
+            const hasChildren = Boolean(childrenByParent.get(rowKey)?.length);
+            const expanded = Boolean(playerAdmin_expandedJourney[`${row.category}:${rowKey}`]);
             return <tr key={`${row.category}-${row.id}`}>
-              <td className="playerAdmin_journeyName" style={{ paddingLeft: `${10 + row.depth * 18}px` }}>{row.name}</td>
+              <td className="playerAdmin_journeyName" style={{ paddingLeft: `${10 + row.depth * 18}px` }}>{hasChildren ? <button className="playerAdmin_expanderButton" type="button" onClick={() => playerAdmin_toggleJourney(`${row.category}:${rowKey}`)}>{expanded ? "-" : "+"}</button> : <span className="playerAdmin_expanderSpacer" />}{row.name}</td>
               <td>{row.category}</td>
-              <td><code>{row.rawName || row.id}</code></td>
-              <td>{row.dependency ? <code>{row.dependency}</code> : "Unknown"}</td>
+              <td className="playerAdmin_shortCode"><code title={row.rawName || row.id}>{row.rawName || row.id}</code></td>
+              <td className="playerAdmin_shortCode">{row.dependency ? <code title={row.dependency}>{row.dependency}</code> : "Unknown"}</td>
               <td>{row.status}{row.pendingReward ? " / Pending Reward" : ""}</td>
               <td>{row.category === "Tutorial" ? "-" : row.tags || 0}</td>
+              <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={key} /></td>
               <td className="playerAdmin_actionCell">
                 <button disabled={!dbPlayerId || row.complete || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_completeJourney(row)}>{row.complete ? "Complete" : "Complete"}</button>
                 <button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_resetJourney(row)}>Reset</button>
-                <InlineActionResult result={playerAdmin_actionResult} resultKey={key} />
               </td>
             </tr>;
           })}
-          {!rows.length && <tr><td colSpan={7}>{playerAdmin_journeyLoading ? "Loading journey data..." : emptyText}</td></tr>}
+          {!visibleRows.length && <tr><td colSpan={8}>{playerAdmin_journeyLoading ? "Loading journey data..." : emptyText}</td></tr>}
         </tbody>
       </table>
     </div>
-  );
+    );
+  };
   const playerAdmin_researchGroups: Record<string, string[]> = {
     "Water Discipline": ["Salvage Products", "Copper Products", "Iron Products", "Steel Products", "Aluminum Products", "Duraluminum Products", "Plastanium Products"],
     Combat: ["Salvage Products", "Copper Products", "Iron Products", "Steel Products", "Aluminum Products", "Duraluminum Products", "Plastanium Products"],
@@ -1845,45 +2193,153 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
       { tree: "The Blade", cards: [{ name: "Precise Parry", type: "Passive", rank: "3" }, { name: "Eye of the Storm", type: "Ability", rank: "3" }, { name: "Foil", type: "Ability", rank: "1" }, { name: "Long Blade Damage", type: "Passive", rank: "3" }, { name: "Dance of Blades", type: "Technique", rank: "3" }, { name: "Retaliate", type: "Ability", rank: "1" }, { name: "Blade Damage", type: "Passive", rank: "3" }] },
       { tree: "The Will", cards: [{ name: "Thrive on Danger", type: "Technique", rank: "1" }, { name: "Solid Stance", type: "Passive", rank: "3" }, { name: "Confidence", type: "Passive", rank: "3" }, { name: "Bleed Tolerance", type: "Passive", rank: "3" }, { name: "Reckless Lunge", type: "Technique", rank: "3" }, { name: "Deflection", type: "Ability", rank: "1" }] },
       { tree: "The Way", cards: [{ name: "Prescient Strike", type: "Passive", rank: "1" }, { name: "General Conditioning", type: "Passive", rank: "3" }, { name: "Desert Conditioning", type: "Passive", rank: "3" }, { name: "Crippling Strike", type: "Ability", rank: "1" }, { name: "Disciplined Breathing", type: "Technique", rank: "3" }, { name: "Inspiration", type: "Ability", rank: "3" }, { name: "Field Medicine", type: "Passive", rank: "3" }, { name: "Optimized Hydration", type: "Passive", rank: "3" }, { name: "Knee Charge", type: "Ability", rank: "3" }] }
-    ],
-    Specializations: ["Combat", "Crafting", "Exploration", "Gathering", "Sabotage"].map((playerAdmin_tree) => ({ tree: playerAdmin_tree, cards: [] }))
+    ]
   };
+
+  function playerAdmin_openSkillTreeToggles(school: string) {
+    const trees = playerAdmin_skillTrees[school] || [];
+    if (!trees.length) return;
+    playerAdmin_setOpenToggles((current) => {
+      const next = { ...current };
+      for (const tree of trees) next[`skill_${school}_${tree.tree}`] = true;
+      return next;
+    });
+  }
 
   return (
     <section className="playerAdmin_container" aria-label="Player admin layout">
-      <div className="playerAdmin_header"><span aria-hidden="true" /><button onClick={onClose}>Close</button></div>
+      <div className="playerAdmin_header"><p className="playerAdmin_experimentalNotice">Some features in this section are experimental. Please report anything that isn't working correctly or appears out of place.</p><button onClick={onClose}>Close</button></div>
       <PlayerSummary detail={detail} fallback={fallback} dbPlayerId={dbPlayerId} actionPlayerId={actionPlayerId} />
       <div className="playerAdmin_tabs" role="tablist" aria-label="Player admin tabs">{playerAdmin_tabs.map((playerAdmin_tab) => <button key={playerAdmin_tab} className={playerAdmin_activeTab === playerAdmin_tab ? "active" : ""} onClick={() => playerAdmin_setActiveTab(playerAdmin_tab)}>{playerAdmin_tab}</button>)}</div>
       {playerAdmin_activeTab === "Character" && <div className="playerAdmin_content">
-        <section className="playerAdmin_box"><h4>Grant Rewards</h4><div className="playerAdmin_section"><h5>Quick Rewards</h5>
-          {playerAdmin_actionRow("water", "Give Water", <input type="number" min="1" value={playerAdmin_waterAmount} onChange={(event) => playerAdmin_setWaterAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("water", `Giving ${Number(playerAdmin_waterAmount) || 10} cups of water to ${playerName}`, () => playerAdmin_runTask(() => playersApi.giveItemId(actionPlayerId, { itemId: "WaterPack_Consumable", quantity: Number(playerAdmin_waterAmount) || 10, durability: 1 })), `${playerName} received ${Number(playerAdmin_waterAmount) || 10} cups of water.`, { actionType: "Give Water", target: playerName, amount: String(Number(playerAdmin_waterAmount) || 10) }), !playerAdmin_canRunLiveAction, "Live Command. Player must be online.")}
-          {playerAdmin_actionRow("xp", "Give XP", <input type="number" min="1" value={playerAdmin_xpAmount} onChange={(event) => playerAdmin_setXpAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("xp", `Giving ${Number(playerAdmin_xpAmount) || 0} XP to ${playerName}`, () => playerAdmin_runTask(() => playersApi.addXp(actionPlayerId, Number(playerAdmin_xpAmount) || 0)), `${playerName} received ${Number(playerAdmin_xpAmount) || 0} XP.`, { actionType: "Give XP", target: playerName, amount: String(Number(playerAdmin_xpAmount) || 0) }), !playerAdmin_canRunLiveAction, "Live Command. Player must be online.")}
-          {playerAdmin_actionRow("currency", "Give Currency", <><select value={playerAdmin_currencyType} onChange={(event) => playerAdmin_setCurrencyType(event.target.value)}><option>Solari Credit</option><option>Scrip</option></select><input type="number" min="1" value={playerAdmin_currencyAmount} onChange={(event) => playerAdmin_setCurrencyAmount(event.target.value)} /></>, "Give", () => playerAdmin_runAction("currency", `Giving ${Number(playerAdmin_currencyAmount) || 0} ${playerAdmin_currencyType} to ${playerName}`, () => playersApi.addCurrency(dbPlayerId, { currencyId: playerAdmin_currencyType === "Scrip" ? 1 : 0, amount: Number(playerAdmin_currencyAmount) || 0, confirmation: "ADD CURRENCY" }), `${playerName}'s ${playerAdmin_currencyType} was updated. Relog required.`, { actionType: `Give ${playerAdmin_currencyType}`, target: playerName, amount: String(Number(playerAdmin_currencyAmount) || 0) }), !dbPlayerId, "Database Edit. Relog required.")}
-          {playerAdmin_actionRow("intel", "Give Intel", <input type="number" min="1" value={playerAdmin_intelAmount} onChange={(event) => playerAdmin_setIntelAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("intel", `Giving ${Number(playerAdmin_intelAmount) || 0} Intel to ${playerName}`, () => playersApi.addIntel(dbPlayerId, { amount: Number(playerAdmin_intelAmount) || 0, confirmation: "ADD INTEL" }), `${playerName}'s Intel was updated. Relog required.`, { actionType: "Give Intel", target: playerName, amount: String(Number(playerAdmin_intelAmount) || 0) }), !dbPlayerId, "Database Edit. Relog required.")}
-          {playerAdmin_actionRow("faction", "Give Faction Reputation", <><select value={playerAdmin_factionName} onChange={(event) => playerAdmin_setFactionName(event.target.value)}><option>Atreides</option><option>Harkonnen</option><option>Smuggler</option></select><input type="number" min="1" max="12474" value={playerAdmin_factionAmount} onChange={(event) => playerAdmin_setFactionAmount(event.target.value)} /></>, "Give", () => playerAdmin_runAction("faction", `Giving ${Number(playerAdmin_factionAmount) || 0} ${playerAdmin_factionName} reputation to ${playerName}`, () => playersApi.addFactionReputation(dbPlayerId, { factionId: playerAdmin_factionIds[playerAdmin_factionName] || 1, amount: Number(playerAdmin_factionAmount) || 0, confirmation: "ADD FACTION REPUTATION" }), `${playerName}'s faction reputation was updated. Relog required.`, { actionType: "Give Faction Reputation", target: playerAdmin_factionName, amount: String(Number(playerAdmin_factionAmount) || 0) }), !dbPlayerId, "Database Edit. Relog required.")}
-        </div><div className="playerAdmin_section"><h5>Give Items</h5><p>Search the item catalog, select the exact item, then add one or more entries before granting them to the player.</p><ItemCatalogSelector selected={playerAdmin_selectedItem} onSelect={playerAdmin_chooseItem} /><div className="playerAdmin_actionRow"><span>Selected Item</span><input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_quantity} onChange={(event) => playerAdmin_setQuantity(event.target.value)} /><input className="package-item-durability-input" type="number" min="0" value={playerAdmin_durability} onChange={(event) => playerAdmin_setDurability(event.target.value)} /><button disabled={!playerAdmin_selectedItem} onClick={playerAdmin_addSelectedItem}>Add Item</button><button disabled={!playerAdmin_multiList.length} onClick={() => playerAdmin_setMultiList([])}>Clear</button></div>
-          {playerAdmin_multiList.length ? <div className="table-wrap package-items-table playerAdmin_itemsTable"><table><thead><tr><th>Preview</th><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Durability</th><th>Actions</th></tr></thead><tbody>{playerAdmin_multiList.map((item, index) => <tr key={`${item.itemName || item.itemId}-${index}`}><td><PackageItemPreview item={item} /></td><td>{catalogItemName(item)}</td><td>{catalogItemId(item)}</td><td>{item.quantity}</td><td>{item.durability}</td><td className="package-actions-cell"><button className="danger" onClick={() => playerAdmin_setMultiList(playerAdmin_multiList.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></td></tr>)}</tbody></table></div> : <div className="empty playerAdmin_empty">No items queued yet.</div>}
-          <div className="playerAdmin_actionGroup"><div className="playerAdmin_actionRow"><span>Grant Items</span><button disabled={!playerAdmin_canRunLiveAction || (!playerAdmin_multiList.length && !playerAdmin_selectedItem) || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_giveMultipleItems()}>{playerAdmin_multiList.length > 1 ? "Give Multiple Items" : "Give Item"}</button><InlineActionResult result={playerAdmin_actionResult} resultKey="giveMultiple" /></div><p className="playerAdmin_actionNote">Live Command. Player must be online.</p></div></div></section>
-        {playerAdmin_toggleBox("character_inventory", "Inventory", <PlayerDetailTab playerId={dbPlayerId} tab="inventory" onError={onError} />)}
-        {playerAdmin_toggleBox("character_log", "Character Action Log", playerAdmin_actionLog.length ? playerAdmin_table(["Date / Time", "Admin", "Action Type", "Target", "Amount", "Notes"], playerAdmin_actionLog) : <p>No character actions have been recorded in this layout yet.</p>)}
+        <section className="playerAdmin_box"><h4>Quick Rewards</h4><div className="playerAdmin_section">
+          <div className="playerAdmin_quickButtonRow">
+              <button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_runAction("water", `Giving water to ${playerName}`, () => playerAdmin_runTask(() => playersApi.giveItemId(actionPlayerId, { itemId: "WaterPack_Consumable", quantity: 10, durability: 1 })), `${playerName} received water.`, { actionType: "Give Water", target: playerName, amount: "10" })}>Give Water</button>
+              <button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_runAction("refill", `Refilling ${playerName}'s container`, () => playerAdmin_runTask(() => playersApi.refillWater(actionPlayerId)), `${playerName}'s container was filled successfully.`, { actionType: "Refill Container", target: playerName, amount: "1" })}>Refill Container</button>
+              <div className="playerAdmin_quickButtonResult">
+                {playerAdmin_actionResult?.key === "refill"
+                  ? <InlineActionResult result={playerAdmin_actionResult} resultKey="refill" />
+                  : playerAdmin_actionResultOrNote("water", "The player must be online.")}
+              </div>
+          </div>
+          {playerAdmin_actionRow("xp", "Give XP", <input type="number" min="1" value={playerAdmin_xpAmount} onChange={(event) => playerAdmin_setXpAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("xp", `Giving ${Number(playerAdmin_xpAmount) || 0} XP to ${playerName}`, () => playerAdmin_runTask(() => playersApi.addXp(actionPlayerId, Number(playerAdmin_xpAmount) || 0)), `${playerName} received ${Number(playerAdmin_xpAmount) || 0} XP.`, { actionType: "Give XP", target: playerName, amount: String(Number(playerAdmin_xpAmount) || 0) }), !playerAdmin_canRunLiveAction, "The player must be online.")}
+          {playerAdmin_actionRow("currency", "Give Currency", <><select value={playerAdmin_currencyType} onChange={(event) => playerAdmin_setCurrencyType(event.target.value)}><option>Solari Credit</option><option>Scrip</option></select><input type="number" min="1" value={playerAdmin_currencyAmount} onChange={(event) => playerAdmin_setCurrencyAmount(event.target.value)} /></>, "Give", () => playerAdmin_runAction("currency", `Giving ${Number(playerAdmin_currencyAmount) || 0} ${playerAdmin_currencyType} to ${playerName}`, () => playersApi.addCurrency(dbPlayerId, { currencyId: playerAdmin_currencyType === "Scrip" ? 1 : 0, amount: Number(playerAdmin_currencyAmount) || 0, confirmation: "ADD CURRENCY" }), `${playerName}'s ${playerAdmin_currencyType} was updated. Relog required.`, { actionType: `Give ${playerAdmin_currencyType}`, target: playerName, amount: String(Number(playerAdmin_currencyAmount) || 0) }), !dbPlayerId, "A relog is required to see the change.")}
+          {playerAdmin_actionRow("intel", "Give Intel", <input type="number" min="1" value={playerAdmin_intelAmount} onChange={(event) => playerAdmin_setIntelAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("intel", `Giving ${Number(playerAdmin_intelAmount) || 0} Intel to ${playerName}`, () => playersApi.addIntel(dbPlayerId, { amount: Number(playerAdmin_intelAmount) || 0, confirmation: "ADD INTEL" }), `${playerName}'s Intel was updated. Relog required.`, { actionType: "Give Intel", target: playerName, amount: String(Number(playerAdmin_intelAmount) || 0) }), !dbPlayerId, "A relog is required to see the change.")}
+          {playerAdmin_actionRow("faction", "Give Faction Reputation", <><select value={playerAdmin_factionName} onChange={(event) => playerAdmin_setFactionName(event.target.value)}><option>Atreides</option><option>Harkonnen</option><option>Smuggler</option></select><input type="number" min="1" max="12474" value={playerAdmin_factionAmount} onChange={(event) => playerAdmin_setFactionAmount(event.target.value)} /></>, "Give", () => playerAdmin_runAction("faction", `Giving ${Number(playerAdmin_factionAmount) || 0} ${playerAdmin_factionName} reputation to ${playerName}`, () => playersApi.addFactionReputation(dbPlayerId, { factionId: playerAdmin_factionIds[playerAdmin_factionName] || 1, amount: Number(playerAdmin_factionAmount) || 0, confirmation: "ADD FACTION REPUTATION" }), `${playerName}'s faction reputation was updated. Relog required.`, { actionType: "Give Faction Reputation", target: playerAdmin_factionName, amount: String(Number(playerAdmin_factionAmount) || 0) }), !dbPlayerId, "A relog is required to see the change.")}
+        </div></section>
+        <div className={`playerAdmin_toggle ${playerAdmin_openToggles.give_items ? "open" : ""}`}><button className="playerAdmin_toggleHeader" onClick={() => playerAdmin_toggle("give_items")}>{playerAdmin_openToggles.give_items ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Give Items</span></button>{playerAdmin_openToggles.give_items && <div className="playerAdmin_toggleBody"><div className="playerAdmin_section"><p className="action-help-note">The player must be online.</p><ItemCatalogSelector selected={playerAdmin_selectedItem} onSelect={playerAdmin_chooseItem} /><div className="playerAdmin_itemActionStack"><div className="playerAdmin_itemInputLine"><span className="playerAdmin_actionLabel playerAdmin_itemSelectedLabel">Selected Item</span><label className="playerAdmin_itemNumberField">Quantity<input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_quantity} onChange={(event) => playerAdmin_setQuantity(event.target.value)} /></label><label className="playerAdmin_itemNumberField">Durability<input className="package-item-durability-input" type="number" min="0" value={playerAdmin_durability} onChange={(event) => playerAdmin_setDurability(event.target.value)} /></label><div className="playerAdmin_actionRow playerAdmin_itemActionRow"><button disabled={!playerAdmin_canRunLiveAction || (!playerAdmin_multiList.length && !playerAdmin_selectedItem) || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_giveMultipleItems()}>{playerAdmin_multiList.length ? "Give Package" : "Give Item"}</button><button disabled={!playerAdmin_selectedItem} onClick={playerAdmin_addSelectedItem}>Add Item</button><InlineActionResult result={playerAdmin_actionResult} resultKey="giveMultiple" /></div></div></div>
+          {playerAdmin_multiList.length ? <div className="table-wrap package-items-table playerAdmin_itemsTable"><table><thead><tr><th>Preview</th><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Durability</th><th>Actions</th></tr></thead><tbody>{playerAdmin_multiList.map((item, index) => {
+            const editing = playerAdmin_itemEditIndex === index;
+            return <tr key={`${item.itemName || item.itemId}-${index}`}><td><PackageItemPreview item={item} /></td><td>{catalogItemName(item)}</td><td>{catalogItemId(item)}</td><td>{editing ? <input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_itemEditDraft.quantity} onChange={(event) => playerAdmin_setItemEditDraft({ ...playerAdmin_itemEditDraft, quantity: event.target.value })} /> : item.quantity}</td><td>{editing ? <input className="package-item-durability-input" type="number" min="0" value={playerAdmin_itemEditDraft.durability} onChange={(event) => playerAdmin_setItemEditDraft({ ...playerAdmin_itemEditDraft, durability: event.target.value })} /> : item.durability}</td><td className="package-actions-cell"><div className="service-actions">{editing ? <><button onClick={() => playerAdmin_saveQueuedItem(index)}>Save</button><button onClick={() => playerAdmin_setItemEditIndex(null)}>Cancel</button></> : <button onClick={() => playerAdmin_editQueuedItem(index)}>Edit</button>}<button className="danger" onClick={() => playerAdmin_setMultiList(playerAdmin_multiList.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div></td></tr>;
+          })}</tbody></table></div> : null}
+        </div></div>}</div>
+        {playerAdmin_toggleBox("character_inventory", "Inventory", <PlayerDetailTab playerId={dbPlayerId} tab="inventory" onError={onError} onActionLog={(actionType, target, amount, notes) => playerAdmin_addLog(actionType, target, amount, notes)} />)}
+        {playerAdmin_toggleBox("character_log", "Character Action Log", <div className="playerAdmin_logSection">{playerAdmin_characterLog.length > 0 && <div className="action-row admin-history-actions"><button onClick={() => playerAdmin_setCharacterLog([])}>Clear</button></div>}{playerAdmin_characterLog.length ? playerAdmin_table(["Date / Time", "Admin", "Action Type", "Target", "Amount", "Notes"], playerAdmin_characterLog) : <p>No character actions have been recorded in this layout yet.</p>}</div>)}
       </div>}
-      {playerAdmin_activeTab === "Crafting" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Crafting Browser</h4><p>Database Edit. Player must be offline.</p><div className="playerAdmin_filterRow"><select value={playerAdmin_craftingCategory} onChange={(playerAdmin_event) => playerAdmin_setCraftingCategory(playerAdmin_event.target.value)}><option value="">All Categories</option>{playerAdmin_craftingCategories.map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select><button disabled={!dbPlayerId || playerAdmin_craftingLoading} onClick={() => playerAdmin_loadCraftingRecipes()}>{playerAdmin_craftingLoading ? "Loading..." : "Reload"}</button><span className="playerAdmin_note">{playerAdmin_filteredCraftingRows.length} recipe{playerAdmin_filteredCraftingRows.length === 1 ? "" : "s"}</span></div>{playerAdmin_craftingError ? <p className="playerAdmin_note danger">{playerAdmin_craftingError}</p> : playerAdmin_craftingTable}</section></div>}
-      {playerAdmin_activeTab === "Research" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Research Browser</h4><p>Database Edit. Player must be offline.</p><div className="playerAdmin_filterRow"><select value={playerAdmin_researchCategory} onChange={(playerAdmin_event) => { playerAdmin_setResearchCategory(playerAdmin_event.target.value); playerAdmin_setProductGroup(""); }}><option value="">All Categories</option>{Object.keys(playerAdmin_researchGroups).map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select>{playerAdmin_researchCategory && <select value={playerAdmin_productGroup} onChange={(playerAdmin_event) => playerAdmin_setProductGroup(playerAdmin_event.target.value)}><option value="">All Product Groups</option>{playerAdmin_researchGroups[playerAdmin_researchCategory].map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select>}<button disabled={!dbPlayerId || playerAdmin_researchLoading} onClick={() => playerAdmin_loadResearchItems()}>{playerAdmin_researchLoading ? "Loading..." : "Reload"}</button><span className="playerAdmin_note">{playerAdmin_filteredResearchRows.length} entr{playerAdmin_filteredResearchRows.length === 1 ? "y" : "ies"}</span></div>{playerAdmin_researchError ? <p className="playerAdmin_note danger">{playerAdmin_researchError}</p> : playerAdmin_researchTable}</section></div>}
-      {playerAdmin_activeTab === "Skills" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Skill Point Controls</h4>{playerAdmin_actionRow("skillPoints", "Set Skill Points", <input type="number" min="0" value={playerAdmin_skillPointsAmount} onChange={(event) => playerAdmin_setSkillPointsAmount(event.target.value)} />, "Set", () => playerAdmin_runAction("skillPoints", `Setting ${playerName}'s skill points to ${Number(playerAdmin_skillPointsAmount) || 0}`, () => playerAdmin_runTask(() => playersApi.setSkillPoints(actionPlayerId, Number(playerAdmin_skillPointsAmount) || 0)), `${playerName}'s skill points were updated.`, { actionType: "Set Skill Points", target: playerName, amount: String(Number(playerAdmin_skillPointsAmount) || 0) }), !playerAdmin_canRunLiveAction, "Live Command. Player must be online.")}</section><section className="playerAdmin_box"><h4>Skill Browser</h4><p>Live Command. Player must be online.</p><div className="playerAdmin_filterRow"><select value={playerAdmin_skillSchool} onChange={(playerAdmin_event) => playerAdmin_setSkillSchool(playerAdmin_event.target.value)}><option value="">Select Skill School</option>{Object.keys(playerAdmin_skillTrees).map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select><button disabled={playerAdmin_skillCatalogLoading} onClick={() => playerAdmin_loadSkillCatalog()}>{playerAdmin_skillCatalogLoading ? "Loading..." : "Reload Modules"}</button><span className="playerAdmin_note">{Object.keys(playerAdmin_skillChanges).length} unsaved change{Object.keys(playerAdmin_skillChanges).length === 1 ? "" : "s"}</span></div>{playerAdmin_skillCatalogError && <p className="playerAdmin_note danger">{playerAdmin_skillCatalogError}</p>}{playerAdmin_skillSchool && <div className="playerAdmin_section"><h5>{playerAdmin_skillSchool}</h5>{playerAdmin_skillTrees[playerAdmin_skillSchool].map((playerAdmin_tree) => playerAdmin_toggleBox(`skill_${playerAdmin_skillSchool}_${playerAdmin_tree.tree}`, playerAdmin_tree.tree, playerAdmin_tree.cards.length ? playerAdmin_skillCards(playerAdmin_skillSchool, playerAdmin_tree.cards) : <p>Leave empty for now.</p>))}{Object.keys(playerAdmin_skillChanges).length > 0 && <div className="playerAdmin_saveBar"><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_saveSkillChanges()}>Save</button><button disabled={playerAdmin_actionResult?.pending} onClick={() => playerAdmin_discardSkillChanges()}>Discard</button><InlineActionResult result={playerAdmin_actionResult} resultKey="skillSave" /></div>}</div>}</section></div>}
-      {playerAdmin_activeTab === "Journey" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Journey Browser</h4><p>Database Edit. Relog required.</p><div className="playerAdmin_filterRow"><button disabled={!dbPlayerId || playerAdmin_journeyLoading} onClick={() => playerAdmin_loadJourneyRows()}>{playerAdmin_journeyLoading ? "Loading..." : "Reload"}</button><span className="playerAdmin_note">{playerAdmin_journeyRows.story.length + playerAdmin_journeyRows.contract.length + playerAdmin_journeyRows.codex.length + playerAdmin_journeyRows.tutorial.length} journey entr{playerAdmin_journeyRows.story.length + playerAdmin_journeyRows.contract.length + playerAdmin_journeyRows.codex.length + playerAdmin_journeyRows.tutorial.length === 1 ? "y" : "ies"}</span></div>{playerAdmin_journeyError && <p className="playerAdmin_note danger">{playerAdmin_journeyError}</p>}{playerAdmin_toggleBox("journey_story", `Story (${playerAdmin_journeyRows.story.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.story, "No story entries were found."))}{playerAdmin_toggleBox("journey_contract", `Contracts (${playerAdmin_journeyRows.contract.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.contract, "No contract entries were found."))}{playerAdmin_toggleBox("journey_codex", `Codex (${playerAdmin_journeyRows.codex.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.codex, "No codex entries were found."))}{playerAdmin_toggleBox("journey_tutorial", `Tutorial (${playerAdmin_journeyRows.tutorial.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.tutorial, "No tutorial entries were found."))}</section></div>}
-      {playerAdmin_activeTab === "Admin" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Player Admin Actions</h4><p>These actions are sent to the running server and require the player to be online. Dangerous actions still require confirmation before running.</p><div className="playerAdmin_section"><h5>Danger Zone</h5><div className="playerAdmin_buttonRow"><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => {
-        if (!window.confirm(`Kick ${playerName} from the server?`)) return;
+      {playerAdmin_activeTab === "Crafting" && (
+        <div className="playerAdmin_content">
+          <section className="playerAdmin_box">
+            <h4>Crafting Schematics</h4>
+            <div className="playerAdmin_boxHeaderLine">
+              <p>The player must be offline.</p>
+              <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
+                <span className="playerAdmin_note">{playerAdmin_filteredCraftingRows.length} Schematic{playerAdmin_filteredCraftingRows.length === 1 ? "" : "s"} Detected</span>
+                <button disabled={!dbPlayerId || playerAdmin_craftingLoading} onClick={() => playerAdmin_loadCraftingRecipes()}>{playerAdmin_craftingLoading ? "Loading..." : "Reload"}</button>
+              </div>
+            </div>
+            <PlayerCategoryIconRail
+              options={playerAdmin_craftingCategories}
+              value={playerAdmin_craftingCategory}
+              onChange={playerAdmin_setCraftingCategory}
+              emptyLabel="Select Category"
+              includeAll={false}
+            />
+            {playerAdmin_craftingError ? <p className="playerAdmin_note danger">{playerAdmin_craftingError}</p> : playerAdmin_craftingTable}
+          </section>
+        </div>
+      )}
+      {playerAdmin_activeTab === "Research" && (
+        <div className="playerAdmin_content">
+          <section className="playerAdmin_box">
+            <h4>Research Schematics</h4>
+            <div className="playerAdmin_boxHeaderLine">
+              <p>The player must be offline.</p>
+              <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
+                <span className="playerAdmin_note">{playerAdmin_filteredResearchRows.length} Research Entr{playerAdmin_filteredResearchRows.length === 1 ? "y" : "ies"} Detected</span>
+                {playerAdmin_researchCategory && <select value={playerAdmin_productGroup} onChange={(playerAdmin_event) => playerAdmin_setProductGroup(playerAdmin_event.target.value)}><option value="">All Product Groups</option>{playerAdmin_researchGroups[playerAdmin_researchCategory].map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select>}
+                <button disabled={!dbPlayerId || playerAdmin_researchLoading} onClick={() => playerAdmin_loadResearchItems()}>{playerAdmin_researchLoading ? "Loading..." : "Reload"}</button>
+              </div>
+            </div>
+            <PlayerCategoryIconRail
+              options={Object.keys(playerAdmin_researchGroups)}
+              value={playerAdmin_researchCategory}
+              onChange={(nextCategory) => {
+                playerAdmin_setResearchCategory(nextCategory);
+                playerAdmin_setProductGroup("");
+              }}
+              allLabel="All Categories"
+            />
+            {playerAdmin_researchError ? <p className="playerAdmin_note danger">{playerAdmin_researchError}</p> : playerAdmin_researchTable}
+          </section>
+        </div>
+      )}
+      {playerAdmin_activeTab === "Skills" && (
+        <div className="playerAdmin_content">
+          <section className="playerAdmin_box">
+            <h4>Skill Point Controls</h4>
+            {playerAdmin_actionRow("skillPoints", "Set Skill Points", <input className="playerAdmin_skillPointsInput" type="number" min="0" value={playerAdmin_skillPointsAmount} onChange={(event) => playerAdmin_setSkillPointsAmount(event.target.value)} />, "Set", () => playerAdmin_runAction("skillPoints", `Setting ${playerName}'s skill points to ${Number(playerAdmin_skillPointsAmount) || 0}`, () => playerAdmin_runTask(() => playersApi.setSkillPoints(actionPlayerId, Number(playerAdmin_skillPointsAmount) || 0)), `${playerName}'s skill points were updated.`, { actionType: "Set Skill Points", target: playerName, amount: String(Number(playerAdmin_skillPointsAmount) || 0) }), !playerAdmin_canRunLiveAction, "The player must be online.")}
+          </section>
+          <section className="playerAdmin_box">
+            <h4>Skill Browser</h4>
+            <div className="playerAdmin_boxHeaderLine">
+              <p>The player must be offline.</p>
+              <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
+                <span className="playerAdmin_note">{Object.keys(playerAdmin_skillChanges).length} Unsaved Change{Object.keys(playerAdmin_skillChanges).length === 1 ? "" : "s"}</span>
+                <button disabled={playerAdmin_skillCatalogLoading} onClick={() => playerAdmin_loadSkillCatalog()}>{playerAdmin_skillCatalogLoading ? "Loading..." : "Reload"}</button>
+              </div>
+            </div>
+            <PlayerCategoryIconRail
+              options={Object.keys(playerAdmin_skillTrees)}
+              value={playerAdmin_skillSchool}
+              onChange={(school) => {
+                playerAdmin_setSkillSchool(school);
+                playerAdmin_openSkillTreeToggles(school);
+              }}
+              emptyLabel="Select Skill School"
+              includeAll={false}
+            />
+            {playerAdmin_skillCatalogError && <p className="playerAdmin_note danger">{playerAdmin_skillCatalogError}</p>}
+            {playerAdmin_skillSchool && <div className="playerAdmin_section"><h5>{playerAdmin_skillSchool}</h5>{playerAdmin_skillTrees[playerAdmin_skillSchool].map((playerAdmin_tree) => playerAdmin_toggleBox(`skill_${playerAdmin_skillSchool}_${playerAdmin_tree.tree}`, playerAdmin_tree.tree, playerAdmin_tree.cards.length ? playerAdmin_skillCards(playerAdmin_skillSchool, playerAdmin_tree.cards) : <p>Leave empty for now.</p>))}{Object.keys(playerAdmin_skillChanges).length > 0 && <div className="playerAdmin_saveBar"><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_saveSkillChanges()}>Save</button><button disabled={playerAdmin_actionResult?.pending} onClick={() => playerAdmin_discardSkillChanges()}>Discard</button><InlineActionResult result={playerAdmin_actionResult} resultKey="skillSave" /></div>}</div>}
+          </section>
+          {playerAdmin_toggleBox("skills_specializations", "Specializations", <div className="playerAdmin_section">
+            <div className="playerAdmin_boxHeaderLine">
+              <p>The player must be offline.</p>
+              <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
+                <button disabled={!dbPlayerId || playerAdmin_specializationLoading} onClick={() => playerAdmin_loadSpecializations()}>{playerAdmin_specializationLoading ? "Loading..." : "Reload"}</button>
+                <button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_grantAllKeystones()}>Grant All Keystones</button>
+                <button className="danger" disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_resetAllKeystones()}>Reset All Keystones</button>
+                <InlineActionResult result={playerAdmin_actionResult} resultKey="specKeystones" />
+              </div>
+            </div>
+            {playerAdmin_specializationError && <p className="playerAdmin_note danger">{playerAdmin_specializationError}</p>}
+            {playerAdmin_specializationTable}
+          </div>)}
+        </div>
+      )}
+      {playerAdmin_activeTab === "Journey" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Journey Browser</h4><div className="playerAdmin_boxHeaderLine"><p>A relog is required to see the change.</p><div className="playerAdmin_filterRow playerAdmin_filterRowRight playerAdmin_journeyReloadRow"><span className="playerAdmin_note">{playerAdmin_journeyEntryCount} Journey Entr{playerAdmin_journeyEntryCount === 1 ? "y" : "ies"} Detected</span></div></div>{playerAdmin_journeyError && <p className="playerAdmin_note danger">{playerAdmin_journeyError}</p>}{playerAdmin_toggleBox("journey_story", `Story (${playerAdmin_journeyRows.story.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.story, "No story entries were found."))}{playerAdmin_toggleBox("journey_contract", `Contracts (${playerAdmin_journeyRows.contract.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.contract, "No contract entries were found."))}{playerAdmin_toggleBox("journey_codex", `Codex (${playerAdmin_journeyRows.codex.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.codex, "No codex entries were found."))}{playerAdmin_toggleBox("journey_tutorial", `Tutorial (${playerAdmin_journeyRows.tutorial.length})`, playerAdmin_journeyTable(playerAdmin_journeyRows.tutorial, "No tutorial entries were found."))}</section></div>}
+      {playerAdmin_activeTab === "Admin" && <div className="playerAdmin_content"><section className="playerAdmin_box"><h4>Player Admin Actions</h4><p>These actions are sent to the running server and require the player to be online. Dangerous actions still require confirmation before running.</p><div className="playerAdmin_section"><h5>Danger Zone</h5><div className="playerAdmin_buttonRow"><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={async () => {
+        if (!(await confirmDialog(`Kick ${playerName} from the server?`))) return;
         void playerAdmin_runAction("adminKick", `Kicking ${playerName}`, () => playerAdmin_runTask(() => playersApi.kick(actionPlayerId)), `${playerName} was kicked from the server.`, { actionType: "Kick Player", target: playerName, amount: "1" }, "danger");
-      }}>Kick Player</button><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => {
-        if (!window.confirm(`Wipe ${playerName}'s inventory?`)) return;
+      }}>Kick Player</button><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={async () => {
+        if (!(await confirmDialog(`Wipe ${playerName}'s inventory?`))) return;
         void playerAdmin_runAction("adminWipe", `Wiping ${playerName}'s inventory`, () => playerAdmin_runTask(() => playersApi.cleanInventory(actionPlayerId, "CLEAN INVENTORY")), `${playerName}'s inventory was wiped.`, { actionType: "Wipe Inventory", target: playerName, amount: "1" }, "danger");
-      }}>Wipe Inventory</button><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => {
-        if (!window.confirm(`Reset ${playerName}'s progression?`)) return;
+      }}>Wipe Inventory</button><button className="danger" disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={async () => {
+        if (!(await confirmDialog(`Reset ${playerName}'s progression?`))) return;
         void playerAdmin_runAction("adminReset", `Resetting ${playerName}'s progression`, () => playerAdmin_runTask(() => playersApi.resetProgression(actionPlayerId, "RESET PROGRESSION")), `${playerName}'s progression was reset.`, { actionType: "Reset Progression", target: playerName, amount: "1" }, "danger");
-      }}>Reset Progression</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminKick" /><InlineActionResult result={playerAdmin_actionResult} resultKey="adminWipe" /><InlineActionResult result={playerAdmin_actionResult} resultKey="adminReset" /></div></div></section><section className="playerAdmin_box"><h4>Movement / Vehicles</h4><p>Live Command. Player must be online.</p><div className="playerAdmin_actionRow"><span>Coordinates</span><input value={playerAdmin_coords.x} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, x: event.target.value })} placeholder="X" /><input value={playerAdmin_coords.y} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, y: event.target.value })} placeholder="Y" /><input value={playerAdmin_coords.z} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, z: event.target.value })} placeholder="Z" /><input value={playerAdmin_coords.yaw} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, yaw: event.target.value })} placeholder="Yaw" /><button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_runAction("adminPosition", `Loading ${playerName}'s position`, playerAdmin_useCurrentPosition, "Position loaded. Edit X/Y/Z before teleporting if needed.", { actionType: "Load Position", target: playerName, amount: "1" })}>Use Current Position</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminPosition" /></div><div className="playerAdmin_actionRow"><span>Teleport</span><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => {
-        if (!window.confirm(`Teleport ${playerName} to X=${playerAdmin_coords.x} Y=${playerAdmin_coords.y} Z=${playerAdmin_coords.z}?`)) return;
+      }}>Reset Progression</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminKick" /><InlineActionResult result={playerAdmin_actionResult} resultKey="adminWipe" /><InlineActionResult result={playerAdmin_actionResult} resultKey="adminReset" /></div></div></section><section className="playerAdmin_box"><h4>Movement / Vehicles</h4><p>The player must be online.</p><div className="playerAdmin_actionRow playerAdmin_coordinatesRow"><span>Coordinates</span><input value={playerAdmin_coords.x} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, x: event.target.value })} placeholder="X" /><input value={playerAdmin_coords.y} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, y: event.target.value })} placeholder="Y" /><input value={playerAdmin_coords.z} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, z: event.target.value })} placeholder="Z" /><input value={playerAdmin_coords.yaw} onChange={(event) => playerAdmin_setCoords({ ...playerAdmin_coords, yaw: event.target.value })} placeholder="Yaw" /><button disabled={!dbPlayerId || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_runAction("adminPosition", `Loading ${playerName}'s position`, playerAdmin_useCurrentPosition, "Position loaded. Edit X/Y/Z before teleporting if needed.", { actionType: "Load Position", target: playerName, amount: "1" })}>Use Current Position</button><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={async () => {
+        if (!(await confirmDialog(`Teleport ${playerName} to X=${playerAdmin_coords.x} Y=${playerAdmin_coords.y} Z=${playerAdmin_coords.z}?`))) return;
         void playerAdmin_runAction("adminTeleport", `Teleporting ${playerName}`, () => playerAdmin_runTask(() => playersApi.teleport(actionPlayerId, { x: Number(playerAdmin_coords.x), y: Number(playerAdmin_coords.y), z: Number(playerAdmin_coords.z), yaw: Number(playerAdmin_coords.yaw) })), `${playerName} was teleported.`, { actionType: "Teleport", target: playerName, amount: "1" });
-      }}>Teleport</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminTeleport" /></div><div className="playerAdmin_actionRow"><span>Vehicle</span><select value={playerAdmin_vehicleId} onChange={(event) => { const nextVehicle = event.target.value; playerAdmin_setVehicleId(nextVehicle); playerAdmin_setVehicleTemplate([...(playerAdmin_vehicleCatalog[nextVehicle] || [])].sort((a, b) => friendlyVehicleTemplateName(a).localeCompare(friendlyVehicleTemplateName(b)))[0] || ""); }}>{playerAdmin_vehicleIds.length === 0 && <option value="">Manual Vehicle ID</option>}{playerAdmin_vehicleIds.map((id) => <option key={id} value={id}>{friendlyVehicleName(id)}</option>)}</select><select value={playerAdmin_vehicleTemplate} onChange={(event) => playerAdmin_setVehicleTemplate(event.target.value)}>{playerAdmin_selectedTemplates.length === 0 && <option value="">Manual Template</option>}{playerAdmin_selectedTemplates.map((template) => <option key={template} value={template}>{friendlyVehicleTemplateName(template)}</option>)}</select><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={() => {
+      }}>Teleport</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminPosition" /><InlineActionResult result={playerAdmin_actionResult} resultKey="adminTeleport" /></div><div className="playerAdmin_actionRow playerAdmin_spawnVehicleRow"><span>Spawn Vehicle</span><select value={playerAdmin_vehicleId} onChange={(event) => { const nextVehicle = event.target.value; playerAdmin_setVehicleId(nextVehicle); playerAdmin_setVehicleTemplate([...(playerAdmin_vehicleCatalog[nextVehicle] || [])].sort((a, b) => friendlyVehicleTemplateName(a).localeCompare(friendlyVehicleTemplateName(b)))[0] || ""); }}>{playerAdmin_vehicleIds.length === 0 && <option value="">Manual Vehicle ID</option>}{playerAdmin_vehicleIds.map((id) => <option key={id} value={id}>{friendlyVehicleName(id)}</option>)}</select><select value={playerAdmin_vehicleTemplate} onChange={(event) => playerAdmin_setVehicleTemplate(event.target.value)}>{playerAdmin_selectedTemplates.length === 0 && <option value="">Manual Template</option>}{playerAdmin_selectedTemplates.map((template) => <option key={template} value={template}>{friendlyVehicleTemplateName(template)}</option>)}</select><button disabled={!playerAdmin_canRunLiveAction || playerAdmin_actionResult?.pending} onClick={async () => {
         const knownTemplates = Object.values(playerAdmin_vehicleCatalog).flat();
         if (knownTemplates.includes(playerAdmin_vehicleId) && !playerAdmin_vehicleCatalog[playerAdmin_vehicleId]) {
           playerAdmin_showResult("adminVehicle", `${playerAdmin_vehicleId} is a vehicle template, not a vehicle ID.`, "danger");
@@ -1891,9 +2347,9 @@ function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId, player
         }
         const vehicleLabel = friendlyVehicleName(playerAdmin_vehicleId);
         const templateLabel = friendlyVehicleTemplateName(playerAdmin_vehicleTemplate);
-        if (!window.confirm(`Spawn ${vehicleLabel} / ${templateLabel} in front of ${playerName}?`)) return;
-        void playerAdmin_runAction("adminVehicle", `Spawning ${vehicleLabel} for ${playerName}`, () => playerAdmin_runTask(() => playersApi.spawnVehicle(actionPlayerId, { vehicleId: playerAdmin_vehicleId, template: playerAdmin_vehicleTemplate, offset: 400 })), `${vehicleLabel} (${templateLabel}) was spawned for ${playerName}.`, { actionType: "Spawn Vehicle", target: playerName, amount: vehicleLabel });
-      }}>Spawn Vehicle</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminVehicle" /></div><details className="technical-details"><summary>Advanced manual override</summary><div className="actions-grid"><label>Manual Vehicle ID<input value={playerAdmin_vehicleId} onChange={(event) => playerAdmin_setVehicleId(event.target.value)} placeholder="Sandbike" /></label><label>Manual Template<input value={playerAdmin_vehicleTemplate} onChange={(event) => playerAdmin_setVehicleTemplate(event.target.value)} placeholder="T1_ExtraSeat" /></label></div></details></section>{playerAdmin_toggleBox("admin_log", "Admin Action Log", playerAdmin_actionLog.length ? playerAdmin_table(["Date / Time", "Admin", "Action Type", "Target", "Amount", "Notes"], playerAdmin_actionLog) : <p>No admin actions have been recorded in this layout yet.</p>)}</div>}
+        if (!(await confirmDialog(`Spawn ${vehicleLabel} / ${templateLabel} in front of ${playerName}?`))) return;
+        void playerAdmin_runAction("adminVehicle", `Spawning ${vehicleLabel} for ${playerName}`, () => playerAdmin_runTask(() => playersApi.spawnVehicle(actionPlayerId, { vehicleId: playerAdmin_vehicleId, template: playerAdmin_vehicleTemplate, offset: 1000 })), `${vehicleLabel} (${templateLabel}) was spawned for ${playerName}.`, { actionType: "Spawn Vehicle", target: playerName, amount: vehicleLabel });
+      }}>Spawn</button><InlineActionResult result={playerAdmin_actionResult} resultKey="adminVehicle" /></div><details className="technical-details"><summary>Advanced manual override</summary><div className="actions-grid"><label>Manual Vehicle ID<input value={playerAdmin_vehicleId} onChange={(event) => playerAdmin_setVehicleId(event.target.value)} placeholder="Sandbike" /></label><label>Manual Template<input value={playerAdmin_vehicleTemplate} onChange={(event) => playerAdmin_setVehicleTemplate(event.target.value)} placeholder="T1_ExtraSeat" /></label></div></details></section>{playerAdmin_toggleBox("admin_log", "Admin Action Log", <div className="playerAdmin_logSection">{playerAdmin_adminLog.length > 0 && <div className="action-row admin-history-actions"><button onClick={() => playerAdmin_setAdminLog([])}>Clear</button></div>}{playerAdmin_adminLog.length ? playerAdmin_table(["Date / Time", "Admin", "Action Type", "Target", "Amount", "Notes"], playerAdmin_adminLog) : <p>No admin actions have been recorded in this layout yet.</p>}</div>)}</div>}
     </section>
   );
 }
@@ -1926,11 +2382,16 @@ function PlayersPanel({ setTask, onError }: { setTask: (task: Task) => void; onE
   }, []);
   const dbPlayerId = selected ? String(selected.actor_id || selected.player_pawn_id || selected.id || "") : "";
   const actionPlayerId = selected ? String(selected.action_player_id || selected.funcom_id || selected.fls_id || selected.account_id || "") : "";
+  const playersEmptyMessage = playerFilter === "online"
+    ? "No players are currently online."
+    : playerFilter === "offline"
+      ? "No offline players were found."
+      : "No players have been found yet.";
   return (
     <section className="panel">
-      <div className="panel-title"><h2>Players</h2><div className="action-row"><button onClick={() => load(playerFilter)}>Refresh Players</button><label className="inline-filter-label">Filter <select value={playerFilter} onChange={(event) => { const nextFilter = event.target.value as "all" | "online" | "offline"; setPlayerFilter(nextFilter); load(nextFilter); }}><option value="all">All Players</option><option value="online">Online</option><option value="offline">Offline</option></select></label></div></div>
+      <div className="panel-title"><h2>Players</h2><div className="action-row players-filter-row"><label className="inline-filter-label players-filter-label">Filter <select className="players-filter-select" value={playerFilter} onChange={(event) => { const nextFilter = event.target.value as "all" | "online" | "offline"; setPlayerFilter(nextFilter); load(nextFilter); }}><option value="all">All Players</option><option value="online">Online</option><option value="offline">Offline</option></select></label><button onClick={() => load(playerFilter)}>Refresh</button></div></div>
       <div className="action-row"><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search character, FLS ID, account id, or actor id" /><button onClick={() => load(playerFilter)}>Search</button></div>
-      <DataTable rows={rows} columns={["actor_id", "character_name", "account_id", "action_player_id", "online_status", "map", "fls_id"]} onRowClick={open} />
+      <DataTable rows={rows} columns={["actor_id", "character_name", "account_id", "action_player_id", "online_status", "map", "fls_id"]} tableClassName="players-table" onRowClick={open} emptyMessage={playersEmptyMessage} renderCell={(row, col) => col === "online_status" ? <PlayerStatusCell value={row[col]} /> : formatCell(row[col])} />
       {selected && <CharacterAdminUI detail={detail} fallback={selected} dbPlayerId={dbPlayerId} actionPlayerId={actionPlayerId} playerName={String(selected.character_name || actionPlayerId || dbPlayerId || "Selected player")} setTask={setTask} onError={onError} onRefresh={() => open(selected)} onClose={() => setSelected(null)} />}
     </section>
   );
@@ -2045,13 +2506,13 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
     <div className="action-sections">
       <section className="action-section">
         <h4>Give Items</h4>
-        <p>Live Command. Player must be online.</p>
+        <p>The player must be online.</p>
         <ItemCatalogSelector selected={selectedItem} onSelect={choosePlayerItem} />
         <div className="action-line item-grant-row">
           <label className="compact-field">Quantity<input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
           <label className="compact-field">Durability<input type="number" min="0" value={durability} onChange={(event) => setDurability(event.target.value)} /></label>
           <button disabled={!canRunCliAction || !selectedItem || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : !selectedItem ? "Select an item from the catalog first." : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Give ${quantity} x ${itemName} to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Give ${quantity} x ${itemName} to ${playerName}?`))) return;
             await runPlayerAction("giveItem", `Giving x${Number(quantity) || 1} ${itemName} to ${playerName}`, () => runTask(() => playersApi.giveItem(actionPlayerId, { itemName, quantity: Number(quantity), durability: Number(durability) })), `x${Number(quantity) || 1} ${itemName} was granted to ${playerName}.`, "success", (error) => `Failed to grant x${Number(quantity) || 1} ${itemName} to ${playerName}. ${friendlyInlineError(error)}`);
           })}>Give Item</button>
           <InlineActionResult result={actionResult} resultKey="giveItem" />
@@ -2059,7 +2520,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
         <details className="technical-details"><summary>Developer manual item ID</summary><div className="actions-grid">
           <label>Raw Item ID<input value={itemId} onChange={(event) => setItemId(event.target.value)} /></label>
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Give raw item id ${itemId} to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Give raw item id ${itemId} to ${playerName}?`))) return;
             await runPlayerAction("giveItemId", `Giving x${Number(quantity) || 1} ${itemId} to ${playerName}`, () => runTask(() => playersApi.giveItemId(actionPlayerId, { itemId, quantity: Number(quantity), durability: 1 })), `x${Number(quantity) || 1} ${itemId} was granted to ${playerName}.`, "success", (error) => `Failed to grant x${Number(quantity) || 1} ${itemId} to ${playerName}. ${friendlyInlineError(error)}`);
           })}>Give Item by ID</button>
           <InlineActionResult result={actionResult} resultKey="giveItemId" />
@@ -2074,7 +2535,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
         <div className="action-line">
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
             const items = parsedMultiItems();
-            if (!window.confirm(`Give ${items.length} item entries to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Give ${items.length} item entries to ${playerName}?`))) return;
             await runPlayerAction("giveMultiple", `Giving ${items.length} item entries to ${playerName}`, () => runDirect(() => playersApi.giveItems(actionPlayerId, items)), `${items.length} item entr${items.length === 1 ? "y was" : "ies were"} granted to ${playerName}.`, "success", (error) => `Failed to grant items to ${playerName}. ${friendlyInlineError(error)}`);
           })}>Give Multiple Items</button>
           <InlineActionResult result={actionResult} resultKey="giveMultiple" />
@@ -2083,11 +2544,11 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
 
       <section className="action-section">
         <h4>XP / Skills</h4>
-        <p>Live Command. Player must be online.</p>
+        <p>The player must be online.</p>
         <div className="action-line">
           <label>XP Amount<input value={xp} onChange={(event) => setXp(event.target.value)} /></label>
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Add ${xp} XP to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Add ${xp} XP to ${playerName}?`))) return;
             await runPlayerAction("xp", `Adding ${Number(xp) || 0} XP to ${playerName}`, () => runTask(() => playersApi.addXp(actionPlayerId, Number(xp))), `${playerName} received ${Number(xp) || 0} XP.`, "success", (error) => `Failed to add ${Number(xp) || 0} XP to ${playerName}. ${friendlyInlineError(error)}`);
           })}>Add XP</button>
           <InlineActionResult result={actionResult} resultKey="xp" />
@@ -2095,7 +2556,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
         <div className="action-line">
           <label>Skill Points<input value={points} onChange={(event) => setPoints(event.target.value)} /></label>
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Set ${playerName} to ${points} unspent skill points?`)) return;
+            if (!(await confirmDialog(`Set ${playerName} to ${points} unspent skill points?`))) return;
             await runPlayerAction("skillPoints", `Setting ${playerName}'s skill points to ${Number(points) || 0}`, () => runTask(() => playersApi.setSkillPoints(actionPlayerId, Number(points))), `${playerName}'s skill points were updated.`, "success", (error) => `Failed to update ${playerName}'s skill points. ${friendlyInlineError(error)}`);
           })}>Set Skill Points</button>
           <InlineActionResult result={actionResult} resultKey="skillPoints" />
@@ -2104,7 +2565,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
           <label>Skill Module<input value={module} onChange={(event) => setModule(event.target.value)} /></label>
           <label>Level<input value={level} onChange={(event) => setLevel(event.target.value)} /></label>
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Set ${module} to level ${level} for ${playerName}?`)) return;
+            if (!(await confirmDialog(`Set ${module} to level ${level} for ${playerName}?`))) return;
             await runPlayerAction("skillModule", `Setting ${module} to level ${Number(level) || 0} for ${playerName}`, () => runTask(() => playersApi.setSkillModule(actionPlayerId, { module, level: Number(level) })), `${playerName}'s ${module} module was updated.`, "success", (error) => `Failed to update ${playerName}'s ${module} module. ${friendlyInlineError(error)}`);
           })}>Set Skill Module</button>
           <InlineActionResult result={actionResult} resultKey="skillModule" />
@@ -2116,7 +2577,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
         <p>Give Water uses the live admin CLI and was verified in-game.</p>
         <div className="action-line">
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Give water to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Give water to ${playerName}?`))) return;
             await runPlayerAction("water", `Giving water to ${playerName}`, () => runTask(() => playersApi.refillWater(actionPlayerId)), `${playerName}'s water was filled successfully.`, "success", (error) => `Failed to give water to ${playerName}. ${friendlyInlineError(error)}`);
           })}>Give Water</button>
           <InlineActionResult result={actionResult} resultKey="water" />
@@ -2125,7 +2586,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
 
       <section className="action-section">
         <h4>Movement / Vehicles</h4>
-        <p>Live Command. Player must be online.</p>
+        <p>The player must be online.</p>
         <div className="action-line">
           <label>X<input value={coords.x} onChange={(event) => setCoords({ ...coords, x: event.target.value })} /></label>
           <label>Y<input value={coords.y} onChange={(event) => setCoords({ ...coords, y: event.target.value })} /></label>
@@ -2136,7 +2597,7 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
           })}>Use Current Position</button>
           <InlineActionResult result={actionResult} resultKey="position" />
           <button disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Teleport ${playerName} to X=${coords.x} Y=${coords.y} Z=${coords.z}?`)) return;
+            if (!(await confirmDialog(`Teleport ${playerName} to X=${coords.x} Y=${coords.y} Z=${coords.z}?`))) return;
             await runPlayerAction("teleport", `Teleporting ${playerName}`, () => runTask(() => playersApi.teleport(actionPlayerId, { x: Number(coords.x), y: Number(coords.y), z: Number(coords.z), yaw: Number(coords.yaw) })), `${playerName} was teleported.`, "success", (error) => `Failed to teleport ${playerName}. ${friendlyInlineError(error)}`);
           })}>Teleport</button>
           <InlineActionResult result={actionResult} resultKey="teleport" />
@@ -2155,8 +2616,8 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
             if (knownTemplates.includes(vehicleId) && !vehicleCatalog[vehicleId]) throw new Error(`${vehicleId} is a vehicle template, not a vehicle ID. Choose a vehicle such as Sandbike, then choose ${vehicleId} as the template.`);
             const vehicleLabel = friendlyVehicleName(vehicleId);
             const templateLabel = friendlyVehicleTemplateName(vehicleTemplate);
-            if (!window.confirm(`Spawn ${vehicleLabel} / ${templateLabel} in front of ${playerName}?`)) return;
-            await runPlayerAction("vehicle", `Spawning ${vehicleLabel} for ${playerName}`, () => runTask(() => playersApi.spawnVehicle(actionPlayerId, { vehicleId, template: vehicleTemplate, offset: 400 })), `${vehicleLabel} (${templateLabel}) was spawned for ${playerName}.`, "success", (error) => `Failed to spawn ${vehicleLabel} for ${playerName}. ${friendlyInlineError(error)}`);
+            if (!(await confirmDialog(`Spawn ${vehicleLabel} / ${templateLabel} in front of ${playerName}?`))) return;
+            await runPlayerAction("vehicle", `Spawning ${vehicleLabel} for ${playerName}`, () => runTask(() => playersApi.spawnVehicle(actionPlayerId, { vehicleId, template: vehicleTemplate, offset: 1000 })), `${vehicleLabel} (${templateLabel}) was spawned for ${playerName}.`, "success", (error) => `Failed to spawn ${vehicleLabel} for ${playerName}. ${friendlyInlineError(error)}`);
           })}>Spawn Vehicle</button>
           <InlineActionResult result={actionResult} resultKey="vehicle" />
         </div>
@@ -2171,65 +2632,65 @@ function PlayerActions({ dbPlayerId, actionPlayerId, playerName, setTask, onErro
 
       <section className="action-section">
         <h4>Currency / Factions</h4>
-        <p>Database Edit. Relog required.</p>
+        <p>A relog is required to see the change.</p>
         <div className="action-line">
           <label>Currency ID<input value={currency.currencyId} onChange={(event) => setCurrency({ ...currency, currencyId: event.target.value })} /></label>
           <label>Currency Amount<input value={currency.amount} onChange={(event) => setCurrency({ ...currency, amount: event.target.value })} /></label>
           <button disabled={actionResult?.pending} onClick={() => run(async () => {
-            if (!window.confirm(`Add ${currency.amount} currency ${currency.currencyId || "Solari Credit"} to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Add ${currency.amount} currency ${currency.currencyId || "Solari Credit"} to ${playerName}?`))) return;
             await runPlayerAction("currency", `Adding currency to ${playerName}`, () => runDirect(() => playersApi.addCurrency(dbPlayerId, { currencyId: Number(currency.currencyId || 0), amount: Number(currency.amount), confirmation: "ADD CURRENCY" })), `${playerName}'s Solari Credit was updated. Relog required.`, "success", (error) => `Failed to update ${playerName}'s currency. ${friendlyInlineError(error)}`);
           })}>Add Currency</button>
           <InlineActionResult result={actionResult} resultKey="currency" />
         </div>
-        <p className="action-help-note">Database Edit. Relog required.</p>
+        <p className="action-help-note">A relog is required to see the change.</p>
         <div className="action-line">
           <label>Faction ID<input value={faction.factionId} onChange={(event) => setFaction({ ...faction, factionId: event.target.value })} /></label>
           <label>Reputation Amount<input value={faction.amount} onChange={(event) => setFaction({ ...faction, amount: event.target.value })} /></label>
           <button disabled={actionResult?.pending} onClick={() => run(async () => {
-            if (!window.confirm(`Add ${faction.amount} reputation for faction ${faction.factionId} to ${playerName}?`)) return;
+            if (!(await confirmDialog(`Add ${faction.amount} reputation for faction ${faction.factionId} to ${playerName}?`))) return;
             await runPlayerAction("faction", `Adding faction reputation to ${playerName}`, () => runDirect(() => playersApi.addFactionReputation(dbPlayerId, { factionId: Number(faction.factionId), amount: Number(faction.amount), confirmation: "ADD FACTION REPUTATION" })), `${playerName}'s faction reputation was updated. Relog required.`, "success", (error) => `Failed to update ${playerName}'s faction reputation. ${friendlyInlineError(error)}`);
           })}>Add Faction Reputation</button>
           <InlineActionResult result={actionResult} resultKey="faction" />
         </div>
-        <p className="action-help-note">Database Edit. Relog required.</p>
+        <p className="action-help-note">A relog is required to see the change.</p>
       </section>
 
       <section className="action-section">
         <h4>Repair / Refuel</h4>
-        <p>Database Edit. Player must be offline.</p>
+        <p>The player must be offline.</p>
         <div className="action-line">
           <button disabled={actionResult?.pending} onClick={() => run(async () => {
-            if (!window.confirm(`Repair gear for ${playerName}?`)) return;
+            if (!(await confirmDialog(`Repair gear for ${playerName}?`))) return;
             await runPlayerAction("repair", `Repairing ${playerName}'s gear`, () => runDirect(() => playersApi.repairGear(dbPlayerId, "REPAIR GEAR")), `${playerName}'s gear was repaired.`, "success", (error) => `Failed to repair ${playerName}'s gear. ${friendlyInlineError(error)}`);
           })}>Repair Gear</button>
           <InlineActionResult result={actionResult} resultKey="repair" />
         </div>
-        <p className="action-help-note">Database Edit. Player must be offline.</p>
+        <p className="action-help-note">The player must be offline.</p>
         <div className="action-line">
           <label>Refuel Vehicle Actor ID<input value={refuelVehicleId} onChange={(event) => setRefuelVehicleId(event.target.value)} /></label>
           <button disabled={actionResult?.pending} onClick={() => run(async () => {
-            if (!window.confirm(`Refuel vehicle ${refuelVehicleId} owned by ${playerName}?`)) return;
+            if (!(await confirmDialog(`Refuel vehicle ${refuelVehicleId} owned by ${playerName}?`))) return;
             await runPlayerAction("refuel", `Refueling vehicle ${refuelVehicleId}`, () => runDirect(() => playersApi.refuelVehicle(dbPlayerId, { vehicleId: refuelVehicleId, confirmation: "REFUEL VEHICLE" })), `Vehicle ${refuelVehicleId} was refueled.`, "success", (error) => `Failed to refuel vehicle ${refuelVehicleId}. ${friendlyInlineError(error)}`);
           })}>Refuel Vehicle</button>
           <InlineActionResult result={actionResult} resultKey="refuel" />
         </div>
-        <p className="action-help-note">Database Edit. Player must be offline. Map/server reload may be required.</p>
+        <p className="action-help-note">The player must be offline. A map or server reload may be required.</p>
       </section>
 
       <section className="action-section danger-section">
         <h4>Dangerous Actions</h4>
-        <p>Live Command. Player must be online.</p>
+        <p>The player must be online.</p>
         <div className="action-row">
           <button className="danger" disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Kick ${playerName}?`)) return;
+            if (!(await confirmDialog(`Kick ${playerName}?`))) return;
             await runPlayerAction("danger", `Kicking ${playerName}`, () => runTask(() => playersApi.kick(actionPlayerId)), `${playerName} was kicked from the server.`, "danger", (error) => `Failed to kick ${playerName}. ${friendlyInlineError(error)}`);
           })}>Kick Player</button>
           <button className="danger" disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Clean inventory for ${playerName}? This removes carried items.`)) return;
+            if (!(await confirmDialog(`Clean inventory for ${playerName}? This removes carried items.`))) return;
             await runPlayerAction("danger", `Cleaning ${playerName}'s inventory`, () => runTask(() => playersApi.cleanInventory(actionPlayerId, "CLEAN INVENTORY")), `${playerName}'s inventory was cleaned.`, "danger", (error) => `Failed to clean ${playerName}'s inventory. ${friendlyInlineError(error)}`);
           })}>Clean Inventory</button>
           <button className="danger" disabled={!canRunCliAction || actionResult?.pending} title={!canRunCliAction ? cliDisabledReason : undefined} onClick={() => run(async () => {
-            if (!window.confirm(`Reset progression for ${playerName}?`)) return;
+            if (!(await confirmDialog(`Reset progression for ${playerName}?`))) return;
             await runPlayerAction("danger", `Resetting ${playerName}'s progression`, () => runTask(() => playersApi.resetProgression(actionPlayerId, "RESET PROGRESSION")), `${playerName}'s progression was reset.`, "danger", (error) => `Failed to reset ${playerName}'s progression. ${friendlyInlineError(error)}`);
           })}>Reset Progression</button>
           <InlineActionResult result={actionResult} resultKey="danger" />
@@ -2500,7 +2961,7 @@ function GameUpdateProgress({ task, repairTask, onRetry, onFixSteamcmd }: { task
   const repairable = task.status === "failed" && isSteamcmdManifestFailure(task);
   return <div className={`result-panel game-update-progress result-${task.status === "succeeded" ? "ok" : task.status === "failed" ? "fail" : "running"}`} aria-live="polite">
     <div className="panel-title">
-      <h4 className={running ? "loading-dots" : ""}>{progress.title}</h4>
+      <h4 className={running ? "loading-dots" : ""}>{formatResultTitle(progress.title, running)}</h4>
       <StatusPill value={task.status === "failed" ? "Failed" : task.status === "succeeded" ? "Succeeded" : "Running"} />
     </div>
     <div className="progress-row">
@@ -2509,9 +2970,9 @@ function GameUpdateProgress({ task, repairTask, onRetry, onFixSteamcmd }: { task
       </div>
       <strong>{progress.percent}%</strong>
     </div>
-    <p>{progress.message}</p>
-    {repairRunning && <p className="muted">Fixing SteamCMD...</p>}
-    {repairSucceeded && <p className="muted">SteamCMD manifest reset. Retry the game update when ready.</p>}
+    <p>{formatResultMessage(progress.message)}</p>
+    {repairRunning && <p className="muted loading-dots">{formatUiSentence("Fixing SteamCMD", true)}</p>}
+    {repairSucceeded && <p className="muted">{formatResultMessage("SteamCMD manifest reset. Retry the game update when ready.")}</p>}
     {task.status === "failed" && <div className="action-line">
       {repairable && <button disabled={repairRunning} onClick={onFixSteamcmd}>Fix SteamCMD</button>}
       <button disabled={repairRunning} onClick={onRetry}>Retry Game Update</button>
@@ -2658,7 +3119,7 @@ function StackUpdateProgress({ task, onRetry }: { task: Task; onRetry: () => Pro
   const running = !isTerminalTask(task.status);
   return <div className={`result-panel stack-update-progress result-${task.status === "succeeded" ? "ok" : task.status === "failed" ? "fail" : "running"}`} aria-live="polite">
     <div className="panel-title">
-      <h4 className={running ? "loading-dots" : ""}>{progress.title}</h4>
+      <h4 className={running ? "loading-dots" : ""}>{formatResultTitle(progress.title, running)}</h4>
       <StatusPill value={task.status === "failed" ? "Failed" : task.status === "succeeded" ? "Succeeded" : "Running"} />
     </div>
     <div className="progress-row">
@@ -2667,7 +3128,7 @@ function StackUpdateProgress({ task, onRetry }: { task: Task; onRetry: () => Pro
       </div>
       <strong>{progress.percent}%</strong>
     </div>
-    <p>{progress.message}</p>
+    <p>{formatResultMessage(progress.message)}</p>
     {task.status === "failed" && <div className="action-line"><button onClick={onRetry}>Retry Stack Update</button></div>}
   </div>;
 }
@@ -2813,7 +3274,7 @@ function firstVersionMatch(text: string, patterns: RegExp[]) {
   return "";
 }
 
-function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: string; onError: (text: string) => void }) {
+function PlayerDetailTab({ playerId, tab, onError, onActionLog }: { playerId: string; tab: string; onError: (text: string) => void; onActionLog?: (actionType: string, target: string, amount: string, notes: string) => void }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [message, setMessage] = useState("");
   const [messageDetails, setMessageDetails] = useState("");
@@ -2836,27 +3297,47 @@ function PlayerDetailTab({ playerId, tab, onError }: { playerId: string; tab: st
   useEffect(() => {
     loadTab();
   }, [playerId, tab]);
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = window.setTimeout(() => {
+      setMessage("");
+      setMessageDetails("");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
   async function deleteItem(row: Record<string, unknown>) {
     const itemId = String(row.id || "");
-    if (!window.confirm(`Delete item ${itemId} (${String(row.template_id || "")}) from player ${playerId}?`)) return;
+    const templateId = String(row.template_id || "Unknown item");
+    if (!(await confirmDialog("Delete this inventory item?", {
+      title: "Delete Inventory Item",
+      confirmLabel: "Delete",
+      danger: true,
+      details: [
+        { label: "Item ID", value: itemId, tone: "danger" },
+        { label: "Template", value: templateId, tone: "accent" }
+      ]
+    }))) return;
     try {
       const response = await playersApi.deleteInventoryItem(playerId, itemId, "DELETE ITEM");
       setMessage(formatMutationResult(response));
       setMessageDetails(JSON.stringify(response, null, 2));
+      onActionLog?.("Delete Inventory Item", templateId, "1", "Succeeded");
       await loadTab();
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       setMessage(text);
       setMessageDetails("");
+      onActionLog?.("Delete Inventory Item", templateId, "1", `Failed: ${text}`);
       onError(text);
     }
   }
   const rows = Array.isArray(data?.rows) ? data.rows as Record<string, unknown>[] : data?.position ? [data.position as Record<string, unknown>] : [];
-  return <div>{data?.reason ? <p className="danger-note">{String(data.reason)}</p> : null}{tab === "inventory" && <p className="action-help-note">Database Edit. Relog or map/server reload may be required.</p>}{message && <div className="result-panel"><strong>Mutation Result</strong><p>{message}</p>{messageDetails && <TechnicalDetails text={messageDetails} />}</div>}<DataTable rows={rows} action={tab === "inventory" ? (row) => <button className="danger" onClick={(event) => { event.stopPropagation(); deleteItem(row); }}>Delete Item</button> : undefined} /></div>;
+  return <div>{data?.reason ? <p className="danger-note">{formatResultMessage(data.reason)}</p> : null}{tab === "inventory" && <p className="action-help-note">A relog is required to see the change.</p>}{message && <div className="result-panel transient-result"><strong>Mutation Result.</strong><p>{formatResultMessage(message)}</p>{messageDetails && <TechnicalDetails text={messageDetails} />}</div>}<DataTable rows={rows} emptyMessage={tab === "inventory" ? "No inventory items were found." : "No rows."} actionClassName={tab === "inventory" ? "actions-column" : ""} action={tab === "inventory" ? (row) => <button className="icon-toggle-button danger" title="Delete item" aria-label="Delete item" onClick={(event) => { event.stopPropagation(); deleteItem(row); }}><X size={16} /></button> : undefined} /></div>;
 }
 
 function LogsPanel({ selectedService, setSelectedService, text, setText, onError }: { selectedService: string; setSelectedService: (service: string) => void; text: string; setText: Dispatch<SetStateAction<string>>; onError: (text: string) => void }) {
   const [services, setServices] = useState<string[]>([]);
+  const [sietchRows, setSietchRows] = useState<SietchRow[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState("");
@@ -2871,6 +3352,9 @@ function LogsPanel({ selectedService, setSelectedService, text, setText, onError
   }, [onError, selectedService, setText]);
   useEffect(() => {
     logsApi.services().then((result) => setServices(result.services)).catch(() => undefined);
+    Promise.all([mapsApi.sietchDimensions("Survival_1"), mapsApi.sietchDimensions("Survival_1", true)])
+      .then(([dimensions, ids]) => setSietchRows(parseSietchRows(dimensions.stdout || "", ids.stdout || "")))
+      .catch(() => setSietchRows([]));
   }, []);
   useEffect(() => {
     let active = true;
@@ -2900,7 +3384,7 @@ function LogsPanel({ selectedService, setSelectedService, text, setText, onError
       <h2>Logs</h2>
       <div className="action-row logs-action-row">
         <select value={selectedService} onChange={(event) => setSelectedService(event.target.value)}>
-          {services.map((service) => <option key={service} value={service}>{friendlyServiceName(service)}</option>)}
+          {services.map((service) => <option key={service} value={service}>{friendlyLogServiceName(service, sietchRows)}</option>)}
         </select>
         <button onClick={() => loadSelectedLogs()}>Refresh Logs</button>
         <button onClick={() => setStreaming(!streaming)}>{streaming ? "Stop Stream" : "Live Stream"}</button>
@@ -2958,6 +3442,29 @@ function DatabasePanel() {
       cancelled = true;
     };
   }, [databasePasswordState.taskId, databasePasswordState.result?.status]);
+  useEffect(() => {
+    if (!(databaseStatus || databaseStatusError) || databaseStatusLoading) return undefined;
+    const timer = window.setTimeout(() => {
+      setDatabaseStatus(null);
+      setDatabaseStatusError("");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [databaseStatus, databaseStatusError, databaseStatusLoading]);
+  useEffect(() => {
+    if (!editResult || editResult.status === "running") return undefined;
+    const timer = window.setTimeout(() => setEditResult(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [editResult]);
+  useEffect(() => {
+    if (!queryRan || (!queryError && !queryResult)) return undefined;
+    if (!queryError && Array.isArray(queryResult?.rows) && queryResult.rows.length > 0) return undefined;
+    const timer = window.setTimeout(() => {
+      setQueryRan(false);
+      setQueryError("");
+      setQueryResult(null);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [queryRan, queryError, queryResult]);
   function updateDatabasePasswordState(next: DatabasePasswordState) {
     setDatabasePasswordState(next);
     persistDatabasePasswordState(next);
@@ -3084,11 +3591,11 @@ function DatabasePanel() {
         <button disabled={databasePasswordResult?.status === "running"} onClick={changeDatabasePassword}>Save Password</button>
       </div>
       {databasePasswordResult && <span className={`inline-task-result result-${databasePasswordResult.status === "succeeded" ? "ok" : databasePasswordResult.status === "failed" ? "fail" : "running"}`}>
-        <strong className={databasePasswordResult.status === "running" ? "loading-dots" : ""}>{databasePasswordResult.title}</strong>
-        {databasePasswordResult.message && <span className="inline-task-message">{databasePasswordResult.message}</span>}
+        <strong className={databasePasswordResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(databasePasswordResult.title, databasePasswordResult.status === "running")}</strong>
+        {databasePasswordResult.message && <span className="inline-task-message">{formatResultMessage(databasePasswordResult.message)}</span>}
       </span>}
     </section>}
-    {(databaseStatus || databaseStatusError) && <section className={`result-panel ${databaseStatusError ? "result-fail" : "result-ok"}`}>
+    {(databaseStatus || databaseStatusError) && <section className={`result-panel transient-result ${databaseStatusError ? "result-fail" : "result-ok"}`}>
       <div className="panel-title database-status-title"><strong>Database Status</strong><StatusPill value={databaseStatusError ? "Failed" : "Connected"} /></div>
       {databaseStatusError ? <p>{databaseStatusError}</p> : <KeyValueGrid items={[
         ["Connected", databaseStatus?.connected ? "Yes" : "No"],
@@ -3110,9 +3617,9 @@ function DatabasePanel() {
         <DataTable rows={columns} />
       </details>
       {previewRows.length ? <DataTable rows={previewRows} columns={previewColumns} action={(row) => <button onClick={(event) => { event.stopPropagation(); startEdit(row); }}>Edit</button>} actionClassName="backup-table-actions" tableClassName="backup-table" /> : <div className="empty database-empty">This table has no rows to preview.</div>}
-      {!editRow && editResult && <section className={`result-panel ${editResult.status === "succeeded" ? "result-ok" : editResult.status === "failed" ? "result-fail" : "result-running"}`}>
-        <div className="panel-title"><strong>{editResult.title}</strong><StatusPill value={editResult.status === "succeeded" ? "Saved" : editResult.status === "failed" ? "Failed" : "Saving"} /></div>
-        {editResult.message && <p>{editResult.message}</p>}
+      {!editRow && editResult && <section className={`result-panel ${editResult.status === "running" ? "" : "transient-result"} ${editResult.status === "succeeded" ? "result-ok" : editResult.status === "failed" ? "result-fail" : "result-running"}`}>
+        <div className="panel-title"><strong>{formatResultTitle(editResult.title, editResult.status === "running")}</strong><StatusPill value={editResult.status === "succeeded" ? "Saved" : editResult.status === "failed" ? "Failed" : "Saving"} /></div>
+        {editResult.message && <p>{formatResultMessage(editResult.message)}</p>}
       </section>}
       {editRow && <section ref={editRef} className="result-panel database-edit-panel">
         <div className="panel-title"><strong>Edit Row</strong><StatusPill value={editResult?.status === "failed" ? "Failed" : editResult?.status === "succeeded" ? "Saved" : "Editing"} /></div>
@@ -3124,8 +3631,8 @@ function DatabasePanel() {
           <button onClick={() => setEditRow(null)}>Cancel</button>
         </div>
         {editResult && <span className={`inline-task-result result-${editResult.status === "succeeded" ? "ok" : editResult.status === "failed" ? "fail" : "running"}`}>
-          <strong className={editResult.status === "running" ? "loading-dots" : ""}>{editResult.title}</strong>
-          {editResult.message && <span className="inline-task-message">{editResult.message}</span>}
+          <strong className={editResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(editResult.title, editResult.status === "running")}</strong>
+          {editResult.message && <span className="inline-task-message">{formatResultMessage(editResult.message)}</span>}
         </span>}
       </section>}
     </section>}
@@ -3137,10 +3644,10 @@ function DatabasePanel() {
       {advancedSqlOpen && <div className="playerAdmin_toggleBody">
         <textarea value={sql} onChange={(event) => setSql(event.target.value)} rows={5} />
         <div className="action-row"><button onClick={runQuery}>Run Query</button><button onClick={exportQueryJson}>Export Query JSON</button></div>
-        {queryRan && queryError && <div className="empty database-empty danger-note">Query failed: {queryError}</div>}
+        {queryRan && queryError && <div className="empty database-empty danger-note">{formatResultMessage(`Query failed: ${queryError}`)}</div>}
         {queryRan && !queryError && queryResult && (queryRows.length
           ? <DataTable rows={queryRows} columns={queryColumns} />
-          : <div className="result-panel result-ok database-query-result">Query completed. Rows affected: {queryAffectedRows}.</div>)}
+          : <div className="result-panel transient-result result-ok database-query-result">Query completed. Rows affected: {queryAffectedRows}.</div>)}
       </div>}
     </div>
   </section>;
@@ -3173,7 +3680,7 @@ function parseEditableDbValue(value: string, original: unknown) {
 
 function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
   const [config, setConfig] = useState<CarePackageConfig>({
-    enabled: false,
+    enabled: true,
     version: "care-package-v1",
     activeKitId: "care-package-v1",
     autoGrantKitId: "care-package-v1",
@@ -3184,7 +3691,7 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
     autoGrantEnabled: false,
     autoGrantIntervalSeconds: 60,
     grantWhen: "first_online",
-    autoGrantRules: [{ id: "auto-rule-1", enabled: true, kitId: "care-package-v1", grantWhen: "first_online", lastSeenDays: 30 }]
+    autoGrantRules: [{ id: "auto-rule-1", enabled: false, kitId: "care-package-v1", grantWhen: "first_online", lastSeenDays: 30 }]
   });
   const [itemsText, setItemsText] = useState("");
   const [selectedPackageItem, setSelectedPackageItem] = useState<CatalogItem | null>(null);
@@ -3326,13 +3833,18 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
       setPackageDraft({ itemName: "", itemId: "", quantity: "1", durability: "1" });
     });
   }
-  function deleteActiveKit() {
+  async function deleteActiveKit() {
     const attachedRule = config.autoGrantRules.find((rule) => rule.kitId === activeKit.id);
     if (attachedRule) {
       setPackageCreateResult({ status: "failed", title: "Package Delete Failed.", message: "Delete the Auto Grant rule first." });
       return;
     }
-    if (!window.confirm(`Delete ${activeKit.name || "this package"}?`)) return;
+    if (!(await confirmDialog("This package will be removed.", {
+      title: "Delete Package",
+      confirmLabel: "Delete",
+      danger: true,
+      details: [{ label: "Package", value: activeKit.name || "Unnamed package", tone: "danger" }]
+    }))) return;
     const nextKits = config.kits.filter((kit) => kit.id !== activeKit.id);
     const nextActive = nextKits.at(-1);
     const autoGrantRules = config.autoGrantRules.filter((rule) => nextKits.some((kit) => kit.id === rule.kitId));
@@ -3355,8 +3867,26 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
   }
   function addAutoGrantRule() {
     const kitId = config.kits.some((kit) => kit.id === newAutoRule.kitId) ? newAutoRule.kitId : activeKit.id;
+    const grantWhen: CarePackageAutoGrantRule["grantWhen"] = newAutoRule.grantWhen === "last_seen" ? "last_seen" : "first_online";
+    const lastSeenDays = Math.max(1, Number(newAutoRule.lastSeenDays) || 30);
+    const duplicateRule = config.autoGrantRules.some((rule) => {
+      const ruleGrantWhen = rule.grantWhen === "last_seen" ? "last_seen" : "first_online";
+      if (ruleGrantWhen !== grantWhen) return false;
+      if (grantWhen !== "last_seen") return true;
+      return Math.max(1, Number(rule.lastSeenDays) || 30) === lastSeenDays;
+    });
+    if (duplicateRule) {
+      setAutoGrantResult({
+        status: "failed",
+        title: "Auto Grant Rule Already Exists.",
+        message: grantWhen === "last_seen"
+          ? `A Last Seen rule for ${lastSeenDays} days ago already exists.`
+          : "A First Online rule already exists."
+      });
+      return;
+    }
     const id = uniquePackageRuleId(config.autoGrantRules, `auto-rule-${config.autoGrantRules.length + 1}`);
-    const draft = { ...config, autoGrantEnabled: true, autoGrantRules: [...config.autoGrantRules, { id, enabled: false, kitId, grantWhen: newAutoRule.grantWhen, lastSeenDays: newAutoRule.lastSeenDays }] };
+    const draft = { ...config, autoGrantRules: [...config.autoGrantRules, { id, enabled: false, kitId, grantWhen, lastSeenDays }] };
     run(async () => { await saveCarePackageConfigDraft(draft, "Auto grant rule was created.", "auto"); });
   }
   function updateAutoGrantRule(id: string, patch: Partial<CarePackageAutoGrantRule>) {
@@ -3365,14 +3895,14 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
     const resultTitle = typeof patch.enabled === "boolean"
       ? `${carePackageRuleName(currentRule, config.kits)} was ${patch.enabled ? "enabled" : "disabled"}.`
       : "Auto grant rule was saved.";
-    const draft = { ...config, autoGrantEnabled: patch.enabled === true ? true : config.autoGrantEnabled, autoGrantRules: config.autoGrantRules.map((rule) => rule.id === id ? { ...rule, ...patch } : rule) };
+    const draft = { ...config, autoGrantRules: config.autoGrantRules.map((rule) => rule.id === id ? { ...rule, ...patch } : rule) };
     run(async () => {
       await saveCarePackageConfigDraft(draft, resultTitle, "auto");
       if (typeof nextEnabled === "boolean") setAutoGrantResult({ status: nextEnabled ? "succeeded" : "failed", title: resultTitle });
     });
   }
-  function deleteAutoGrantRule(id: string) {
-    if (!window.confirm("Delete this Auto Grant rule?")) return;
+  async function deleteAutoGrantRule(id: string) {
+    if (!(await confirmDialog("Delete this Auto Grant rule?"))) return;
     const draft = { ...config, autoGrantRules: config.autoGrantRules.filter((rule) => rule.id !== id) };
     run(async () => {
       await saveCarePackageConfigDraft(draft, "Auto grant rule was deleted.", "auto");
@@ -3434,18 +3964,17 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
       <section className="action-section">
         <div className="panel-title">
           <h4>Care Package Configuration</h4>
-          <button className={`care-package-toggle ${config.enabled ? "enabled" : "disabled"}`} onClick={() => run(async () => {
+          <button className={`switch-toggle care-package-toggle ${config.enabled ? "enabled" : "disabled"}`} onClick={() => run(async () => {
             const confirmation = config.enabled ? "DISABLE CARE PACKAGE" : "ENABLE CARE PACKAGE";
-            const message = config.enabled ? "Disable Care Package?" : "Enable Care Package?";
-            if (window.confirm(message)) setConfig(normalizeCarePackageConfig(await carePackageApi[config.enabled ? "disable" : "enable"](confirmation)));
-          })}>Care Package: {config.enabled ? "On" : "Off"}</button>
+            setConfig(normalizeCarePackageConfig(await carePackageApi[config.enabled ? "disable" : "enable"](confirmation)));
+          })}><span className="switch-label">Care Package</span><strong className="switch-state">{config.enabled ? "ON" : "OFF"}</strong></button>
         </div>
         <div className="settings-tabs" role="tablist" aria-label="Care Package setup">
           <button className={carePackageTab === "create" ? "active" : ""} role="tab" aria-selected={carePackageTab === "create"} onClick={() => setCarePackageTab("create")}>Create</button>
           <button className={carePackageTab === "configure" ? "active" : ""} role="tab" aria-selected={carePackageTab === "configure"} disabled={!config.kits.length} onClick={() => setCarePackageTab("configure")}>Configure</button>
           {packageCreateResult && <span className={`inline-task-result result-${packageCreateResult.status === "succeeded" ? "ok" : packageCreateResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={packageCreateResult.status === "running" ? "loading-dots" : ""}>{packageCreateResult.title}</strong>
-            {packageCreateResult.message && <span className="inline-task-message">{packageCreateResult.message}</span>}
+            <strong className={packageCreateResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(packageCreateResult.title, packageCreateResult.status === "running")}</strong>
+            {packageCreateResult.message && <span className="inline-task-message">{formatResultMessage(packageCreateResult.message)}</span>}
           </span>}
         </div>
         {carePackageTab === "create" ? <div className="care-package-builder care-package-create">
@@ -3464,7 +3993,7 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
         </div>
         <label className="package-message-field">Send Message<textarea value={activeKit.sendMessage || ""} onChange={(event) => updateActiveKit({ sendMessage: event.target.value })} placeholder="Optional private whisper after this package is granted" /></label>
         <div className={`playerAdmin_toggle ${packageItemsOpen ? "open" : ""}`}>
-          <button className="playerAdmin_toggleHeader" aria-label={packageItemsOpen ? "Collapse Package Items" : "Expand Package Items"} onClick={() => setPackageItemsOpen(!packageItemsOpen)}>{packageItemsOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Package Items</span></button>
+          <button className="playerAdmin_toggleHeader" aria-label={packageItemsOpen ? "Collapse Select Items" : "Expand Select Items"} onClick={() => setPackageItemsOpen(!packageItemsOpen)}>{packageItemsOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Select Items</span></button>
           {packageItemsOpen && <div className="playerAdmin_toggleBody"><div className="package-items-picker-panel">
             <ItemCatalogSelector selected={selectedPackageItem} onSelect={choosePackageItem} />
             <div className="action-line">
@@ -3486,11 +4015,11 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
         <details className="technical-details"><summary>Developer raw package item textarea</summary><p>One item per line: item name or raw item ID, quantity, durability.</p><label>Package Items<textarea value={itemsText} onChange={(event) => setItemsText(event.target.value)} placeholder="Plant Fiber,10,1&#10;cup of water,1,1" /></label></details>
         <div className="action-line">
           <button onClick={() => run(async () => {
-            if (!window.confirm("Save Care Package?")) return;
-            if (selectedPackageItem && !activeKit.items.some((item) => (item.itemId && item.itemId === packageDraft.itemId) || (item.itemName && item.itemName === packageDraft.itemName))) {
-              setKitSaveResult({ status: "failed", title: "Package Save Failed.", message: "Click Add Item before saving the package." });
-              return;
-            }
+            if (!(await confirmDialog("These settings will be saved.", {
+              title: "Save Package",
+              confirmLabel: "Save",
+              details: [{ label: "Package", value: activeKit.name || "Unnamed package", tone: "accent" }]
+            }))) return;
             setKitSaveResult({ status: "running", title: "Saving Package..." });
             try {
               const saved = normalizeCarePackageConfig(await carePackageApi.saveConfig(nextConfig(), "SAVE CARE PACKAGE"));
@@ -3503,8 +4032,8 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
             }
           })}>Save Package</button>
           {kitSaveResult && <span className={`inline-task-result result-${kitSaveResult.status === "succeeded" ? "ok" : kitSaveResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={kitSaveResult.status === "running" ? "loading-dots" : ""}>{kitSaveResult.title}</strong>
-            {kitSaveResult.message && <span className="inline-task-message">{kitSaveResult.message}</span>}
+            <strong className={kitSaveResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(kitSaveResult.title, kitSaveResult.status === "running")}</strong>
+            {kitSaveResult.message && <span className="inline-task-message">{formatResultMessage(kitSaveResult.message)}</span>}
           </span>}
         </div>
         </>}
@@ -3516,17 +4045,17 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
             <button className={carePackageGrantTab === "auto" ? "active" : ""} role="tab" aria-selected={carePackageGrantTab === "auto"} onClick={() => setCarePackageGrantTab("auto")}>Auto Grant</button>
             <button className={carePackageGrantTab === "manual" ? "active" : ""} role="tab" aria-selected={carePackageGrantTab === "manual"} onClick={() => setCarePackageGrantTab("manual")}>Manual Grant</button>
             {manualGrantResult && <span className="inline-task-result result-running">
-              <strong className="loading-dots">{manualGrantResult.title}</strong>
+              <strong className="loading-dots">{formatResultTitle(manualGrantResult.title, true)}</strong>
             </span>}
           </div>
           {autoGrantResult && <span className={`inline-task-result result-${autoGrantResult.status === "succeeded" ? "ok" : autoGrantResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={autoGrantResult.status === "running" ? "loading-dots" : ""}>{autoGrantResult.title}</strong>
-            {autoGrantResult.message && <span className="inline-task-message">{autoGrantResult.message}</span>}
+            <strong className={autoGrantResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(autoGrantResult.title, autoGrantResult.status === "running")}</strong>
+            {autoGrantResult.message && <span className="inline-task-message">{formatResultMessage(autoGrantResult.message)}</span>}
           </span>}
         </div>
         {carePackageGrantTab === "auto" ? <>
           <div className="action-line package-auto-line">
-            <label className="compact-field">Interval Seconds<input type="number" min="60" max="3600" value={String(config.autoGrantIntervalSeconds)} onChange={(event) => setConfig({ ...config, autoGrantIntervalSeconds: Number(event.target.value) })} /></label>
+            <label className="compact-field">Check Every (s)<input type="number" min="60" max="3600" value={String(config.autoGrantIntervalSeconds)} onChange={(event) => setConfig({ ...config, autoGrantIntervalSeconds: Number(event.target.value) })} /></label>
             <label className="compact-select">Package<select value={newAutoRule.kitId} onChange={(event) => setNewAutoRule({ ...newAutoRule, kitId: event.target.value })}>{config.kits.map((kit) => <option key={kit.id} value={kit.id}>{kit.name || "Name Required"}</option>)}</select></label>
             <label className="compact-select">Grant When<select value={newAutoRule.grantWhen} onChange={(event) => setNewAutoRule({ ...newAutoRule, grantWhen: event.target.value as CarePackageAutoGrantRule["grantWhen"] })}><option value="first_online">First Online</option><option value="last_seen">Last Seen</option></select></label>
             {newAutoRule.grantWhen === "last_seen" && <label className="compact-field">Days Ago<input type="number" min="1" max="3650" value={String(newAutoRule.lastSeenDays)} onChange={(event) => setNewAutoRule({ ...newAutoRule, lastSeenDays: Number(event.target.value) })} /></label>}
@@ -3539,11 +4068,11 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
               const expanded = Boolean(expandedRuleIds[rule.id]);
               const showEligibility = rule.grantWhen === "last_seen";
               return <article className="package-auto-rule" key={rule.id}>
-                <button className={`package-rule-toggle ${rule.enabled ? "enabled" : "disabled"}`} onClick={() => updateAutoGrantRule(rule.id, { enabled: !rule.enabled })}>{rule.enabled ? "Enabled" : "Disabled"}</button>
-                <span className="package-rule-summary">Grants {carePackageGrantSummary(kit)} based on {carePackageConditionLabel(rule)}</span>
+                <button className={`switch-toggle package-rule-toggle ${rule.enabled ? "enabled" : "disabled"}`} onClick={() => updateAutoGrantRule(rule.id, { enabled: !rule.enabled })}><span className="switch-label">Rule</span><strong className="switch-state">{rule.enabled ? "ON" : "OFF"}</strong></button>
+                <span className="package-rule-summary">Grants <span className="package-rule-package-name">{carePackageGrantSummary(kit)}</span> based on {carePackageConditionLabel(rule)}</span>
             <button className="icon-toggle-button danger package-rule-delete" aria-label="Delete Auto Grant rule" title="Delete" onClick={() => deleteAutoGrantRule(rule.id)}><X size={18} /></button>
                 {showEligibility && <button className={`icon-toggle-button ${expanded ? "active" : ""}`} aria-label={expanded ? "Collapse Eligibility" : "Expand Eligibility"} title={expanded ? "Collapse" : "Expand"} onClick={() => toggleRuleEligible(rule.id)}>{expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>}
-                {showEligibility && expanded && <div className="package-rule-eligible"><h5>Eligibility</h5>{ruleEligible.length ? <DataTable rows={carePackageEligibleRows(ruleEligible)} /> : <div className="empty package-history-empty">No eligible players for this rule right now.</div>}</div>}
+                {showEligibility && expanded && <div className="package-rule-eligible"><h5>Eligibility</h5>{ruleEligible.length ? <DataTable rows={carePackageEligibleRows(ruleEligible)} /> : <div className="empty package-history-empty">No eligible players were found for this rule.</div>}</div>}
               </article>;
             })}
           </div>
@@ -3557,7 +4086,14 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
               </option>)}
             </select></label>
             <button disabled={!grantPlayerId || !manualKit.id || manualGrantResult?.status === "running"} onClick={() => run(async () => {
-              if (!window.confirm(`Grant ${manualKit.name} to ${selectedLabel || grantPlayerId}?`)) return;
+              if (!(await confirmDialog("This package will be sent to the selected player.", {
+                title: "Grant Package",
+                confirmLabel: "Grant",
+                details: [
+                  { label: "Package", value: manualKit.name || "Unnamed package", tone: "accent" },
+                  { label: "Player", value: manualGrantTargetName, tone: "success" }
+                ]
+              }))) return;
               setManualGrantResult({ status: "running", title: `Granting ${manualKit.name || "package"} to ${manualGrantTargetName}...` });
               try {
                 showGrantResult("grant", await carePackageApi.grant(grantPlayerId, "GRANT CARE PACKAGE", manualKit.id));
@@ -3585,7 +4121,7 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
         <div className="panel-title">
           <h4>Grant History</h4>
           <button disabled={!historyRows.length} onClick={() => run(async () => {
-            if (!window.confirm("Clear Care Package grant history?")) return;
+            if (!(await confirmDialog("Clear Care Package grant history?"))) return;
             await carePackageApi.clearHistory();
             setHistory([]);
             setOutputScope("history");
@@ -3596,7 +4132,14 @@ function CarePackagePanel({ onError }: { onError: (text: string) => void }) {
         <CarePackageResult output={outputScope === "history" ? output : ""} technicalOutput={outputScope === "history" ? technicalOutput : ""} />
         <div className="package-history-table">
           {historyRows.length ? <DataTable rows={historyRows} columns={["timestamp", "character_name", "action_player_id", "source", "status", "summary"]} action={(row) => String(row.status || "").toLowerCase() === "failed" ? <button onClick={() => run(async () => {
-            if (!window.confirm(`Retry Care Package grant ${row.id}?`)) return;
+            if (!(await confirmDialog("Retry this failed grant?", {
+              title: "Retry Grant",
+              confirmLabel: "Retry",
+              details: [
+                { label: "Package", value: carePackageHistoryPackageName(row), tone: "accent" },
+                { label: "Player", value: carePackageHistoryPlayerName(row), tone: "success" }
+              ]
+            }))) return;
             showGrantResult("history", await carePackageApi.retry(String(row.id), "RETRY CARE PACKAGE"));
             setHistory((await carePackageApi.history()).rows || []);
           })}>Retry</button> : null} /> : <div className="empty package-history-empty">No Care Package grants have been recorded yet.</div>}
@@ -3638,7 +4181,7 @@ function normalizeCarePackageConfig(config: CarePackageConfig): CarePackageConfi
   const activeKitId = kits.some((kit) => kit.id === config.activeKitId) ? config.activeKitId : kits[0]?.id || "";
   const autoGrantKitId = kits.some((kit) => kit.id === config.autoGrantKitId) ? config.autoGrantKitId : activeKitId;
   const activeKit = kits.find((kit) => kit.id === activeKitId) || kits[0] || { id: "", name: "", items: [], xp: 0, sendMessage: "" };
-  const autoGrantRules = (kits.length ? (Array.isArray(config.autoGrantRules) ? config.autoGrantRules : [{ id: "auto-rule-1", enabled: true, kitId: autoGrantKitId, grantWhen: "first_online" as const, lastSeenDays: 30 }]) : []).map((rule, index) => ({
+  const autoGrantRules = (kits.length ? (Array.isArray(config.autoGrantRules) ? config.autoGrantRules : [{ id: "auto-rule-1", enabled: false, kitId: autoGrantKitId, grantWhen: "first_online" as const, lastSeenDays: 30 }]) : []).map((rule, index) => ({
     id: rule.id || `auto-rule-${index + 1}`,
     enabled: rule.enabled !== false,
     kitId: kits.some((kit) => kit.id === rule.kitId) ? rule.kitId : autoGrantKitId,
@@ -3736,6 +4279,14 @@ function carePackageHistoryRows(rows: Record<string, unknown>[]) {
   }));
 }
 
+function carePackageHistoryPackageName(row: Record<string, unknown>) {
+  return String(row.kitName || row.packageName || row.version || "Selected package");
+}
+
+function carePackageHistoryPlayerName(row: Record<string, unknown>) {
+  return String(row.character_name || row.playerName || row.action_player_id || row.playerId || "Selected player");
+}
+
 function CarePackageResult({ output, technicalOutput }: { output: string; technicalOutput: string }) {
   if (!output) return null;
   const rows = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -3744,7 +4295,7 @@ function CarePackageResult({ output, technicalOutput }: { output: string; techni
     <ul className="result-list">
       {rows.map((line, index) => {
         const status = /^OK:/i.test(line) ? "ok" : /^FAIL:/i.test(line) || /failed/i.test(line) ? "fail" : "info";
-        return <li className={`result-row result-${status}`} key={`${line}-${index}`}>{friendlyCarePackageResultLine(line)}</li>;
+        return <li className={`result-row result-${status}`} key={`${line}-${index}`}>{formatResultMessage(friendlyCarePackageResultLine(line))}</li>;
       })}
     </ul>
     {technicalOutput && <TechnicalDetails text={technicalOutput} />}
@@ -3847,6 +4398,7 @@ function formatCarePackageGrantResult(result: Record<string, unknown>) {
   if (Array.isArray(result.results)) {
     for (const action of result.results as Record<string, unknown>[]) {
       if (action.ok) lines.push(`OK: ${describeCarePackageAction(action)}`);
+      else if (action.operation === "adminAddXp" || action.item) lines.push(`FAIL: ${describeCarePackageAction(action)} could not be granted. The player must be online for package grants.`);
       else lines.push(`FAIL: to grant ${describeCarePackageAction(action)}`);
     }
   }
@@ -3903,7 +4455,7 @@ function StoragePanel({ onError }: { onError: (text: string) => void }) {
     if (!selected) return;
     onError("");
     try {
-      if (!window.confirm(`Give 1 x ${itemName} to storage ${String(selected.id)}?`)) return;
+      if (!(await confirmDialog(`Give 1 x ${itemName} to storage ${String(selected.id)}?`))) return;
       const response = await worldDataApi.storageGiveItem(String(selected.id), { itemName, quantity: 1, confirmation: "GIVE ITEM TO STORAGE" });
       setStorageResult(formatMutationResult(response));
       setItems((await worldDataApi.storageItems(String(selected.id))).rows || []);
@@ -4058,24 +4610,29 @@ function BackupsPanel({ backupRestoreTask, setBackupRestoreTask, onError }: { ba
   return (
     <section className="panel">
       <div className="panel-title"><h2>Backups</h2><div className="action-row"><button disabled={Boolean(busyAction)} onClick={() => run(refresh)}>Refresh Backups</button><button disabled={Boolean(busyAction)} onClick={() => run(() => runBackupTask("create", backupsApi.create, "Backup Created Successfully", "Backup failed"))}>Create Backup</button><button className="danger" disabled={Boolean(busyAction) || !rows.length} onClick={() => run(async () => {
-        if (!window.confirm("Delete all backup files? This cannot be undone.")) return;
+        if (!(await confirmDialog("Delete all backup files? This cannot be undone."))) return;
         await runBackupTask("deleteAll", backupsApi.deleteAll, "Backup Deleted", "Backup Delete Failed");
       })}>Delete All Backups</button></div></div>
       {backupRestoreTask ? <BackupResultCard result={backupRestoreTaskResult(backupRestoreTask)} /> : backupResult && <BackupResultCard result={backupResult} />}
       {rows.length ? <DataTable rows={rows} columns={["backupName", "battlegroupId", "created", "type", "source"]} action={(row) => <div className="service-actions">
         <button className="icon-action restore-action" title="Restore" aria-label="Restore backup" disabled={Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); run(async () => {
-          const sourceText = /^external$/i.test(String(row.source || "")) ? " External backups automatically use the backup battlegroup ID when it differs from Docker." : "";
-          if (!window.confirm(`Restore backup ${String(row.name)}? This replaces the current battlegroup database and is destructive.${sourceText}`)) return;
+          const sourceText = /^external$/i.test(String(row.source || "")) ? " External backups will be matched to the backup battlegroup automatically when needed." : "";
+          if (!(await confirmDialog(`The current battlegroup database will be replaced.${sourceText}`, {
+            title: "Restore Backup",
+            confirmLabel: "Restore",
+            danger: true,
+            details: [{ label: "Backup", value: String(row.backupName || row.name || "Selected backup"), tone: "accent" }]
+          }))) return;
           await runBackupTask("restore", () => backupsApi.restore(String(row.name)), "Restore Completed", "Backup Restore Failed");
         }); }}><img src="/images/icons/backup-restore.png" alt="" /></button>
         <a className="button-link icon-action download-action" title="Download" aria-label="Download backup" href={backupsApi.downloadUrl(String(row.name))} onClick={(event) => event.stopPropagation()}><img src="/images/icons/backup-download.png" alt="" /></a>
         <button className="icon-action danger" title="Delete" aria-label="Delete backup" disabled={Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); run(async () => {
-          if (!window.confirm(`Delete backup ${String(row.name)}? This cannot be undone.`)) return;
+          if (!(await confirmDialog(`Delete backup ${String(row.name)}? This cannot be undone.`))) return;
           await runBackupTask("delete", () => backupsApi.delete(String(row.name)), "Backup Deleted", "Backup Delete Failed");
         }); }}><img src="/images/icons/backup-delete.png" alt="" /></button>
       </div>} actionClassName="backup-table-actions" tableClassName="backup-table" /> : backupsLoading ? <div className="empty backups-loading">Loading Backups...</div> : <div className="empty backups-empty">No database backups have been created yet.</div>}
       <section className="action-section">
-        <div className="panel-title"><h4>Automatic Backups</h4><StatusPill value={autoEnabled ? "Enabled" : "Disabled"} /></div>
+        <div className="panel-title"><h4>Automatic Backups</h4><label className={`switch-checkbox ${autoEnabled ? "enabled" : "disabled"}`}><input type="checkbox" checked={autoEnabled} onChange={(event) => setAutoEnabled(event.target.checked)} /><span className="switch-label">Automatic Backups</span><strong className="switch-state">{autoEnabled ? "ON" : "OFF"}</strong></label></div>
         <KeyValueGrid items={[
           ["Current Status", commandStatusSummary(autoBackup).reason ? "Unavailable" : autoEnabled ? "Enabled" : "Disabled"],
           ["Backup Time (Local Server Time)", toHourMinuteTime(autoStatus.backupTime || autoTime)],
@@ -4086,13 +4643,12 @@ function BackupsPanel({ backupRestoreTask, setBackupRestoreTask, onError }: { ba
         ]} />
         {commandStatusSummary(autoBackup).reason && <p className="danger-note">{commandStatusSummary(autoBackup).reason}</p>}
         <div className="action-line backup-auto-controls">
-          <label className="checkbox-row"><input type="checkbox" checked={autoEnabled} onChange={(event) => setAutoEnabled(event.target.checked)} /> Enable</label>
           <label className="compact-select">Daily Backup Time<input type="time" step="60" pattern="[0-2][0-9]:[0-5][0-9]" value={autoTime} onChange={(event) => setAutoTime(sanitizeTimeInput(event.target.value))} placeholder="05:00" /></label>
           <label className="memory-number-field">Keep<input type="number" min="0" max="3650" step="1" value={autoRetentionDays} onChange={(event) => setAutoRetentionDays(event.target.value)} /></label>
           <span className="unit-label">Days</span>
           <button disabled={Boolean(busyAction)} onClick={() => run(saveAutomaticBackups)}>Save Settings</button>
           {autoResult && <span className={`inline-task-result result-${autoResult.status === "succeeded" ? "ok" : autoResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={autoResult.status === "running" ? "loading-dots" : ""}>{autoResult.title}</strong>
+            <strong className={autoResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(autoResult.title, autoResult.status === "running")}</strong>
           </span>}
         </div>
       </section>
@@ -4104,7 +4660,7 @@ function BackupsPanel({ backupRestoreTask, setBackupRestoreTask, onError }: { ba
           <div className="backup-import-actions">
             <button disabled={Boolean(busyAction)} onClick={() => run(importExternalBackup)}>Import</button>
             {importResult && <span className={`inline-task-result result-${importResult.status === "succeeded" ? "ok" : importResult.status === "failed" ? "fail" : "running"}`}>
-              <strong className={importResult.status === "running" ? "loading-dots" : ""}>{importResult.title}</strong>
+              <strong className={importResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(importResult.title, importResult.status === "running")}</strong>
             </span>}
           </div>
         </div>
@@ -4119,8 +4675,8 @@ function BackupResultCard({ result }: { result: BackupResult }) {
   return <section className={`result-panel backup-result ${attention ? "warning-panel result-attention" : danger ? "result-danger" : result.status === "failed" ? "warning-panel result-fail" : result.status === "succeeded" ? "result-ok" : "result-running"}`}>
     <div className="panel-title backup-result-title">
       <div className="backup-result-copy">
-        <h4 className={result.status === "running" ? "loading-dots" : ""}>{result.title}</h4>
-        {result.message && <p>{result.message}</p>}
+        <h4 className={result.status === "running" ? "loading-dots" : ""}>{formatResultTitle(result.title, result.status === "running")}</h4>
+        {result.message && <p>{formatResultMessage(result.message)}</p>}
       </div>
       <StatusPill value={attention ? "Action Required" : danger ? "Deleted" : result.status === "failed" ? "Failed" : result.status === "running" ? "Running" : "Succeeded"} />
     </div>
@@ -4241,10 +4797,15 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
   const [target, setTarget] = useState<{ x: number; y: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [drag, setDrag] = useState<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [playerDrag, setPlayerDrag] = useState<{ marker: LiveMapMarker; point: LiveMapPoint; startX: number; startY: number } | null>(null);
+  const [playerTeleportPreview, setPlayerTeleportPreview] = useState<{ marker: LiveMapMarker; point: LiveMapPoint } | null>(null);
+  const [teleportResult, setTeleportResult] = useState<HomeTaskResult | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const zoomAnchorRef = useRef<{ mapX: number; mapY: number; viewportX: number; viewportY: number } | null>(null);
+  const liveMapDraggingPlayerRef = useRef(false);
   async function load() {
+    if (liveMapDraggingPlayerRef.current) return;
     onError("");
     setLoading(true);
     try {
@@ -4305,11 +4866,16 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
   useLayoutEffect(() => {
     const frame = frameRef.current;
     const anchor = zoomAnchorRef.current;
-    if (!frame || !anchor) return;
+    if (!frame) return;
+    if (!anchor) return;
     frame.scrollLeft = anchor.mapX * zoom - anchor.viewportX;
     frame.scrollTop = anchor.mapY * zoom - anchor.viewportY;
     zoomAnchorRef.current = null;
-  }, [zoom]);
+  }, [zoom, activeMap?.key]);
+  useEffect(() => {
+    if (!activeMap) return undefined;
+    return scheduleFitLiveMapView();
+  }, [activeMap?.key]);
   const mapOptions = Object.values(maps);
   const partitionOptions = partitions.filter((row) => row.map === (activeMap?.actorMap || activeMap?.key));
   const visible = markers
@@ -4331,6 +4897,8 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
     setPartitionId(nextMap?.defaultPartitionId ? String(nextMap.defaultPartitionId) : "");
     setSelected(null);
     setTarget(null);
+    setPlayerTeleportPreview(null);
+    liveMapDraggingPlayerRef.current = false;
   }
   function centerMarker(marker: LiveMapMarker) {
     if (!activeMap || !frameRef.current) return;
@@ -4342,6 +4910,44 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
       frameRef.current.scrollLeft = Math.max(0, point.px * zoom - frameRef.current.clientWidth / 2);
       frameRef.current.scrollTop = Math.max(0, point.py * zoom - frameRef.current.clientHeight / 2);
     });
+  }
+  function centerLiveMapView(zoomForCenter = zoom) {
+    const frame = frameRef.current;
+    const map = activeMap;
+    if (!frame || !map) return;
+    const width = map.width * zoomForCenter;
+    const height = map.height * zoomForCenter;
+    frame.scrollLeft = Math.max(0, (width - frame.clientWidth) / 2);
+    frame.scrollTop = Math.max(0, (height - frame.clientHeight) / 2);
+  }
+  function scheduleFitLiveMapView() {
+    const handles: number[] = [];
+    const run = (attempt = 0) => {
+      const frame = frameRef.current;
+      if (!activeMap || !frame) return;
+      if ((frame.clientWidth === 0 || frame.clientHeight === 0) && attempt < 8) {
+        handles.push(window.requestAnimationFrame(() => run(attempt + 1)));
+        return;
+      }
+      const next = liveMapMinimumZoom(activeMap, frame);
+      zoomAnchorRef.current = null;
+      setZoom(next);
+      handles.push(window.requestAnimationFrame(() => centerLiveMapView(next)));
+      handles.push(window.setTimeout(() => centerLiveMapView(next), 80));
+    };
+    handles.push(window.requestAnimationFrame(() => run()));
+    return () => {
+      for (const handle of handles) {
+        window.cancelAnimationFrame(handle);
+        window.clearTimeout(handle);
+      }
+    };
+  }
+  function fitLiveMapView() {
+    const next = liveMapMinimumZoom(activeMap, frameRef.current);
+    zoomAnchorRef.current = null;
+    setZoom(next);
+    requestAnimationFrame(() => centerLiveMapView(next));
   }
   function handleMapDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
     if (!activeMap || !canvasRef.current) return;
@@ -4375,10 +4981,103 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
     zoomAnchorRef.current = { mapX: anchorMapX, mapY: anchorMapY, viewportX: anchorViewportX, viewportY: anchorViewportY };
     setZoom(next);
   }
+  function playerMarkerId(marker: LiveMapMarker) {
+    return String(firstDefined(marker.action_player_id, marker.fls_id, marker.funcom_id, marker.account_id, marker.id) || "");
+  }
+  function liveMapPointerPoint(event: MouseEvent | React.MouseEvent) {
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
+    return {
+      px: (event.clientX - rect.left) / zoom,
+      py: (event.clientY - rect.top) / zoom,
+      inBounds: true
+    };
+  }
+  async function confirmPlayerDragTeleport(marker: LiveMapMarker, point: LiveMapPoint) {
+    if (!activeMap) return;
+    const world = liveMapPixelsToWorld(point.px, point.py, activeMap);
+    const playerId = playerMarkerId(marker);
+    if (!world || !playerId) {
+      setPlayerTeleportPreview(null);
+      liveMapDraggingPlayerRef.current = false;
+      setTeleportResult({ status: "failed", title: "Teleport Failed", message: "This player marker does not include a usable admin player ID." });
+      return;
+    }
+    const online = liveMapPlayerStatus(marker) === "online";
+    const playerName = friendlyMarkerName(marker);
+    const confirmed = await confirmDialog("Move this player to the selected map location?", {
+      title: `Teleport ${playerName}?`,
+      confirmLabel: "Teleport",
+      details: [
+        { label: "Player", value: playerName, tone: online ? "success" : "danger" },
+        { label: "Status", value: online ? "Online" : "Offline", tone: online ? "success" : "danger" },
+        { label: "Location", value: `X ${Math.round(world.x)}, Y ${Math.round(world.y)}, Z 5000`, tone: "accent" }
+      ]
+    });
+    if (!confirmed) {
+      setPlayerTeleportPreview(null);
+      liveMapDraggingPlayerRef.current = false;
+      return;
+    }
+    setTeleportResult({ status: "running", title: "Teleporting Player" });
+    try {
+      const response = await liveMapApi.teleportPlayer({ playerId, x: Math.round(world.x), y: Math.round(world.y), z: 5000, yaw: 0, partitionId: Number(marker.partition_id || partitionId || 0), online });
+      if (response.task) {
+        const final = await waitForTaskSilently(response.task);
+        if (final.status !== "succeeded") throw new Error(taskTechnicalDetails(final) || final.errorMessage || final.progressMessage || "Teleport failed.");
+        setTeleportResult({ status: "succeeded", title: "Teleport Sent", message: `${playerName} was teleported to the selected location.` });
+      } else if (response.supported === false) {
+        setPlayerTeleportPreview(null);
+        liveMapDraggingPlayerRef.current = false;
+        setTeleportResult({ status: "failed", title: "Offline Teleport Not Available", message: response.reason || "Offline teleport is not supported by this database." });
+        return;
+      } else {
+        setTeleportResult({ status: "succeeded", title: "Respawn Location Saved", message: response.message || `${playerName}'s respawn location was saved.` });
+      }
+      liveMapDraggingPlayerRef.current = false;
+      await load();
+      setPlayerTeleportPreview(null);
+    } catch (error) {
+      setPlayerTeleportPreview(null);
+      liveMapDraggingPlayerRef.current = false;
+      setTeleportResult({ status: "failed", title: "Teleport Failed", message: friendlyInlineError(error) });
+    }
+  }
+  useEffect(() => {
+    if (!playerDrag) return undefined;
+    function move(event: MouseEvent) {
+      const point = liveMapPointerPoint(event);
+      if (!point) return;
+      setPlayerDrag((current) => current ? { ...current, point } : current);
+    }
+    function up(event: MouseEvent) {
+      const current = playerDrag;
+      if (!current) return;
+      liveMapDraggingPlayerRef.current = false;
+      setPlayerDrag(null);
+      const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY);
+      const point = liveMapPointerPoint(event) || current.point;
+      if (distance < 6) return;
+      liveMapDraggingPlayerRef.current = true;
+      setPlayerTeleportPreview({ marker: current.marker, point });
+      void confirmPlayerDragTeleport(current.marker, point);
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up, { once: true });
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, [playerDrag, zoom, activeMap?.key]);
+  useEffect(() => {
+    if (!teleportResult || teleportResult.status === "running") return;
+    const id = window.setTimeout(() => setTeleportResult(null), 10400);
+    return () => window.clearTimeout(id);
+  }, [teleportResult?.status, teleportResult?.title]);
   return <section className="panel">
     <div className="panel-title">
-      <div><h2>Live Map</h2><p className="muted">Live world markers, partition filtering, zoom, pan, and coordinate selection.</p></div>
-      <div className="action-row"><button disabled={loading} onClick={load}>{loading ? "Refreshing..." : "Refresh Map"}</button><button className={`live-map-auto-toggle ${autoRefresh ? "enabled" : "disabled"}`} onClick={() => setAutoRefresh(!autoRefresh)}>{autoRefresh ? "Auto-Refresh On" : "Auto-Refresh Off"}</button></div>
+      <div><h2>Live Map</h2><p className="muted">Live world markers, player teleport, partition filtering, zoom, pan, and coordinate selection.</p></div>
+      <div className="action-row"><button className={`switch-toggle live-map-auto-toggle ${autoRefresh ? "enabled" : "disabled"}`} onClick={() => setAutoRefresh(!autoRefresh)}><span className="switch-label">Auto-Refresh</span><strong className="switch-state">{autoRefresh ? "ON" : "OFF"}</strong></button></div>
     </div>
     <div className="live-map-layout">
       <aside className="live-map-sidebar">
@@ -4405,11 +5104,12 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
         <div className="live-map-toolbar">
           <button onClick={() => setZoomAround(zoom * 1.18)}>Zoom In</button>
           <button onClick={() => setZoomAround(zoom * 0.84)}>Zoom Out</button>
-          <button onClick={() => setZoomAround(minimumZoom)}>Fit Map</button>
+          <button onClick={fitLiveMapView}>Fit Map</button>
           <label>Zoom<input className="live-map-zoom-range" type="range" min={zoomMinPercent} max="100" value={zoomValuePercent} style={{ "--zoom-progress": `${zoomProgressPercent}%` } as React.CSSProperties} onChange={(event) => setZoomAround(Number(event.target.value) / 100)} /></label>
-          <span className="muted">Drag to pan. Mouse Wheel Zooms.</span>
+          <span className="muted">Drag to Pan. Mouse Wheel Zooms.</span>
         </div>
-        <div className={`live-map-frame ${drag ? "dragging" : ""}`} ref={frameRef}
+        {teleportResult && <HomeTaskResultCard result={teleportResult} />}
+        <div className={`live-map-frame ${drag ? "dragging" : ""} ${playerDrag ? "dragging-player" : ""}`} ref={frameRef}
           onDoubleClick={handleMapDoubleClick}
           onMouseDown={(event) => { if ((event.target as HTMLElement).closest(".live-map-marker")) return; setDrag({ x: event.clientX, y: event.clientY, left: frameRef.current?.scrollLeft || 0, top: frameRef.current?.scrollTop || 0 }); }}
           onMouseMove={(event) => { if (!drag || !frameRef.current) return; frameRef.current.scrollLeft = drag.left - (event.clientX - drag.x); frameRef.current.scrollTop = drag.top - (event.clientY - drag.y); }}
@@ -4419,7 +5119,23 @@ function LiveMapPanel({ onError }: { onError: (text: string) => void }) {
             {activeMap.image ? <img className="live-map-image" src={activeMap.image} alt={activeMap.label} draggable={false} /> : <div className="live-map-placeholder">{activeMap.label}</div>}
             <div className="live-map-marker-layer">
               {targetPoint && <span className="live-map-target" style={{ left: `${targetPoint.px * zoom}px`, top: `${targetPoint.py * zoom}px` }} />}
-              {inBounds.map(({ marker, point }, index) => <button key={`${marker.type}-${marker.id}-${index}`} className={`live-map-marker marker-${marker.type} ${String(marker.online_status || "").toLowerCase()}`} title={`${friendlyMarkerType(String(marker.type))}: ${friendlyMarkerName(marker)}`} onClick={(event) => { event.stopPropagation(); setSelected(marker); }} style={{ left: `${point.px * zoom}px`, top: `${point.py * zoom}px` }} />)}
+              {inBounds.map(({ marker, point }, index) => {
+                const playerStatus = liveMapPlayerStatus(marker);
+                const markerSelected = Boolean(selected && String(selected.type) === String(marker.type) && String(selected.id) === String(marker.id));
+                const isPlayer = String(marker.type).toLowerCase() === "player";
+                const isDraggingThisPlayer = Boolean(playerDrag && String(playerDrag.marker.id) === String(marker.id) && String(playerDrag.marker.type) === String(marker.type));
+                const isPreviewingThisPlayer = Boolean(playerTeleportPreview && String(playerTeleportPreview.marker.id) === String(marker.id) && String(playerTeleportPreview.marker.type) === String(marker.type));
+                const renderPoint = isDraggingThisPlayer ? playerDrag!.point : isPreviewingThisPlayer ? playerTeleportPreview!.point : point;
+                return <button key={`${marker.type}-${marker.id}-${index}`} className={`live-map-marker marker-${marker.type} ${playerStatus} ${isDraggingThisPlayer ? "dragging" : ""} ${isPreviewingThisPlayer ? "teleport-preview" : ""}`} title={`${friendlyMarkerType(String(marker.type))}: ${friendlyMarkerName(marker)}`} onMouseDown={(event) => {
+                  if (!isPlayer) return;
+                  event.stopPropagation();
+                  event.preventDefault();
+                  liveMapDraggingPlayerRef.current = true;
+                  setPlayerDrag({ marker, point, startX: event.clientX, startY: event.clientY });
+                }} onClick={(event) => { event.stopPropagation(); setSelected(marker); }} style={{ left: `${renderPoint.px * zoom}px`, top: `${renderPoint.py * zoom}px` }}>
+                  {markerSelected && String(marker.type).toLowerCase() === "player" && <span className={`live-map-player-status ${playerStatus}`}>{playerStatus === "online" ? "Online" : "Offline"}</span>}
+                </button>;
+              })}
             </div>
           </div> : <div className="empty">Loading map configuration...</div>}
         </div>
@@ -4461,64 +5177,89 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
   const [sietchDimensionIdsText, setSietchDimensionIdsText] = useState("");
   const [activeSietches, setActiveSietches] = useState("1");
   const [sietchDrafts, setSietchDrafts] = useState<Record<string, { displayName: string; password: string }>>({});
+  const [sietchPasswordTouched, setSietchPasswordTouched] = useState<Record<string, boolean>>({});
   const [selectedMapName, setSelectedMapName] = useState("");
   const [selectedPartitionId, setSelectedPartitionId] = useState("");
   const [userGameMapName, setUserGameMapName] = useState("");
   const [userGamePartitionId, setUserGamePartitionId] = useState("");
   const [selectedGameCategory, setSelectedGameCategory] = useState("");
   const [settingsTab, setSettingsTab] = useState<"engine" | "game">("engine");
-  const [modifiersOpen, setModifiersOpen] = useState(true);
+  const [modifiersOpen, setModifiersOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [deepDesertDualAction, setDeepDesertDualAction] = useState("enable");
   const [memory, setMemory] = useState("8");
   const [modeDraft, setModeDraft] = useState("dynamic");
   const [loading, setLoading] = useState(false);
+  const [mapsLoaded, setMapsLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [mapsResult, setMapsResult] = useState<HomeTaskResult | null>(() => loadPersistedMapsResult());
   const mapsLoadRef = useRef<Promise<void> | null>(null);
+  const mapsRuntimeRefreshRef = useRef<Promise<void> | null>(null);
   async function run(action: () => Promise<unknown>) {
     onError("");
     try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   }
   async function runTaskAndRefresh(action: () => Promise<{ task: Task }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied") {
     const response = await action();
-    setMapsResult({ status: "running", title: runningTitle });
-    persistMapsResult({ status: "running", title: runningTitle });
-    const final = await waitForTask(response.task, setTask);
+    const started: HomeTaskResult = { status: "running", title: runningTitle };
+    setMapsResult(started);
+    persistMapsTask({ taskId: response.task.id, result: started, runningTitle, successTitle });
+    const final = await waitForTaskWithUpdates(response.task, (task) => {
+      const details = taskTechnicalDetails(task);
+      const nextProgress: HomeTaskResult = {
+        status: "running",
+        title: runningTitle,
+        details: details || task.progressMessage || task.currentStep
+      };
+      setMapsResult(nextProgress);
+      persistMapsTask({ taskId: task.id, result: nextProgress, runningTitle, successTitle });
+    });
     const next: HomeTaskResult = final.status === "succeeded"
       ? { status: "succeeded", title: successTitle, details: taskTechnicalDetails(final) }
       : { status: "failed", title: "Map Change Failed", details: taskTechnicalDetails(final) || final.errorMessage || final.progressMessage };
     setMapsResult(next);
-    persistMapsResult(next);
+    persistMapsTask({ result: next, runningTitle, successTitle });
     await loadMaps();
     await loadUserEngine();
     if (userGameMapName) await loadSelectedSettings(userGameMapName, userGamePartitionId);
   }
-  async function runTaskSequenceAndRefresh(actions: Array<{ label: string; run: () => Promise<{ task: Task }> }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied") {
+  async function runTaskSequenceAndRefresh(actions: Array<{ label: string; run: () => Promise<{ task: Task }> }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied", options: { saveAcceptedMessage?: string } = {}) {
     if (!actions.length) return;
-    setMapsResult({ status: "running", title: runningTitle, message: `Starting 1 of ${actions.length}: ${actions[0].label}` });
-    persistMapsResult({ status: "running", title: runningTitle, message: `Starting 1 of ${actions.length}: ${actions[0].label}` });
+    const savingMessage = "Saving settings.";
+    setMapsResult({ status: "running", title: runningTitle, message: savingMessage });
+    persistMapsTask(options.saveAcceptedMessage ? null : { result: { status: "running", title: runningTitle, message: savingMessage }, runningTitle, successTitle });
     let final: Task | null = null;
     for (const [index, action] of actions.entries()) {
-      setMapsResult({ status: "running", title: runningTitle, message: `Step ${index + 1} of ${actions.length}: ${action.label}` });
-      persistMapsResult({ status: "running", title: runningTitle, message: `Step ${index + 1} of ${actions.length}: ${action.label}` });
-      final = await waitForTaskWithUpdates((await action.run()).task, (task) => {
-        setTask(task);
+      const progressMessage = options.saveAcceptedMessage ? savingMessage : `Step ${index + 1} of ${actions.length}: ${action.label}`;
+      setMapsResult({ status: "running", title: runningTitle, message: progressMessage });
+      if (!options.saveAcceptedMessage) persistMapsTask({ result: { status: "running", title: runningTitle, message: progressMessage }, runningTitle, successTitle });
+      const response = await action.run();
+      if (options.saveAcceptedMessage) {
+        const accepted: HomeTaskResult = { status: "succeeded", title: successTitle, details: options.saveAcceptedMessage };
+        setMapsResult(accepted);
+        persistMapsTask({ result: accepted, runningTitle, successTitle });
+      } else if (!options.saveAcceptedMessage) {
+        persistMapsTask({ taskId: response.task.id, result: { status: "running", title: runningTitle, message: savingMessage }, runningTitle, successTitle });
+      }
+      final = await waitForTaskWithUpdates(response.task, (task) => {
+        if (options.saveAcceptedMessage) return;
         const details = taskTechnicalDetails(task);
-        setMapsResult({
+        const nextProgress: HomeTaskResult = {
           status: "running",
           title: runningTitle,
-          message: `Step ${index + 1} of ${actions.length}: ${action.label}`,
+          message: progressMessage,
           details: details || task.progressMessage || task.currentStep
-        });
+        };
+        setMapsResult(nextProgress);
+        if (!options.saveAcceptedMessage) persistMapsTask({ taskId: task.id, result: nextProgress, runningTitle, successTitle });
       });
       if (final.status !== "succeeded") break;
     }
     const next: HomeTaskResult = final?.status === "succeeded"
-      ? { status: "succeeded", title: successTitle, details: taskTechnicalDetails(final) }
+      ? { status: "succeeded", title: successTitle, details: options.saveAcceptedMessage || taskTechnicalDetails(final) }
       : { status: "failed", title: "Map Change Failed", details: final ? taskTechnicalDetails(final) || final.errorMessage || final.progressMessage : "No task result." };
     setMapsResult(next);
-    persistMapsResult(next);
+    persistMapsTask({ result: next, runningTitle, successTitle });
     await loadMaps();
     await loadSietches();
   }
@@ -4545,9 +5286,32 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       }
     })().finally(() => {
       mapsLoadRef.current = null;
+      setMapsLoaded(true);
       setLoading(false);
     });
     return mapsLoadRef.current;
+  }
+  async function refreshMapRuntime() {
+    if (mapsRuntimeRefreshRef.current) return mapsRuntimeRefreshRef.current;
+    mapsRuntimeRefreshRef.current = (async () => {
+      const [status, memoryStatus] = await Promise.allSettled([
+        withTimeout(mapsApi.status(), 60000, "Refreshing map status timed out."),
+        withTimeout(mapsApi.memory(), 60000, "Refreshing map memory timed out.")
+      ]);
+      if (status.status === "fulfilled") {
+        setMapsText(String(status.value.maps?.stdout || ""));
+        setServersText(String(status.value.services?.stdout || ""));
+      }
+      if (memoryStatus.status === "fulfilled") {
+        setMemoryText(memoryStatus.value.stdout);
+      }
+      if (status.status === "fulfilled" || memoryStatus.status === "fulfilled") {
+        setLoadError("");
+      }
+    })().finally(() => {
+      mapsRuntimeRefreshRef.current = null;
+    });
+    return mapsRuntimeRefreshRef.current;
   }
   async function loadSchema() {
     const next = await mapsApi.userSettingsSchema();
@@ -4569,7 +5333,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     setRawGame(raw.content || "");
     setRawGameOriginal(raw.content || "");
   }
-  async function loadSietches() {
+  async function loadSietches(options: { preserveDrafts?: boolean } = {}) {
     const [list, dimensions, ids] = await Promise.all([mapsApi.sietches(), mapsApi.sietchDimensions("Survival_1"), mapsApi.sietchDimensions("Survival_1", true)]);
     setSietchesText(list.stdout || "");
     setSietchDimensionsText(dimensions.stdout || "");
@@ -4577,8 +5341,15 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     const rows = parseSietchRows(dimensions.stdout || list.stdout || "", ids.stdout || "");
     const drafts = Object.fromEntries(rows.map((row) => [row.partitionId, { displayName: row.displayName, password: row.password }]));
     if (rows.length) {
-      setActiveSietches(String(rows.filter((row) => row.active).length || rows.length));
-      setSietchDrafts(drafts);
+      if (!options.preserveDrafts) {
+        setActiveSietches(String(rows.filter((row) => row.active).length || rows.length));
+      }
+      if (options.preserveDrafts) {
+        setSietchDrafts((current) => ({ ...drafts, ...current }));
+      } else {
+        setSietchDrafts(drafts);
+        setSietchPasswordTouched({});
+      }
     }
   }
   async function loadLiveMemory() {
@@ -4594,10 +5365,82 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     run(loadSietches);
   }, []);
   useEffect(() => {
+    const persisted = loadPersistedMapsTask();
+    if (!persisted?.taskId || persisted.result?.status !== "running") return;
+    let cancelled = false;
+    const runningTitle = persisted.runningTitle || persisted.result.title || "Applying Map Changes";
+    const successTitle = persisted.successTitle || "Map Changes Applied";
+    (async () => {
+      let current = (await setupApi.task(persisted.taskId || "")).task;
+      while (!cancelled && !isTerminalTask(current.status)) {
+        const details = taskTechnicalDetails(current);
+        const nextProgress: HomeTaskResult = {
+          status: "running",
+          title: runningTitle,
+          message: persisted.result?.message,
+          details: details || current.progressMessage || current.currentStep
+        };
+        setMapsResult(nextProgress);
+        persistMapsTask({ taskId: current.id, result: nextProgress, runningTitle, successTitle });
+        await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
+        current = (await setupApi.task(current.id)).task;
+      }
+      if (cancelled) return;
+      const next: HomeTaskResult = current.status === "succeeded"
+        ? { status: "succeeded", title: successTitle, details: taskTechnicalDetails(current) }
+        : { status: "failed", title: "Map Change Failed", details: taskTechnicalDetails(current) || current.errorMessage || current.progressMessage };
+      setMapsResult(next);
+      persistMapsTask({ result: next, runningTitle, successTitle });
+      await loadMaps();
+      await loadSietches();
+    })().catch((error) => {
+      if (isMissingPersistedTaskError(error)) {
+        persistMapsTask(null);
+        setMapsResult(null);
+        return;
+      }
+      onError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!mapsResult || mapsResult.status === "running") return;
+    const id = window.setTimeout(() => {
+      setMapsResult(null);
+      persistMapsTask(null);
+    }, 10800);
+    return () => window.clearTimeout(id);
+  }, [mapsResult]);
+  useEffect(() => {
     const id = window.setInterval(() => { void loadLiveMemory().catch(() => {}); }, 5000);
     return () => window.clearInterval(id);
   }, []);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshMapRuntime().catch(() => {});
+      void loadLiveMemory().catch(() => {});
+      void loadSietches({ preserveDrafts: true }).catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => {
+    const refreshVisibleMaps = () => {
+      if (document.visibilityState !== "visible") return;
+      void refreshMapRuntime().catch(() => {});
+      void loadLiveMemory().catch(() => {});
+      void loadSietches({ preserveDrafts: true }).catch(() => {});
+    };
+    window.addEventListener("focus", refreshVisibleMaps);
+    document.addEventListener("visibilitychange", refreshVisibleMaps);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleMaps);
+      document.removeEventListener("visibilitychange", refreshVisibleMaps);
+    };
+  }, []);
   const mapRows = mergeMapAndMemoryRows(mapsText, memoryText, serversText);
+  const serverPartitionRows = parseServerPartitionRows(serversText);
+  const partitionStatusById = new globalThis.Map(serverPartitionRows.map((row) => [String(row.partitionId || ""), String(row.status || "")]));
   const selectedMap = mapRows.find((row) => String(row.map) === selectedMapName) || null;
   const selectedName = String(selectedMap?.map || "");
   const userGameMap = mapRows.find((row) => String(row.map) === userGameMapName) || null;
@@ -4626,10 +5469,11 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
   const currentActiveSietches = String(survivalSietchRows.filter((row) => row.active).length || survivalSietchRows.length || "");
   const activeSietchesDirty = activeSietches !== currentActiveSietches;
   const primarySietchDraft = primarySurvivalSietch ? sietchDrafts[primarySurvivalSietch.partitionId] || { displayName: primarySurvivalSietch.displayName, password: primarySurvivalSietch.password } : null;
-  const primarySietchDirty = Boolean(primarySurvivalSietch && primarySietchDraft && (primarySietchDraft.displayName !== primarySurvivalSietch.displayName || primarySietchDraft.password !== primarySurvivalSietch.password));
+  const primarySietchDirty = Boolean(primarySurvivalSietch && primarySietchDraft && (primarySietchDraft.displayName !== primarySurvivalSietch.displayName || sietchPasswordDraftChanged(primarySurvivalSietch, primarySietchDraft, Boolean(sietchPasswordTouched[primarySurvivalSietch.partitionId]))));
   const sietchesDirty = activeSietchesDirty || partitionOptions.some((sietch) => {
     const draft = sietchDrafts[sietch.partitionId] || { displayName: sietch.displayName, password: sietch.password };
-    return draft.displayName !== sietch.displayName || draft.password !== sietch.password;
+    const passwordTouched = Boolean(sietchPasswordTouched[sietch.partitionId]);
+    return draft.displayName !== sietch.displayName || sietchPasswordDraftChanged(sietch, draft, passwordTouched);
   });
   const rawEngineDirty = rawEngine !== rawEngineOriginal;
   const rawGameDirty = rawGame !== rawGameOriginal;
@@ -4665,7 +5509,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     setSelectedMapName("Survival_1");
     setSelectedPartitionId(row.partitionId);
     setSelectedGameCategory("");
-    setMemory(memoryInputValue(String(parent?.memory || "")));
+    setMemory(memoryInputValue(partitionMemoryValue(memoryText, row.partitionId, String(parent?.memory || ""))));
     setModeDraft(modeInputValue(String(parent?.mode || "")));
     void loadSelectedSettings("Survival_1", row.partitionId).catch((error) => onError(error instanceof Error ? error.message : String(error)));
   }
@@ -4729,14 +5573,33 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     }
     if (activeChanged) actions.push(...survivalSietchActions({ includeActive: true, includePartitions: false }));
     if (rowName === "Survival_1" && primarySurvivalSietch) actions.push(...survivalSietchActions({ includeActive: false, includePartitions: true, partitionId: primarySurvivalSietch.partitionId }));
-    if (window.confirm(`Save map settings for ${rowName}${memoryChanged && running ? " and restart the affected map once" : ""}?`)) {
-      await runTaskSequenceAndRefresh(actions, `Saving ${rowName} Settings`, "Map Settings Saved");
+    const willRestart = running && (modeChanged || memoryChanged || primaryChanged);
+    const confirmed = willRestart
+      ? await confirmDialog("Save these map settings and restart the affected map?", {
+        title: "Restart Required",
+        confirmLabel: "Save And Restart",
+        details: [
+          { label: "Map", value: rowName },
+          { label: "Impact", value: "Players on the affected map will be disconnected.", tone: "danger" }
+        ]
+      })
+      : await confirmDialog(`Save map settings for ${rowName}?`);
+    if (confirmed) {
+      await runTaskSequenceAndRefresh(
+        actions,
+        `Saving ${rowName} Settings`,
+        "Map Settings Saved",
+        activeChanged
+          ? { saveAcceptedMessage: "Sietch changes saved successfully. The map is starting and may take a few minutes to appear in-game after it is running." }
+          : { saveAcceptedMessage: "Settings saved successfully. The map is starting and may take a few minutes to appear in-game after it is running." }
+      );
     }
   }
   function survivalSietchActions({ includeActive, includePartitions, partitionId }: { includeActive: boolean; includePartitions: boolean; partitionId?: string }) {
     const actions: Array<{ label: string; run: () => Promise<{ task: Task }> }> = [];
     if (includeActive && activeSietches && activeSietchesDirty) {
       const requestedActive = Number(activeSietches);
+      const currentActive = Number(currentActiveSietches) || survivalSietchRows.length;
       if (requestedActive > survivalSietchRows.length) {
         actions.push({
           label: `Creating ${requestedActive} available sietch dimensions`,
@@ -4744,7 +5607,9 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         });
       }
       actions.push({
-        label: `Activating ${requestedActive} sietch${requestedActive === 1 ? "" : "es"}`,
+        label: requestedActive < currentActive
+          ? `Despawning extra sietch${currentActive - requestedActive === 1 ? "" : "es"} and setting active sietches to ${requestedActive}`
+          : `Activating ${requestedActive} sietch${requestedActive === 1 ? "" : "es"}`,
         run: () => mapsApi.updateSietches({ action: "set-active", map: "Survival_1", count: requestedActive, confirmation: "UPDATE SIETCHES" })
       });
     }
@@ -4758,7 +5623,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
           run: () => mapsApi.updateSietches({ action: "set-display", partitionId: sietch.partitionId, displayName: draft.displayName, confirmation: "UPDATE SIETCHES" })
         });
       }
-      if (draft.password !== sietch.password) {
+      if (sietchPasswordDraftChanged(sietch, draft, Boolean(sietchPasswordTouched[sietch.partitionId]))) {
         actions.push({
           label: `Saving password for partition ${sietch.partitionId}`,
           run: () => mapsApi.updateSietches({ action: "set-password", partitionId: sietch.partitionId, password: draft.password, confirmation: "UPDATE SIETCHES" })
@@ -4770,13 +5635,13 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
   async function saveSurvivalSietches() {
     const actions = survivalSietchActions({ includeActive: true, includePartitions: true });
     if (!actions.length) return;
-    if (window.confirm(`Save ${actions.length} Survival_1 Sietch change${actions.length === 1 ? "" : "s"}?`)) {
-      await runTaskSequenceAndRefresh(actions, "Saving Sietch Changes", "Sietches Saved");
+    if (await confirmDialog(`Save ${actions.length} Survival_1 Sietch change${actions.length === 1 ? "" : "s"}?`)) {
+      await runTaskSequenceAndRefresh(actions, "Saving Sietch Changes", "Sietches Saved", { saveAcceptedMessage: "Sietch settings saved successfully. The map is starting and may take a few minutes to appear in-game after it is running." });
     }
   }
   async function saveSietchSettings(sietch: SietchRow) {
     const parent = mapRows.find((row) => String(row.map || "") === "Survival_1") || {};
-    const originalMemory = memoryInputValue(String(parent.memory || ""));
+    const originalMemory = memoryInputValue(partitionMemoryValue(memoryText, sietch.partitionId, String(parent.memory || "")));
     const memoryChanged = memory !== originalMemory;
     const running = /^(Ready|Running|Starting|Assigned|Warming)$/i.test(String(parent.status || ""));
     const actions: Array<{ label: string; run: () => Promise<{ task: Task }> }> = [];
@@ -4794,17 +5659,30 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         })
       });
     }
-    actions.push(...survivalSietchActions({ includeActive: false, includePartitions: true, partitionId: sietch.partitionId }));
+    const sietchActions = survivalSietchActions({ includeActive: false, includePartitions: true, partitionId: sietch.partitionId });
+    actions.push(...sietchActions);
     if (!actions.length) return;
-    if (window.confirm(`Save settings for ${sietch.displayName || `partition ${sietch.partitionId}`}?`)) {
-      await runTaskSequenceAndRefresh(actions, `Saving ${sietch.displayName || "Sietch"} Settings`, "Sietch Saved");
+    const childRunning = /^(Running|Warming)$/i.test(partitionStatusById.get(sietch.partitionId) || "");
+    const willRestart = childRunning && (memoryChanged || sietchActions.length > 0);
+    const confirmed = willRestart
+      ? await confirmDialog("Save these Sietch settings and restart this Sietch?", {
+        title: "Restart Required",
+        confirmLabel: "Save And Restart",
+        details: [
+          { label: "Sietch", value: sietch.displayName || `Partition ${sietch.partitionId}` },
+          { label: "Impact", value: "Players in this Sietch will be disconnected.", tone: "danger" }
+        ]
+      })
+      : await confirmDialog(`Save settings for ${sietch.displayName || `partition ${sietch.partitionId}`}?`);
+    if (confirmed) {
+      await runTaskSequenceAndRefresh(actions, `Saving ${sietch.displayName || "Sietch"} Settings`, "Sietch Saved", { saveAcceptedMessage: "Sietch settings saved successfully. The map is starting and may take a few minutes to appear in-game after it is running." });
     }
   }
   async function forceDespawnMap(row: Record<string, unknown>) {
     const rowName = String(row.map || "");
     if (!rowName || rowName === "Survival_1" || rowName === "Overmap") return;
     const target = String(row.partitionId || row.partition || rowName);
-    if (!window.confirm(`Force despawn ${rowName}?`)) return;
+    if (!(await confirmDialog(`Force despawn ${rowName}?`))) return;
     await runTaskAndRefresh(() => mapsApi.despawn(target, "DESPAWN MAP"), `Despawning ${rowName}`, "Map Despawned");
   }
   async function saveGame() {
@@ -4834,6 +5712,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     downloadText(name, text);
   }
   async function toggleAdvanced() {
+    if (!mapsLoaded || loading) return;
     if (advancedOpen) {
       setAdvancedOpen(false);
       return;
@@ -4846,17 +5725,20 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     setAdvancedOpen(true);
   }
   function toggleModifiers() {
+    if (!mapsLoaded || loading) return;
     const nextOpen = !modifiersOpen;
     setModifiersOpen(nextOpen);
     if (nextOpen) setAdvancedOpen(false);
   }
+  const modifiersAvailable = mapsLoaded && !loading;
+  const advancedAvailable = mapsLoaded && !loading;
   return <section className="panel maps-panel">
     <div className="panel-title"><h2>Maps & Sietches</h2><button disabled={loading} onClick={() => run(loadMaps)}>{loading ? "Refreshing..." : "Refresh Maps"}</button></div>
     {dirtySummary && <p className="dirty-note">Unsaved changes: {dirtySummary}</p>}
     {mapsResult && <HomeTaskResultCard result={mapsResult} />}
     <section className="action-section">
       <h4>Maps Overview</h4>
-      {loading && !mapRows.length && <div className="empty">Loading maps...</div>}
+      {loading && !mapRows.length && <div className="empty"><span className="loading-dots">Loading Maps</span></div>}
       {!loading && loadError && !mapRows.length && <div className="result-panel"><strong>Map list could not be loaded.</strong><p>{loadError}</p><button onClick={() => run(loadMaps)}>Retry</button></div>}
       {mapRows.length ? <div className="table-wrap maps-overview-table-wrap"><table className="maps-overview-table"><thead><tr><th>Map</th><th>Status</th><th>Mode</th><th>Memory</th><th className="actions-column">Action</th></tr></thead><tbody>{mapRows.map((row) => {
         const rowName = String(row.map || "");
@@ -4865,27 +5747,28 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         const memoryRow = memoryForMap(liveMemory, rowName, row);
         const canForceDespawn = mapCanForceDespawn(row);
         const mapSettingsDirty = isSelected && ((modeDraft !== modeInputValue(String(row.mode || "")) && String(row.mode) !== "Core Map") || memory !== memoryInputValue(String(row.memory || "")) || (isSurvivalRow && (activeSietchesDirty || primarySietchDirty)));
-        return <Fragment key={rowName}><tr><td>{rowName}</td><td>{String(row.status || "Not Available")}</td><td>{String(row.mode || "Not Available")}</td><td><MemoryUsageBar row={memoryRow} fallback={liveMemoryFallback(row)} /></td><td className="actions-column"><button className="stable-action-button" onClick={() => selectMap(row)}>{isSelected ? "Close" : "Edit"}</button></td></tr>
+        const primaryDraft = primarySurvivalSietch ? sietchDrafts[primarySurvivalSietch.partitionId] || { displayName: primarySurvivalSietch.displayName, password: primarySurvivalSietch.password } : undefined;
+        const displayStatus = isSurvivalRow && primarySurvivalSietch ? partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
+        return <Fragment key={rowName}><tr><td>{isSurvivalRow ? <SietchMapName name={rowName} sietch={primarySurvivalSietch} draft={primaryDraft} /> : rowName}</td><td>{displayStatus}</td><td>{String(row.mode || "Not Available")}</td><td><MemoryUsageBar row={memoryRow} fallback={liveMemoryFallback(row)} configuredLimit={row.memory} /></td><td className="actions-column"><button className="stable-action-button" onClick={() => selectMap(row)}>{isSelected ? "Close" : "Edit"}</button></td></tr>
           {isSelected && <tr className="inline-edit-row" key={`${rowName}-edit`}><td colSpan={5}>
             <section className="inline-edit-panel">
               <div className="panel-title"><h4>Edit {rowName}</h4></div>
-              <KeyValueGrid items={[["Status", row.status], ["Mode", row.mode], ["Memory", row.memory], ["Dimensions", row.dimensions]]} />
+              <KeyValueGrid items={[["Status", displayStatus], ["Mode", row.mode], ["Memory", row.memory], ["Dimensions", row.dimensions], ...(isSurvivalRow && primarySurvivalSietch ? [["Password", primarySurvivalSietch.passwordSet ? "Set" : "Not Set"] as [string, unknown]] : [])]} />
               <div className="action-line">
                 <label className="compact-select">Mode<select value={modeDraft} disabled={String(row.mode) === "Core Map"} onChange={(event) => setModeDraft(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option></select></label>
                 <label className="memory-number-field">Memory<input type="number" min="1" step="1" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="8" /></label>
                 <span className="unit-label">GB</span>
                 {isSurvivalRow && <label className="memory-number-field">Active Sietches<input type="number" min="1" max="64" step="1" value={activeSietches} onChange={(event) => setActiveSietches(event.target.value)} /></label>}
-                {isSurvivalRow && primarySurvivalSietch && primarySietchDraft && <label>Name<input value={primarySietchDraft.displayName} onChange={(event) => setSietchDrafts({ ...sietchDrafts, [primarySurvivalSietch.partitionId]: { ...primarySietchDraft, displayName: event.target.value } })} /></label>}
-                {isSurvivalRow && primarySurvivalSietch && primarySietchDraft && <label>Password<SecretInput value={primarySietchDraft.password} onChange={(event) => setSietchDrafts({ ...sietchDrafts, [primarySurvivalSietch.partitionId]: { ...primarySietchDraft, password: event.target.value } })} /></label>}
+                {isSurvivalRow && primarySurvivalSietch && primarySietchDraft && <label>Name<input value={primarySietchDraft.displayName} placeholder="Default name" onChange={(event) => setSietchDrafts({ ...sietchDrafts, [primarySurvivalSietch.partitionId]: { ...primarySietchDraft, displayName: event.target.value } })} /></label>}
+                {isSurvivalRow && primarySurvivalSietch && primarySietchDraft && <label>Password<SecretInput value={sietchPasswordInputValue(primarySurvivalSietch, primarySietchDraft, Boolean(sietchPasswordTouched[primarySurvivalSietch.partitionId]))} placeholder={passwordPlaceholder(sietchHasPassword(primarySurvivalSietch, primarySietchDraft))} onFocus={(event) => { if (!sietchPasswordTouched[primarySurvivalSietch.partitionId] && primarySurvivalSietch.passwordSet) event.currentTarget.select(); }} onChange={(event) => { setSietchPasswordTouched({ ...sietchPasswordTouched, [primarySurvivalSietch.partitionId]: true }); setSietchDrafts({ ...sietchDrafts, [primarySurvivalSietch.partitionId]: { ...primarySietchDraft, password: event.target.value } }); }} /></label>}
                 <button disabled={!mapSettingsDirty} onClick={() => run(() => saveSelectedMapSettings(row))}>Save Map Settings</button>
                 {rowName !== "Survival_1" && rowName !== "Overmap" && <button className="danger" disabled={!canForceDespawn} title={canForceDespawn ? "Force despawn this running map" : "Map is not running"} onClick={() => run(() => forceDespawnMap(row))}>Force Despawn</button>}
               </div>
-              {String(row.mode) === "Core Map" && <p className="muted">Core map mode is managed by the base server stack; only memory changes are exposed here.</p>}
               {isDeepDesert && <section className="action-section nested-action">
                 <div className="action-line deep-desert-dual-line">
                   <strong>Deep Desert Dual Setup:</strong>
                   <label className="compact-select"><select value={deepDesertDualAction} onChange={(event) => setDeepDesertDualAction(event.target.value)}><option value="enable">Enable</option><option value="disable">Disable</option></select></label>
-                  <button className={deepDesertDualAction === "disable" ? "danger" : ""} onClick={() => run(async () => { if (window.confirm(`${titleCase(deepDesertDualAction)} dual Deep Desert setup?`)) await runTaskAndRefresh(() => mapsApi.updateDeepdesert({ action: deepDesertDualAction, confirmation: "UPDATE DEEP DESERT" }), `Running Deep Desert ${deepDesertDualAction}`, "Deep Desert Updated"); })}>Save</button>
+                  <button className={deepDesertDualAction === "disable" ? "danger" : ""} onClick={() => run(async () => { if (await confirmDialog(`${titleCase(deepDesertDualAction)} dual Deep Desert setup?`)) await runTaskAndRefresh(() => mapsApi.updateDeepdesert({ action: deepDesertDualAction, confirmation: "UPDATE DEEP DESERT" }), `Running Deep Desert ${deepDesertDualAction}`, "Deep Desert Updated"); })}>Save</button>
                 </div>
                 {deepText && <MapCommandSummary text={deepText} />}
               </section>}
@@ -4894,18 +5777,20 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
           {isSurvivalRow && dynamicSurvivalSietchRows.map((sietch) => {
             const childSelected = selectedMapName === "Survival_1" && selectedPartitionId === sietch.partitionId;
             const draft = sietchDrafts[sietch.partitionId] || { displayName: sietch.displayName, password: sietch.password };
-            const childMemoryRow = memoryForMap(liveMemory, "Survival_1", { map: "Survival_1", partitionId: sietch.partitionId });
-            const childMemoryDirty = childSelected && memory !== memoryInputValue(String(row.memory || ""));
-            const childDirty = childMemoryDirty || draft.displayName !== sietch.displayName || draft.password !== sietch.password;
-            return <Fragment key={`sietch-${sietch.partitionId}`}><tr className="sietch-child-row"><td><span className="sietch-child-name">{sietch.displayName}</span><span className="sietch-child-meta">Partition {sietch.partitionId} / Dimension {sietch.dimension}</span></td><td>{sietch.active ? String(row.status || "Not Available") : "Not Running"}</td><td>Sietch</td><td><MemoryUsageBar row={childMemoryRow} fallback={sietch.active ? liveMemoryFallback(row) : "Unallocated"} /></td><td className="actions-column"><button className="stable-action-button" onClick={() => selectSietch(sietch)}>{childSelected ? "Close" : "Edit"}</button></td></tr>
+            const sietchMemory = partitionMemoryValue(memoryText, sietch.partitionId, String(row.memory || ""));
+            const childMemoryDirty = childSelected && memory !== memoryInputValue(sietchMemory);
+            const passwordTouched = Boolean(sietchPasswordTouched[sietch.partitionId]);
+            const childDirty = childMemoryDirty || draft.displayName !== sietch.displayName || sietchPasswordDraftChanged(sietch, draft, passwordTouched);
+            const childStatus = partitionStatusById.get(sietch.partitionId) || (sietch.active ? String(row.status || "Not Available") : "Not Running");
+            return <Fragment key={`sietch-${sietch.partitionId}`}><tr className="sietch-child-row"><td><span className="sietch-child-name"><SietchName sietch={sietch} draft={draft} /></span><span className="sietch-child-meta">Partition {sietch.partitionId} / Dimension {sietch.dimension}</span></td><td>{childStatus}</td><td>Sietch</td><td>{sietch.active ? <MemoryUsageBar row={memoryForMap(liveMemory, "Survival_1", { ...row, partitionId: sietch.partitionId })} fallback={liveMemoryFallback(row)} configuredLimit={sietchMemory} /> : <span className="muted">Unallocated</span>}</td><td className="actions-column"><button className="stable-action-button" onClick={() => selectSietch(sietch)}>{childSelected ? "Close" : "Edit"}</button></td></tr>
               {childSelected && <tr className="inline-edit-row"><td colSpan={5}><section className="inline-edit-panel">
                 <div className="panel-title"><h4>Edit {sietch.displayName}</h4></div>
-                <KeyValueGrid items={[["Partition", sietch.partitionId], ["Dimension", sietch.dimension], ["Status", sietch.active ? row.status : "Not Running"]]} />
+                <KeyValueGrid items={[["Partition", sietch.partitionId], ["Dimension", sietch.dimension], ["Status", childStatus], ["Memory", sietchMemory], ["Password", sietch.passwordSet ? "Set" : "Not Set"]]} />
                 <div className="action-line">
                   <label className="memory-number-field">Memory<input type="number" min="1" step="1" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="8" /></label>
                   <span className="unit-label">GB</span>
-                  <label>Name<input value={draft.displayName} onChange={(event) => setSietchDrafts({ ...sietchDrafts, [sietch.partitionId]: { ...draft, displayName: event.target.value } })} /></label>
-                  <label>Password<SecretInput value={draft.password} onChange={(event) => setSietchDrafts({ ...sietchDrafts, [sietch.partitionId]: { ...draft, password: event.target.value } })} /></label>
+                  <label>Name<input value={draft.displayName} placeholder="Default name" onChange={(event) => setSietchDrafts({ ...sietchDrafts, [sietch.partitionId]: { ...draft, displayName: event.target.value } })} /></label>
+                  <label>Password<SecretInput value={sietchPasswordInputValue(sietch, draft, Boolean(sietchPasswordTouched[sietch.partitionId]))} placeholder={passwordPlaceholder(sietchHasPassword(sietch, draft))} onFocus={(event) => { if (!sietchPasswordTouched[sietch.partitionId] && sietch.passwordSet) event.currentTarget.select(); }} onChange={(event) => { setSietchPasswordTouched({ ...sietchPasswordTouched, [sietch.partitionId]: true }); setSietchDrafts({ ...sietchDrafts, [sietch.partitionId]: { ...draft, password: event.target.value } }); }} /></label>
                   <button disabled={!childDirty} onClick={() => run(() => saveSietchSettings(sietch))}>Save Sietch Settings</button>
                 </div>
               </section></td></tr>}
@@ -4916,9 +5801,9 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       {loadError && mapRows.length ? <p className="danger-note">Some map data could not be refreshed: {loadError}</p> : null}
       {memoryError && <p className="danger-note">Live memory could not be read: {memoryError}</p>}
     </section>
-    <div className={`playerAdmin_toggle maps-modifiers-toggle ${modifiersOpen ? "open" : ""}`}>
-      <button className="playerAdmin_toggleHeader" aria-label={modifiersOpen ? "Collapse Interactive Modifiers" : "Expand Interactive Modifiers"} onClick={toggleModifiers}>{modifiersOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Interactive Modifiers</span></button>
-      {modifiersOpen && <div className="playerAdmin_toggleBody"><div className="settings-tabs" role="tablist" aria-label="INI modifier editor">
+    <div className={`playerAdmin_toggle maps-modifiers-toggle ${modifiersOpen && modifiersAvailable ? "open" : ""}`}>
+      <button className="playerAdmin_toggleHeader" disabled={!modifiersAvailable} aria-label={modifiersOpen && modifiersAvailable ? "Collapse Interactive Modifiers" : "Expand Interactive Modifiers"} onClick={toggleModifiers}>{modifiersOpen && modifiersAvailable ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Interactive Modifiers</span></button>
+      {modifiersOpen && modifiersAvailable && <div className="playerAdmin_toggleBody"><div className="settings-tabs" role="tablist" aria-label="INI modifier editor">
         <button className={settingsTab === "engine" ? "active" : ""} role="tab" aria-selected={settingsTab === "engine"} onClick={() => setSettingsTab("engine")}>UserEngine</button>
         <button className={settingsTab === "game" ? "active" : ""} role="tab" aria-selected={settingsTab === "game"} onClick={() => setSettingsTab("game")}>UserGame</button>
       </div>
@@ -4938,11 +5823,11 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         <div className="action-row"><button disabled={!gameDirty.length || !userGameName} onClick={() => run(saveGame)}>Save</button><button disabled={!gameDirty.length} onClick={() => setGameDraft(gameValues)}>Discard Changes</button></div>
       </>}</div>}
     </div>
-    <div className={`playerAdmin_toggle maps-advanced-toggle ${advancedOpen ? "open" : ""}`}>
-      <button className="playerAdmin_toggleHeader" onClick={() => run(toggleAdvanced)}>{advancedOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Advanced</span></button>
-      {advancedOpen && <div className="playerAdmin_toggleBody"><div className="advanced-grid">
-        <article className="raw-editor-card"><div className="panel-title"><h4>UserEngine.ini</h4><div className="action-row"><button onClick={() => downloadIni("engine")}>Download</button><label className="button-link">Import<input className="hidden-file-input" type="file" accept=".ini,text/plain" onChange={(event) => run(async () => { await importIni("engine", event.target.files?.[0] || null); })} /></label></div></div><textarea value={rawEngine} onChange={(event) => setRawEngine(event.target.value)} rows={14} /><div className="action-row"><button disabled={!rawEngineDirty} onClick={() => run(() => saveRaw("engine"))}>Save</button><button disabled={!rawEngineDirty} onClick={() => setRawEngine(rawEngineOriginal)}>Discard Changes</button><button className="danger" onClick={() => run(async () => { if (window.confirm("Restore UserEngine gameplay defaults? Server name, password, Port, and IGWPort will be preserved.")) await runTaskAndRefresh(() => mapsApi.resetUserSettings({ scope: "engine", confirmation: "RESTORE MAP DEFAULTS" }), "Restoring UserEngine defaults", "UserEngine Defaults Restored"); await loadUserEngine(); })}>Restore Defaults</button></div></article>
-        <article className="raw-editor-card"><div className="panel-title"><h4>UserGame.ini</h4><div className="action-row"><button onClick={() => downloadIni("game")}>Download</button><label className="button-link">Import<input className="hidden-file-input" type="file" accept=".ini,text/plain" onChange={(event) => run(async () => { await importIni("game", event.target.files?.[0] || null); })} /></label></div></div><textarea value={rawGame} onChange={(event) => setRawGame(event.target.value)} rows={14} /><div className="action-row"><button disabled={!rawGameDirty} onClick={() => run(() => saveRaw("game"))}>Save</button><button disabled={!rawGameDirty} onClick={() => setRawGame(rawGameOriginal)}>Discard Changes</button><button disabled={!userGameName} className="danger" onClick={() => run(async () => { if (window.confirm(`Restore UserGame defaults for ${userGameName}${effectiveUserGamePartitionId ? ` partition ${effectiveUserGamePartitionId}` : ""}?`)) await runTaskAndRefresh(() => mapsApi.resetUserSettings({ scope: effectiveUserGamePartitionId ? "partition" : "map", map: userGameName, partitionId: effectiveUserGamePartitionId || undefined, confirmation: "RESTORE MAP DEFAULTS" }), "Restoring UserGame defaults", "UserGame Defaults Restored"); await loadSelectedSettings(userGameName, effectiveUserGamePartitionId || undefined); })}>Restore Defaults</button></div></article>
+    <div className={`playerAdmin_toggle maps-advanced-toggle ${advancedOpen && advancedAvailable ? "open" : ""}`}>
+      <button className="playerAdmin_toggleHeader" disabled={!advancedAvailable} onClick={() => run(toggleAdvanced)}>{advancedOpen && advancedAvailable ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Advanced</span></button>
+      {advancedOpen && advancedAvailable && <div className="playerAdmin_toggleBody"><div className="advanced-grid">
+        <article className="raw-editor-card"><div className="panel-title"><h4>UserEngine.ini</h4><div className="action-row"><button onClick={() => downloadIni("engine")}>Download</button><label className="button-link">Import<input className="hidden-file-input" type="file" accept=".ini,text/plain" onChange={(event) => run(async () => { await importIni("engine", event.target.files?.[0] || null); })} /></label></div></div><textarea value={rawEngine} onChange={(event) => setRawEngine(event.target.value)} rows={14} /><div className="action-row"><button disabled={!rawEngineDirty} onClick={() => run(() => saveRaw("engine"))}>Save</button><button disabled={!rawEngineDirty} onClick={() => setRawEngine(rawEngineOriginal)}>Discard Changes</button><button className="danger" onClick={() => run(async () => { if (await confirmDialog("Restore UserEngine gameplay defaults? Server name, password, Port, and IGWPort will be preserved.")) await runTaskAndRefresh(() => mapsApi.resetUserSettings({ scope: "engine", confirmation: "RESTORE MAP DEFAULTS" }), "Restoring UserEngine defaults", "UserEngine Defaults Restored"); await loadUserEngine(); })}>Restore Defaults</button></div></article>
+        <article className="raw-editor-card"><div className="panel-title"><h4>UserGame.ini</h4><div className="action-row"><button onClick={() => downloadIni("game")}>Download</button><label className="button-link">Import<input className="hidden-file-input" type="file" accept=".ini,text/plain" onChange={(event) => run(async () => { await importIni("game", event.target.files?.[0] || null); })} /></label></div></div><textarea value={rawGame} onChange={(event) => setRawGame(event.target.value)} rows={14} /><div className="action-row"><button disabled={!rawGameDirty} onClick={() => run(() => saveRaw("game"))}>Save</button><button disabled={!rawGameDirty} onClick={() => setRawGame(rawGameOriginal)}>Discard Changes</button><button disabled={!userGameName} className="danger" onClick={() => run(async () => { if (await confirmDialog(`Restore UserGame defaults for ${userGameName}${effectiveUserGamePartitionId ? ` partition ${effectiveUserGamePartitionId}` : ""}?`)) await runTaskAndRefresh(() => mapsApi.resetUserSettings({ scope: effectiveUserGamePartitionId ? "partition" : "map", map: userGameName, partitionId: effectiveUserGamePartitionId || undefined, confirmation: "RESTORE MAP DEFAULTS" }), "Restoring UserGame defaults", "UserGame Defaults Restored"); await loadSelectedSettings(userGameName, effectiveUserGamePartitionId || undefined); })}>Restore Defaults</button></div></article>
       </div></div>}
     </div>
   </section>;
@@ -4977,14 +5862,49 @@ function SettingControl({ field, value, onChange }: { field: UserSettingField; v
   </label>;
 }
 
-function MemoryUsageBar({ row, fallback }: { row: LiveMapMemoryRow | null; fallback: string }) {
+function MemoryUsageBar({ row, fallback, configuredLimit }: { row: LiveMapMemoryRow | null; fallback: string; configuredLimit?: unknown }) {
   if (!row) return <span className="muted">{fallback}</span>;
-  const percent = Math.max(0, Math.min(100, Number(row.percent) || 0));
+  const configuredLimitBytes = memoryValueToBytes(String(configuredLimit || ""));
+  const limitBytes = configuredLimitBytes || row.limitBytes;
+  const percent = limitBytes > 0 ? Math.max(0, Math.min(100, (row.usedBytes / limitBytes) * 100)) : Math.max(0, Math.min(100, Number(row.percent) || 0));
   return <div className="memory-usage-cell">
     <div className="memory-usage-bar"><span style={{ width: `${percent}%` }} /></div>
     <strong>{percent.toFixed(1)}%</strong>
-    <span>{formatBytes(row.usedBytes)} / {formatBytes(row.limitBytes)}</span>
+    <span>{formatBytes(row.usedBytes)} / {formatBytes(limitBytes)}</span>
   </div>;
+}
+
+function ConfiguredMemoryValue({ value }: { value: unknown }) {
+  return <span className="configured-memory-value">{formatMemoryValue(String(value || ""))}</span>;
+}
+
+function sietchPasswordDraftChanged(row: SietchRow, draft: { password: string }, touched = false) {
+  if (!touched) return false;
+  if (row.passwordSet) return draft.password !== SIETCH_PASSWORD_MASK;
+  return Boolean(draft.password);
+}
+
+function sietchHasPassword(row: SietchRow | null | undefined, draft?: { password: string }) {
+  return Boolean(row?.passwordSet || row?.password || (draft?.password && draft.password !== SIETCH_PASSWORD_MASK));
+}
+
+function sietchPasswordInputValue(row: SietchRow, draft: { password: string }, touched: boolean) {
+  if (touched) return draft.password;
+  return row.passwordSet ? SIETCH_PASSWORD_MASK : draft.password;
+}
+
+function SietchMapName({ name, sietch, draft }: { name: string; sietch?: SietchRow | null; draft?: { password: string } }) {
+  const passwordSet = sietchHasPassword(sietch, draft);
+  const label = sietch?.displayName ? `${name} (${sietch.displayName})` : name;
+  return <span className="map-name-with-lock">{passwordSet && <Lock size={15} aria-label="Password set" />}<span>{label}</span></span>;
+}
+
+function SietchName({ sietch, draft }: { sietch: SietchRow; draft?: { password: string } }) {
+  return <span className="map-name-with-lock sietch-name-with-lock">{sietchHasPassword(sietch, draft) && <Lock size={15} aria-label="Password set" />}<span>{sietch.displayName}</span></span>;
+}
+
+function passwordPlaceholder(passwordSet: boolean) {
+  return "Empty for none";
 }
 
 function groupSettingsFields(fields: UserSettingField[]): [string, UserSettingField[]][] {
@@ -5023,7 +5943,8 @@ function valuesForFields(values: Record<string, string>, fields: UserSettingFiel
   return Object.fromEntries(fields.map((field) => [field.id, String(values[field.id] ?? field.default ?? "")]));
 }
 
-type SietchRow = { partitionId: string; dimension: string; displayName: string; password: string; active: boolean };
+type SietchRow = { partitionId: string; dimension: string; displayName: string; password: string; passwordSet: boolean; active: boolean };
+const SIETCH_PASSWORD_MASK = "********";
 
 function parseSietchRows(text: string, idsText = ""): SietchRow[] {
   const rows: SietchRow[] = [];
@@ -5036,9 +5957,11 @@ function parseSietchRows(text: string, idsText = ""): SietchRow[] {
     const dimension = partitionMatch[1];
     const partitionId = ids[dimensionIndex] || partitionMatch[1];
     const displayName = (line.match(/\b(?:display|name)\s*[:=]\s*([^|,\t]+)/i)?.[1] || line.match(/\bSietch\s+([A-Za-z0-9 _-]+)/i)?.[0] || `Sietch ${partitionId}`).trim();
-    const password = (line.match(/\bpassword\s*[:=]\s*([^|,\t]+)/i)?.[1] || "").trim();
+    const passwordValue = (line.match(/\bpassword\s*[:=]\s*([^|,\t]+)/i)?.[1] || line.match(/\((?:un)?set\)\s*$/i)?.[0] || "").trim();
+    const passwordSet = /\(set\)|\bset\b|true|yes/i.test(passwordValue) || /\(set\)\s*$/i.test(line);
+    const password = /\(set\)|\(unset\)|\bset\b|\bunset\b/i.test(passwordValue) ? "" : passwordValue;
     const active = !/\binactive|disabled|stopped\b/i.test(line);
-    rows.push({ partitionId, dimension, displayName, password, active });
+    rows.push({ partitionId, dimension, displayName, password, passwordSet: passwordSet || Boolean(password), active });
     dimensionIndex += 1;
   }
   const unique = new globalThis.Map<string, SietchRow>();
@@ -5049,16 +5972,26 @@ function parseSietchRows(text: string, idsText = ""): SietchRow[] {
 function memoryForMap(rows: LiveMapMemoryRow[], map: string, row?: Record<string, unknown>) {
   const normalized = map.toLowerCase();
   const partitionId = String(row?.partitionId || row?.partition || "").trim();
+  const containerMap = normalized.replace(/_/g, "-");
+  const partitionMatch = partitionId ? rows.find((memoryRow) => {
+    const container = memoryRow.container.toLowerCase();
+    return new RegExp(`-${escapeRegExp(partitionId)}$`).test(container);
+  }) || null : null;
+  if (partitionMatch) return partitionMatch;
+  if (partitionId && normalized === "survival_1") return null;
   return rows.find((memoryRow) => {
     const memoryMap = memoryRow.map.toLowerCase();
     const container = memoryRow.container.toLowerCase();
-    const containerMap = normalized.replace(/_/g, "-");
-    if (partitionId && new RegExp(`-${escapeRegExp(partitionId)}$`).test(container)) return true;
     if (memoryMap === normalized) return true;
     if (container === `dune-server-${containerMap}`) return true;
-    if (!partitionId && container.startsWith(`dune-server-${containerMap}-`)) return true;
     return false;
   }) || null;
+}
+
+function partitionMemoryValue(memoryText: string, partitionId: string, fallback: string) {
+  const target = `Survival_1:${partitionId}`;
+  const row = parseMemoryRows(memoryText).find((item) => String(item.map || "") === target);
+  return String(row?.memory || fallback || "");
 }
 
 function liveMemoryFallback(row: Record<string, unknown>) {
@@ -5080,27 +6013,37 @@ function downloadText(filename: string, text: string) {
 const MAPS_RESULT_KEY = "dune.maps.result";
 
 function loadPersistedMapsResult(): HomeTaskResult | null {
+  return loadPersistedMapsTask()?.result || null;
+}
+
+function loadPersistedMapsTask(): PersistedMapsTask | null {
   try {
     const raw = window.localStorage.getItem(MAPS_RESULT_KEY);
-    const result = raw ? JSON.parse(raw) as HomeTaskResult : null;
-    if (result?.status === "failed" || result?.status === "running") {
-      window.localStorage.removeItem(MAPS_RESULT_KEY);
-      return null;
-    }
-    return result;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedMapsTask;
+    if (parsed?.result?.status === "running" && !parsed.taskId) return null;
+    return parsed?.result ? parsed : null;
   } catch {
     return null;
   }
 }
 
 function persistMapsResult(result: HomeTaskResult | null) {
+  persistMapsTask(result ? { result } : null);
+}
+
+function persistMapsTask(state: PersistedMapsTask | null) {
   try {
-    if (result?.status === "failed" || result?.status === "running") window.localStorage.removeItem(MAPS_RESULT_KEY);
-    else if (result) window.localStorage.setItem(MAPS_RESULT_KEY, JSON.stringify(result));
-    else window.localStorage.removeItem(MAPS_RESULT_KEY);
+    if (!state?.result) window.localStorage.removeItem(MAPS_RESULT_KEY);
+    else window.localStorage.setItem(MAPS_RESULT_KEY, JSON.stringify(state));
   } catch {
     // Browser storage can be unavailable in hardened modes.
   }
+}
+
+function isMissingPersistedTaskError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /task not found|404/i.test(message);
 }
 
 type LiveMapPoint = { px: number; py: number; inBounds: boolean };
@@ -5172,6 +6115,11 @@ function friendlyMarkerType(type: string) {
   }[type.toLowerCase()] || titleCase(type.replaceAll("_", " "));
 }
 
+function liveMapPlayerStatus(marker: LiveMapMarker) {
+  if (String(marker.type || "").toLowerCase() !== "player") return String(marker.online_status || "").toLowerCase();
+  return String(marker.online_status || "").toLowerCase() === "online" ? "online" : "offline";
+}
+
 function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
   const [gameUpdateTask, setGameUpdateTask] = useState<Task | null>(() => loadPersistedUpdateTask(GAME_UPDATE_TASK_KEY));
   const [stackUpdateTask, setStackUpdateTask] = useState<Task | null>(() => loadPersistedUpdateTask(STACK_UPDATE_TASK_KEY));
@@ -5189,9 +6137,9 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
   const autoGameTimerReady = /^(active|enabled)$/i.test(autoGameTimerValue);
   const autoGameSaving = autoGameResult?.status === "running";
   const autoGameLoaded = Boolean(autoGame);
-  const autoGameDisplayActive = autoGameSaving ? autoGameEnabled : autoGameEnabled && autoGameTimerReady;
+  const autoGameDisplayActive = autoGameEnabled;
   const autoGameStatusLabel = !autoGameLoaded && !autoGameSaving ? "Checking" : autoGameDisplayActive ? "Enabled" : "Disabled";
-  const autoGameDisplayTimerLabel = !autoGameLoaded && !autoGameSaving ? "Checking" : autoGameSaving ? autoGameEnabled ? "Activating" : "Deactivating" : autoGameTimerLabel;
+  const autoGameDisplayTimerLabel = !autoGameLoaded && !autoGameSaving ? "Checking" : autoGameSaving ? autoGameEnabled ? "Activating" : "Deactivating" : autoGameEnabled ? autoGameTimerLabel : "Inactive";
   async function checkGame() {
     setGameStatus({ status: "Checking...", current: "", latest: "", reason: "" });
     const final = await waitForTaskSilently((await updatesApi.checkGame()).task);
@@ -5217,7 +6165,7 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
     }
   }
   async function applyGameUpdate() {
-    if (!window.confirm("Apply the game server update now?")) return;
+    if (!(await confirmDialog("Apply the game server update now?"))) return;
     setGameSteamcmdFixTask(null);
     const response = await updatesApi.applyGame();
     setGameUpdateTask(response.task);
@@ -5230,7 +6178,7 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
     await waitForTaskWithUpdates(response.task, setGameSteamcmdFixTask);
   }
   async function applyStackUpdate() {
-    if (!window.confirm("Apply the latest RedBlink stack update now?")) return;
+    if (!(await confirmDialog("Apply the latest RedBlink stack update now?"))) return;
     const response = await updatesApi.applyStack();
     setStackUpdateTask(response.task);
     persistUpdateTask(STACK_UPDATE_TASK_KEY, response.task);
@@ -5333,17 +6281,17 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
     return () => { cancelled = true; };
   }, [stackUpdateTask?.id, stackUpdateTask?.status]);
   useEffect(() => {
-    if (gameUpdateTask?.status !== "succeeded") return;
+    if (!gameUpdateTask || !isTerminalTask(gameUpdateTask.status)) return;
     const id = window.setTimeout(() => setGameUpdateTask(null), UPDATE_RESULT_DISMISS_MS);
     return () => window.clearTimeout(id);
   }, [gameUpdateTask?.id, gameUpdateTask?.status]);
   useEffect(() => {
-    if (stackUpdateTask?.status !== "succeeded") return;
+    if (!stackUpdateTask || !isTerminalTask(stackUpdateTask.status)) return;
     const id = window.setTimeout(() => setStackUpdateTask(null), UPDATE_RESULT_DISMISS_MS);
     return () => window.clearTimeout(id);
   }, [stackUpdateTask?.id, stackUpdateTask?.status]);
   useEffect(() => {
-    if (!autoGameResult || autoGameResult.status === "running" || autoGameResult.status === "failed") return;
+    if (!autoGameResult || autoGameResult.status === "running") return;
     const id = window.setTimeout(() => setAutoGameResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [autoGameResult?.status, autoGameResult?.title]);
@@ -5377,7 +6325,7 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
         {stackUpdateTask && <StackUpdateProgress task={stackUpdateTask} onRetry={applyStackUpdate} />}
       </section>
       <section className="action-section">
-        <div className="panel-title"><h4>Automatic Game Updates</h4><StatusPill value={autoGameStatusLabel} /></div>
+        <div className="panel-title"><h4>Automatic Game Updates</h4><label className={`switch-checkbox ${autoGameEnabled ? "enabled" : "disabled"}`}><input type="checkbox" disabled={autoGameLoading || autoGameSaving} checked={autoGameEnabled} onChange={(event) => setAutoGameEnabled(event.target.checked)} /><span className="switch-label">Auto Updates</span><strong className="switch-state">{autoGameEnabled ? "ON" : "OFF"}</strong></label></div>
         <KeyValueGrid items={[
           ["Current Status", autoGameStatusLabel],
           ["Check Time (Local Server Time)", toHourMinuteTime(autoGameValues.auto_update_time || autoGameTime)],
@@ -5385,11 +6333,10 @@ function UpdatesPanel({ setTask }: { setTask: (task: Task) => void }) {
         ]} />
         {commandStatusSummary(autoGame).reason && <p className="danger-note">{commandStatusSummary(autoGame).reason}</p>}
         <div className="action-line schedule-action-line auto-game-action-line">
-          <label className="checkbox-row"><input type="checkbox" disabled={autoGameLoading || autoGameSaving} checked={autoGameEnabled} onChange={(event) => setAutoGameEnabled(event.target.checked)} /> Enable</label>
           <label className="compact-select">Daily Check Time<input type="time" step="60" pattern="[0-2][0-9]:[0-5][0-9]" disabled={autoGameSaving} value={autoGameTime} onChange={(event) => setAutoGameTime(sanitizeTimeInput(event.target.value))} placeholder="05:00" /></label>
           <button disabled={autoGameLoading || autoGameSaving} onClick={saveAutoGame}>Save Auto Updates</button>
           {autoGameResult && <span className={`inline-task-result result-${autoGameResult.status === "succeeded" ? "ok" : autoGameResult.status === "failed" ? "fail" : "running"}`}>
-            <strong className={autoGameResult.status === "running" ? "loading-dots" : ""}>{autoGameResult.title}</strong>
+            <strong className={autoGameResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(autoGameResult.title, autoGameResult.status === "running")}</strong>
           </span>}
         </div>
       </section>
@@ -5482,13 +6429,14 @@ function doctorAdvice(issue: string) {
   };
 }
 
-function PlayerSummary({ detail, fallback, dbPlayerId, actionPlayerId }: { detail: Record<string, unknown> | null; fallback: Record<string, unknown>; dbPlayerId: string; actionPlayerId: string }) {
+function PlayerSummary({ detail, fallback, dbPlayerId, actionPlayerId, actions }: { detail: Record<string, unknown> | null; fallback: Record<string, unknown>; dbPlayerId: string; actionPlayerId: string; actions?: React.ReactNode }) {
   const player = ((detail?.player as Record<string, unknown> | undefined) || fallback) as Record<string, unknown>;
+  const status = firstDefined(player.online_status, fallback.online_status);
   return <section className="action-section">
     <h4>Player Summary</h4>
     <KeyValueGrid items={[
       ["Character", firstDefined(player.character_name, player.name, fallback.character_name)],
-      ["Online status", firstDefined(player.online_status, fallback.online_status)],
+      ["Status", <PlayerStatusCell value={status} />],
       ["Map", firstDefined(player.map, player.world, fallback.map)],
       ["DB actor/player ID", dbPlayerId || "missing"],
       ["Admin action ID", actionPlayerId || "missing"],
@@ -5496,6 +6444,7 @@ function PlayerSummary({ detail, fallback, dbPlayerId, actionPlayerId }: { detai
       ["Funcom/FLS ID", firstDefined(player.funcom_id, player.fls_id, fallback.funcom_id, fallback.fls_id)],
       ["Controller ID", firstDefined(player.player_controller_id, fallback.player_controller_id)]
     ]} />
+    {actions}
   </section>;
 }
 
@@ -5520,7 +6469,7 @@ function RuntimeSettingsSummary({ settings }: { settings: Record<string, unknown
     <section className="action-section">
       <h4>Runtime Configuration</h4>
       <KeyValueGrid items={[
-        ["App name", firstDefined(config.appName, config.app_name, "Arrakis Server Console")],
+        ["App name", firstDefined(config.appName, config.app_name, "RedBlink Dune Docker Console")],
         ["Repo root", config.repoRoot],
         ["Auth", config.authEnabled === false ? "Disabled" : "Enabled"],
         ["Secure Cookies", booleanLabel(config.secureCookies)],
@@ -5635,8 +6584,14 @@ function mergeMapAndMemoryRows(mapsText: string, memoryText: string, serversText
     const map = String(row.map || "");
     if (!map) continue;
     const existing = serverRows.get(map);
+    const existingDimension = Number(existing?.dimension ?? Number.POSITIVE_INFINITY);
+    const rowDimension = Number(row.dimension ?? Number.POSITIVE_INFINITY);
+    const existingPartitionId = Number(existing?.partitionId ?? Number.POSITIVE_INFINITY);
+    const rowPartitionId = Number(row.partitionId ?? Number.POSITIVE_INFINITY);
+    const useRowAsBase = !existing || rowDimension < existingDimension || (rowDimension === existingDimension && rowPartitionId < existingPartitionId);
+    const base = useRowAsBase ? row : existing;
     serverRows.set(map, {
-      ...row,
+      ...base,
       status: strongestMapStatus(String(existing?.status || ""), String(row.status || "")),
       dimensions: existing?.dimensions ? `${String(existing.dimensions)}, ${String(row.label || row.partitionId)}` : String(row.label || row.partitionId || "")
     });
@@ -5644,6 +6599,7 @@ function mergeMapAndMemoryRows(mapsText: string, memoryText: string, serversText
   for (const row of parseMemoryRows(memoryText)) {
     const map = String(row.map || "");
     if (!map) continue;
+    if (map.includes(":")) continue;
     const server = serverRows.get(map);
     rows.set(map, {
       map,
@@ -5675,8 +6631,8 @@ function mapRuntimeStatus(row: { assignedServer?: unknown; ready?: unknown; aliv
   const assigned = Boolean(String(row.assignedServer || "").trim());
   const ready = /^true$/i.test(String(row.ready || "").trim());
   const alive = /^true$/i.test(String(row.alive || "").trim());
-  if (ready || alive) return "Running";
-  if (assigned) return "Warming";
+  if (ready) return "Running";
+  if (assigned || alive) return "Warming";
   return "Not Running";
 }
 
@@ -5708,6 +6664,15 @@ function memoryInputValue(value: string) {
   const match = String(value || "").match(/(\d+(?:\.\d+)?)\s*(GB|GiB?|MB|MiB?|[gGmM])?/);
   if (!match) return "8";
   return match[1];
+}
+
+function memoryValueToBytes(value: string) {
+  const match = String(value || "").match(/(\d+(?:\.\d+)?)\s*(GiB?|GB|MiB?|MB|[gGmM])?/i);
+  if (!match) return 0;
+  const amount = Number(match[1]) || 0;
+  const unit = (match[2] || "GB").toLowerCase();
+  const multiplier = unit.startsWith("m") ? 1024 ** 2 : 1024 ** 3;
+  return amount * multiplier;
 }
 
 function formatMemoryValue(value: string) {
@@ -5764,7 +6729,7 @@ function KeyValueGrid({ items }: { items: [string, unknown][] }) {
   if (!visible.length) return <div className="empty">No summary values available.</div>;
   return <div className="key-value-grid">{visible.map(([key, value]) => <div className="key-value-item" key={key}>
     <span>{key}</span>
-    <strong>{formatCell(value)}</strong>
+    <strong>{isValidElement(value) ? value : formatCell(value)}</strong>
   </div>)}</div>;
 }
 
@@ -5782,10 +6747,10 @@ function OutputPanel({ title, text, action, onAction }: { title: string; text: s
   return <section className="panel"><h2>{title}</h2><button onClick={onAction}>{action}</button><TechnicalDetails text={text} /></section>;
 }
 
-function DataTable({ rows, columns, onRowClick, action, actionClassName = "", tableClassName = "" }: { rows: Record<string, unknown>[]; columns?: string[]; onRowClick?: (row: Record<string, unknown>) => void; action?: (row: Record<string, unknown>) => React.ReactNode; actionClassName?: string; tableClassName?: string }) {
+function DataTable({ rows, columns, onRowClick, action, actionClassName = "", tableClassName = "", renderCell, emptyMessage = "No rows." }: { rows: Record<string, unknown>[]; columns?: string[]; onRowClick?: (row: Record<string, unknown>) => void; action?: (row: Record<string, unknown>) => React.ReactNode; actionClassName?: string; tableClassName?: string; renderCell?: (row: Record<string, unknown>, column: string) => React.ReactNode; emptyMessage?: string }) {
   const cols = columns?.length ? columns : Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 8);
-  if (!rows.length) return <div className="empty">No rows.</div>;
-  return <div className="table-wrap"><table className={tableClassName}><thead><tr>{cols.map((col) => <th key={col}>{friendlyColumnName(col)}</th>)}{action && <th className={actionClassName}>Actions</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} onClick={() => onRowClick?.(row)} className={onRowClick ? "clickable" : ""}>{cols.map((col) => <td key={col}>{formatCell(row[col])}</td>)}{action && <td className={actionClassName}>{action(row)}</td>}</tr>)}</tbody></table></div>;
+  if (!rows.length) return <div className="empty">{emptyMessage}</div>;
+  return <div className="table-wrap"><table className={tableClassName}><thead><tr>{cols.map((col) => <th key={col}>{friendlyColumnName(col)}</th>)}{action && <th className={actionClassName}>Actions</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} onClick={() => onRowClick?.(row)} className={onRowClick ? "clickable" : ""}>{cols.map((col) => <td key={col}>{renderCell ? renderCell(row, col) : formatCell(row[col])}</td>)}{action && <td className={actionClassName}>{action(row)}</td>}</tr>)}</tbody></table></div>;
 }
 
 function formatCell(value: unknown) {
@@ -5794,13 +6759,18 @@ function formatCell(value: unknown) {
   return formatDisplayValue(value);
 }
 
+function PlayerStatusCell({ value }: { value: unknown }) {
+  const online = String(value || "").toLowerCase() === "online";
+  return <span className={`player-status-cell ${online ? "online" : "offline"}`}>{online && <span className="player-status-dot" />}<span>{online ? "Online" : "Offline"}</span></span>;
+}
+
 function friendlyColumnName(value: string) {
   const labels: Record<string, string> = {
     actor_id: "Actor ID",
     character_name: "Character Name",
     account_id: "Account ID",
     action_player_id: "Admin Action ID",
-    online_status: "Online Status",
+    online_status: "Status",
     fls_id: "FLS ID",
     display_name: "Name",
     category: "Category",
@@ -6331,7 +7301,7 @@ function inferStatus(text: string) {
 }
 
 function normalizeStatus(value: string) {
-  if (/ready|ok|healthy|running|up|succeeded|success|checked|found|available|enabled/i.test(value)) return "pass";
+  if (/ready|ok|healthy|running|up|succeeded|success|checked|found|available|enabled|connected|saved/i.test(value)) return "pass";
   if (/failed|failure|error|fatal|unhealthy|down|missing|blocked|disabled/i.test(value)) return "fail";
   if (/attention|warning|warn|not ready|starting|waiting|partial|unverified|experimental|unavailable|checking/i.test(value)) return "warn";
   return "info";
@@ -6339,6 +7309,7 @@ function normalizeStatus(value: string) {
 
 function formatMutationResult(result: unknown) {
   const record = result && typeof result === "object" ? result as Record<string, unknown> : {};
+  if (!result || (typeof result === "object" && !Array.isArray(result) && Object.keys(record).length === 0)) return "Action completed.";
   if (record.supported === false) return `Unsupported: ${String(record.reason || record.error || "This action is not available.")}`;
   if (record.ok === false) return `Failed: ${String(record.error || record.reason || "The action did not complete.")}`;
   if (record.message) return String(record.message);
@@ -6348,7 +7319,7 @@ function formatMutationResult(result: unknown) {
   if (record.status) return `Action status: ${String(record.status)}`;
   if (record.backup) return "Action completed after creating a database backup.";
   if (record.ok === true) return "Action completed.";
-  return summarizeCommandText(JSON.stringify(record || result));
+  return summarizeCommandText(JSON.stringify(record || result) || "");
 }
 
 function friendlyInlineError(error: unknown) {
@@ -6393,6 +7364,7 @@ function adminTaskFailureDetail(task: Task) {
 }
 
 function summarizeCommandText(text: string) {
+  if (/^\s*(\{\}|\[\]|null|undefined)\s*$/i.test(text)) return "Action completed.";
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return "No output.";
   const important = lines.filter((line) => /local build|remote build|current stack version|latest release|update available|no update|already latest|up to date|ok|ready|warning|error|failed|success|blocked|unsupported|publish/i.test(line));
@@ -6433,6 +7405,17 @@ function titleCaseWords(value: string) {
     if (index > 0 && smallWords.has(lower)) return lower;
     return lower ? lower.charAt(0).toUpperCase() + lower.slice(1) : word;
   }).join(" ");
+}
+
+function friendlyCraftingSource(value: string) {
+  const raw = String(value || "").trim();
+  const labels: Record<string, string> = {
+    SchematicPickup: "Pickup",
+    Pickup: "Pickup",
+    Unknown: "Unknown"
+  };
+  if (labels[raw]) return labels[raw];
+  return titleCaseWords(raw.replace(/([a-z])([A-Z])/g, "$1 $2"));
 }
 
 function friendlyVehicleName(value: string) {
@@ -6673,27 +7656,38 @@ function friendlyBackupType(name: string, line: string) {
   return "Unknown";
 }
 
-function parseHistoryRows(text: string, players: Record<string, unknown>[] = []) {
+function parseHistoryRows(text: string, players: Record<string, unknown>[] = [], scope: "all" | "admin-tools" = "all") {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).filter((line) => !/^time\s+/i.test(line) && !/^no admin command history found\.?$/i.test(line)).map((line) => {
     const parts = line.split(/\t/);
     if (parts.length >= 6) {
+      if (!adminHistoryLineMatchesScope(parts[1], parts[2], scope)) return null;
       return {
         time: formatAdminHistoryTime(parts[0]),
         action: friendlyAdminHistoryAction(parts[1]),
         target: friendlyAdminHistoryTarget(parts[2], players),
         status: friendlyAdminHistoryValue(parts[5]),
-        summary: friendlyAdminHistorySummary(parts[3], parts[4], parts.slice(6).join(" "))
+        summary: friendlyAdminHistorySummary(parts[3], parts[4], parts.slice(6).join(" "), parts[1])
       };
     }
     const loose = line.split(/\s{2,}/).filter(Boolean);
+    if (!adminHistoryLineMatchesScope(loose[1] || "", loose[2] || "", scope)) return null;
     return {
       time: formatAdminHistoryTime(loose[0] || ""),
       action: friendlyAdminHistoryAction(loose[1] || ""),
       target: friendlyAdminHistoryTarget(loose[2] || "", players),
       status: friendlyAdminHistoryValue(loose[5] || ""),
-      summary: friendlyAdminHistorySummary(loose[3] || "", loose[4] || "", loose.slice(6).join(" "))
+      summary: friendlyAdminHistorySummary(loose[3] || "", loose[4] || "", loose.slice(6).join(" "), loose[1] || "")
     };
-  }).filter((row) => row.action || row.summary).reverse();
+  }).filter((row): row is { time: string; action: string; target: string; status: string; summary: string } => Boolean(row && (row.action || row.summary))).reverse();
+}
+
+function adminHistoryLineMatchesScope(command: string, target: string, scope: "all" | "admin-tools") {
+  if (scope === "all") return true;
+  const rawCommand = String(command || "").trim();
+  const rawTarget = String(target || "").trim();
+  if (/^web-(broadcast|shutdown-broadcast|hydrate-all)$/i.test(rawCommand)) return true;
+  if (/^KickPlayer$/i.test(rawCommand) && /^(all|\*)$/i.test(rawTarget)) return true;
+  return false;
 }
 
 function formatAdminHistoryTime(value: string) {
@@ -6716,6 +7710,7 @@ function friendlyAdminHistoryValue(value: string) {
 function friendlyAdminHistoryAction(value: string) {
   const raw = String(value || "").trim();
   const labels: Record<string, string> = {
+    "web-hydrate-all": "Hydrate All",
     AddItemToInventory: "Grant Item",
     AwardXP: "Award XP",
     UpdateAllWaterFillables: "Refill Container",
@@ -6764,11 +7759,12 @@ function matchesAdminHistoryTarget(candidate: string, target: string) {
   return normalizedCandidate.startsWith(masked[1]) && normalizedCandidate.endsWith(masked[2]);
 }
 
-function friendlyAdminHistorySummary(friendly: string, path: string, payload: string) {
+function friendlyAdminHistorySummary(friendly: string, path: string, payload: string, command = "") {
   const label = String(friendly || "").replace(/\bpublish test\b/gi, "").replace(/\s+/g, " ").trim();
   const message = parseJsonMaybe(payload)?.messagePreview;
   const messageText = typeof message === "string" && message.trim() ? `: "${message.trim().slice(0, 80)}${message.trim().length > 80 ? "..." : ""}"` : "";
-  if (/broadcast/i.test(label)) return `Broadcast${messageText}`;
+  if (/broadcast/i.test(label) || /^web-(broadcast|shutdown-broadcast)$/i.test(String(command || ""))) return `Broadcast${messageText}`;
+  if (/hydrate/i.test(label) || /^web-hydrate-all$/i.test(String(command || ""))) return "Hydrated online players";
   if (/kick/i.test(label)) return "Kick command";
   if (/grant/i.test(label)) return label || "Grant command";
   if (label) return label;
@@ -6779,6 +7775,21 @@ function friendlyAdminHistorySummary(friendly: string, path: string, payload: st
 function friendlyServiceName(name: string) {
   if (/^dune-server-[a-z0-9-]+$/i.test(name)) return friendlyDynamicServerName(name);
   return SERVICE_LABELS[name] || SERVICE_LABELS[name.replace(/^dune-/, "")] || name.replace(/^dune-server-/, "").replace(/^dune-/, "").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function friendlyLogServiceName(name: string, sietches: SietchRow[] = []) {
+  const partitionId = survivalLogPartitionId(name);
+  if (!partitionId) return friendlyServiceName(name);
+  const sietch = sietches.find((row) => row.partitionId === partitionId) || (partitionId === "1" ? sietches.find((row) => String(row.dimension) === "0") : undefined);
+  const displayName = sietch?.displayName?.trim();
+  return displayName ? `${partitionId === "1" ? "Survival_1" : `Survival_1 ${partitionId}`} (${displayName})` : friendlyServiceName(name);
+}
+
+function survivalLogPartitionId(name: string) {
+  const raw = String(name || "").trim();
+  if (/^(survival|survival-1|dune-server-survival-1)$/i.test(raw)) return "1";
+  const match = raw.match(/^dune-server-survival-1-(\d+)$/i);
+  return match?.[1] || "";
 }
 
 function friendlyDynamicServerName(name: string) {

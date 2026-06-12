@@ -25,7 +25,7 @@ export const adminApi = {
   structuredVehicles: () => api<{ vehicles: VehicleCatalogEntry[]; stdout?: string; stderr?: string }>("/api/admin/vehicles/structured"),
   skillModules: (q = "") => api<{ stdout: string }>(`/api/admin/skill-modules${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   history: () => api<{ stdout: string }>("/api/admin/history"),
-  clearHistory: () => post<{ ok: boolean }>("/api/admin/history/clear", {}),
+  clearHistory: (scope: "all" | "admin-tools" = "all") => post<{ ok: boolean }>("/api/admin/history/clear", { scope }),
   kickAllOnline: (confirmation: string) => post<{ task: Task }>("/api/players/kick-all-online", { confirmation }),
   broadcast: (title: string, body: string, durationSec: number) => post<{ supported: boolean; reason?: string; ok?: boolean; stdout?: string; stderr?: string; note?: string }>("/api/admin/broadcast", { title, body, durationSec })
 };

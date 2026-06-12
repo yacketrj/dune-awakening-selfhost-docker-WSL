@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { redact } from "./redact.js";
+import { redact, redactValue } from "./redact.js";
 
 export function audit(config, req, action, detail = {}) {
   mkdirSync(dirname(config.auditLog), { recursive: true });
@@ -10,7 +10,7 @@ export function audit(config, req, action, detail = {}) {
     method: req?.method,
     path: req?.url,
     remote: req?.socket?.remoteAddress,
-    detail: JSON.parse(redact(JSON.stringify(detail)))
+    detail: redactValue(detail)
   };
   appendFileSync(config.auditLog, `${JSON.stringify(row)}\n`, { mode: 0o600 });
 }

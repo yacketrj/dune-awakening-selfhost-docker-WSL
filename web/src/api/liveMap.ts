@@ -1,4 +1,5 @@
-import { api } from "./client";
+import { api, post } from "./client";
+import type { Task } from "./setup";
 
 export type LiveMapMarker = {
   id: number | string;
@@ -37,6 +38,7 @@ export type LiveMapPartition = {
 export const liveMapApi = {
   capabilities: () => api<Record<string, unknown>>("/api/map/capabilities"),
   markers: (map = "") => api<{ rows: LiveMapMarker[]; overlays: Record<string, string>; capabilities: Record<string, unknown>; map: LiveMapConfig; maps: Record<string, LiveMapConfig>; defaultMap: string; partitions: LiveMapPartition[] }>(`/api/map/markers${map ? `?map=${encodeURIComponent(map)}` : ""}`),
+  teleportPlayer: (body: { playerId: string; x: number; y: number; z: number; yaw?: number; partitionId?: number; online?: boolean }) => post<{ ok?: boolean; task?: Task; message?: string; path?: "live" | "offline"; supported?: boolean; reason?: string }>("/api/map/teleport-player", body),
   partitions: () => api<{ rows: LiveMapPartition[] }>("/api/map/partitions"),
   players: (map = "") => api<{ rows: LiveMapMarker[]; reason?: string }>(`/api/map/players${map ? `?map=${encodeURIComponent(map)}` : ""}`),
   bases: (map = "") => api<{ rows: LiveMapMarker[]; reason?: string }>(`/api/map/bases${map ? `?map=${encodeURIComponent(map)}` : ""}`),

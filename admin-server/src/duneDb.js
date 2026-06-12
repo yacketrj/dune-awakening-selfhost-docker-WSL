@@ -534,6 +534,30 @@ async function supportsSpecializationLiveRefresh(db) {
   }
 }
 
+async function specializationTrackTypes(db) {
+  const valid = (track) => {
+    const value = String(track || "").trim();
+    return value && !/^(count|invalid|none|unknown)$/i.test(value);
+  };
+  try {
+    const result = await db.query("select unnest(enum_range(null::dune.specializationtracktype))::text as track_type order by track_type");
+    const rows = result.rows.map((row) => String(row.track_type || "").trim()).filter(valid);
+    if (rows.length) return rows;
+  } catch {
+    // Fall through to the known public specialization tracks.
+  }
+  return ["Combat", "Crafting", "Exploration", "Gathering", "Sabotage"];
+}
+
+async function validateSpecializationTrack(db, value) {
+  const requested = String(value || "").trim();
+  if (!requested) throw new Error("Specialization track is required");
+  const tracks = await specializationTrackTypes(db);
+  const match = tracks.find((track) => track.toLowerCase() === requested.toLowerCase());
+  if (!match) throw new Error(`Unknown specialization track: ${requested}`);
+  return match;
+}
+
 async function specializationSnapshot(db) {
   const result = await db.query(`
     select player_id::text as player_id,
@@ -855,12 +879,143 @@ export async function playerFactions(db, id) {
 
 export async function playerSpecs(db, id) {
   if (!(await tableExists(db, "specialization_tracks"))) return unsupported("specs", ["dune.specialization_tracks"]);
+  const player = await resolvePlayerMutationTarget(db, id);
+  const tracks = await specializationTrackTypes(db);
   const result = await db.query(`
     select player_id, track_type::text, xp_amount, level
     from dune.specialization_tracks
     where player_id = $1
-    order by track_type`, [intParam(id, "player id", 1)]);
-  return { capabilities: { specs: true }, rows: result.rows };
+    order by track_type`, [player.controllerId]);
+  const byTrack = new Map(result.rows.map((row) => [String(row.track_type), row]));
+  return {
+    capabilities: {
+      specs: true,
+      specializationMutation: await supportsSpecializationLiveRefresh(db),
+      keystones: await tableExists(db, "purchased_specialization_keystones")
+    },
+    player,
+    rows: tracks.map((track) => {
+      const row = byTrack.get(track);
+      return {
+        player_id: player.controllerId,
+        track_type: track,
+        xp_amount: row?.xp_amount ?? 0,
+        level: row?.level ?? 0
+      };
+    })
+  };
+}
+
+export async function addSpecializationXp(db, id, { trackType, amount }) {
+  await requireCapability(await supportsSpecializationLiveRefresh(db), "Specialization XP requires dune.specialization_tracks plus dune.set_specialization_xp_and_level(bigint,dune.specializationtracktype,integer,real).");
+  const track = await validateSpecializationTrack(db, trackType);
+  const delta = intParam(amount, "specialization XP amount", -44182, 44182);
+  if (delta === 0) throw new Error("Specialization XP amount cannot be zero");
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Specialization changes");
+    const current = await tx.query(`
+      select xp_amount, level
+      from dune.specialization_tracks
+      where player_id = $1 and track_type::text = $2
+      for update`, [player.controllerId, track]);
+    const oldXp = Number(current.rows[0]?.xp_amount || 0);
+    const oldLevel = Number(current.rows[0]?.level || 0);
+    const nextXp = Math.max(0, Math.min(44182, oldXp + delta));
+    await withKnownLiveRefresh(tx, () => tx.query(
+      "select dune.set_specialization_xp_and_level($1::bigint, $2::dune.specializationtracktype, $3::integer, $4::real)",
+      [player.controllerId, track, nextXp, oldLevel]
+    ), { features: ["specialization"] });
+    return {
+      ok: true,
+      player,
+      trackType: track,
+      oldXp,
+      xp: nextXp,
+      level: oldLevel,
+      amount: delta,
+      message: `${track} specialization XP was updated. The player must relog to see the change.`
+    };
+  });
+}
+
+export async function grantMaxSpecialization(db, id, { trackType }) {
+  await requireCapability(await supportsSpecializationLiveRefresh(db), "Granting specialization requires dune.specialization_tracks plus dune.set_specialization_xp_and_level(bigint,dune.specializationtracktype,integer,real).");
+  const track = await validateSpecializationTrack(db, trackType);
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Specialization changes");
+    await withKnownLiveRefresh(tx, () => tx.query(
+      "select dune.set_specialization_xp_and_level($1::bigint, $2::dune.specializationtracktype, $3::integer, $4::real)",
+      [player.controllerId, track, 44182, 100]
+    ), { features: ["specialization"] });
+    return {
+      ok: true,
+      player,
+      trackType: track,
+      xp: 44182,
+      level: 100,
+      message: `${track} specialization was granted at max level. The player must relog to see the change.`
+    };
+  });
+}
+
+export async function resetSpecialization(db, id, { trackType }) {
+  await requireCapability(await tableExists(db, "specialization_tracks"), "Resetting specialization requires dune.specialization_tracks.");
+  const track = await validateSpecializationTrack(db, trackType);
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Specialization changes");
+    await withKnownLiveRefresh(tx, () => tx.query(
+      "delete from dune.specialization_tracks where player_id = $1 and track_type::text = $2",
+      [player.controllerId, track]
+    ), { features: ["specialization"] });
+    return {
+      ok: true,
+      player,
+      trackType: track,
+      xp: 0,
+      level: 0,
+      message: `${track} specialization was reset. The player must relog to see the change.`
+    };
+  });
+}
+
+export async function grantAllSpecializationKeystones(db, id) {
+  await requireCapability(await supportsKeystoneLiveRefresh(db), "Granting specialization keystones requires dune.purchased_specialization_keystones and dune.specialization_keystones_map.");
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Specialization keystone changes");
+    const result = await withKnownLiveRefresh(tx, () => tx.query(`
+      insert into dune.purchased_specialization_keystones (player_id, keystone_id)
+      select $1::bigint, id
+      from dune.specialization_keystones_map
+      on conflict do nothing`, [player.controllerId]), { features: ["keystones"] });
+    return {
+      ok: true,
+      player,
+      insertedRows: result.rowCount || 0,
+      message: "All specialization keystones were granted. The player must relog to see the change."
+    };
+  });
+}
+
+export async function resetAllSpecializationKeystones(db, id) {
+  await requireCapability(await tableExists(db, "purchased_specialization_keystones"), "Resetting specialization keystones requires dune.purchased_specialization_keystones.");
+  return db.transaction(async (tx) => {
+    const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Specialization keystone changes");
+    const result = await withKnownLiveRefresh(tx, () => tx.query(
+      "delete from dune.purchased_specialization_keystones where player_id = $1",
+      [player.controllerId]
+    ), { features: ["keystones"] });
+    return {
+      ok: true,
+      player,
+      deletedRows: result.rowCount || 0,
+      message: "All specialization keystones were reset. The player must relog to see the change."
+    };
+  });
 }
 
 export async function playerPosition(db, id) {
@@ -961,6 +1116,10 @@ export async function liveMapPlayers(db, map = "") {
              'player' as type,
              coalesce(nullif(ps.character_name, ''), 'Unknown') as name,
              coalesce(ps.online_status::text, '') as online_status,
+             coalesce(ac."user", '') as fls_id,
+             coalesce(ac."user", '') as action_player_id,
+             coalesce(ac.funcom_id, '') as funcom_id,
+             coalesce(a.owner_account_id, 0) as account_id,
              coalesce(a.map, '') as map,
              coalesce(a.partition_id, 0) as partition_id,
              coalesce(a.class, '') as class,
@@ -969,12 +1128,41 @@ export async function liveMapPlayers(db, map = "") {
              ((a.transform).location).z as z
       from dune.actors a
       join dune.player_state ps on ps.player_pawn_id = a.id
+      left join dune.accounts ac on ac.id = ps.account_id
       where a.transform is not null ${where}
       order by coalesce(ps.online_status::text, '') desc, lower(coalesce(ps.character_name, ''))`, values);
     return { capabilities: { players: true }, rows: result.rows.map(normalizeMarker) };
   } catch (error) {
     return { capabilities: { players: false }, rows: [], reason: `Player marker transform query is unsupported by this schema: ${error.message}` };
   }
+}
+
+export async function teleportOfflinePlayerToCoords(db, playerId, { x, y, z, partitionId = 0 } = {}) {
+  const flsId = validatePlayerIdForDb(playerId);
+  const resolvedPartition = await resolveTeleportPartition(db, flsId, partitionId);
+  if (!resolvedPartition) {
+    return { supported: false, reason: "Could not resolve a valid map partition for this offline player." };
+  }
+  const functionCheck = await db.query("select to_regprocedure('dune.admin_move_offline_player_to_partition(text,bigint,dune.vector)') as proc");
+  if (!functionCheck.rows[0]?.proc) {
+    return {
+      supported: false,
+      reason: "Offline drag teleport requires the database function dune.admin_move_offline_player_to_partition. Online players can still be teleported immediately."
+    };
+  }
+  await db.query(`
+    select dune.admin_move_offline_player_to_partition($1::text, $2::bigint, ROW($3::float8,$4::float8,$5::float8)::dune.Vector)`, [
+    flsId,
+    resolvedPartition,
+    Number(x),
+    Number(y),
+    Number(z)
+  ]);
+  return {
+    supported: true,
+    result: { playerId: flsId, partitionId: resolvedPartition, x: Number(x), y: Number(y), z: Number(z) },
+    message: "Offline player respawn location was saved. The player will land there the next time they log in."
+  };
 }
 
 export async function liveMapVehicles(db, map = "") {
@@ -1547,6 +1735,12 @@ export async function deleteInventoryItem(db, playerId, itemId) {
       for update`, [safeItemId, player.actorId]);
     if (!item.rows[0]) throw new Error("Inventory item was not found in the selected player's directly-owned inventory");
     await tx.query("select dune.delete_item($1::bigint)", [safeItemId]);
+    const stillExists = await tx.query("select exists(select 1 from dune.items where id = $1 and inventory_id = $2) as exists", [safeItemId, item.rows[0].inventory_id]);
+    if (stillExists.rows[0]?.exists) {
+      await tx.query("delete from dune.items where id = $1 and inventory_id = $2", [safeItemId, item.rows[0].inventory_id]);
+    }
+    const deleted = await tx.query("select not exists(select 1 from dune.items where id = $1 and inventory_id = $2) as deleted", [safeItemId, item.rows[0].inventory_id]);
+    if (!deleted.rows[0]?.deleted) throw new Error("Inventory item delete did not remove the item from the database.");
     return {
       ok: true,
       player,
@@ -2120,6 +2314,33 @@ function mapFilterClause(map, values, alias) {
   if (!safe) return "";
   values.push(safe);
   return ` and ${alias}.map = $${values.length}`;
+}
+
+function validatePlayerIdForDb(value) {
+  const raw = String(value || "");
+  if (/^[A-Za-z0-9_:#.-]{1,128}$/.test(raw)) return raw;
+  throw new Error("Invalid player id");
+}
+
+async function resolveTeleportPartition(db, playerId, partitionId) {
+  const requested = Number(partitionId || 0);
+  if (Number.isInteger(requested) && requested > 0) return requested;
+  const current = await db.query(`
+    select coalesce(a.partition_id, 0) as partition_id
+    from dune.accounts ac
+    join dune.player_state ps on ps.account_id = ac.id
+    join dune.actors a on a.id = ps.player_pawn_id
+    where ac."user" = $1
+    limit 1`, [playerId]).catch(() => ({ rows: [] }));
+  const currentPartition = Number(current.rows[0]?.partition_id || 0);
+  if (currentPartition > 0) return currentPartition;
+  const fallback = await db.query(`
+    select partition_id
+    from dune.world_partition
+    where coalesce(blocked, false) = false
+    order by partition_id
+    limit 1`).catch(() => ({ rows: [] }));
+  return Number(fallback.rows[0]?.partition_id || 0);
 }
 
 function normalizeMarker(row) {

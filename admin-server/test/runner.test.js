@@ -36,7 +36,8 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("backupAutoEnable", { time: "05:30", retentionDays: 0 }), ["db", "auto", "enable", "05:30"]);
   assert.deepEqual(buildDuneArgs("backupAutoDisable"), ["db", "auto", "disable"]);
   assert.deepEqual(buildDuneArgs("restartScheduleStatus"), ["restart-schedule", "status"]);
-  assert.deepEqual(buildDuneArgs("restartScheduleEnable", { time: "04:30" }), ["restart-schedule", "enable", "04:30"]);
+  assert.deepEqual(buildDuneArgs("restartScheduleEnable", { time: "04:30" }), ["restart-schedule", "enable", "04:30", "15"]);
+  assert.deepEqual(buildDuneArgs("restartScheduleEnable", { time: "04:30", notifyMinutes: 30 }), ["restart-schedule", "enable", "04:30", "30"]);
   assert.deepEqual(buildDuneArgs("restartScheduleDisable"), ["restart-schedule", "disable"]);
   assert.deepEqual(buildDuneArgs("adminTeleport", { playerId: "FLS_TEST", x: 1, y: 2, z: 3, yaw: 90 }), ["admin", "teleport", "FLS_TEST", "1", "2", "3", "90"]);
   assert.deepEqual(buildDuneArgs("adminGiveItemId", { playerId: "FLS_TEST", itemId: "WaterBottle_1", quantity: 2, durability: 0.5 }), ["admin", "grant-item-id", "FLS_TEST", "WaterBottle_1", "2", "0.5"]);
@@ -76,6 +77,7 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.throws(() => buildDuneArgs("sietchesSetPassword", { partitionId: 1, password: "bad\npw" }));
   assert.throws(() => buildDuneArgs("deepdesertAction", { action: "reset" }));
   assert.throws(() => buildDuneArgs("restartScheduleEnable", { time: "24:00" }));
+  assert.throws(() => buildDuneArgs("restartScheduleEnable", { time: "04:30", notifyMinutes: 0 }));
   assert.throws(() => buildDuneArgs("backupAutoEnable", { time: "99:00" }));
   assert.throws(() => buildDuneArgs("backupAutoRetention", { retentionDays: -1 }));
   assert.throws(() => buildDuneArgs("updateAutoEnable", { time: "bad" }));

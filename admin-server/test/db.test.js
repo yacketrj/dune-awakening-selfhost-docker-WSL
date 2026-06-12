@@ -580,6 +580,9 @@ function fakeMutationDb(calls, fixtures = {}) {
       if (text.includes("m_TechKnowledgePoints") && text.includes("select")) return { rows: fixtures.intelRows || [] };
       if (text.includes("m_TechKnowledgePoints") && text.includes("update")) return { rows: [{ ok: true }] };
       if (text.includes("from dune.items i") && text.includes("where i.id = $1")) return { rows: fixtures.itemRows || [] };
+      if (text.includes("not exists(select 1 from dune.items where id = $1")) return { rows: [{ deleted: true }] };
+      if (text.includes("exists(select 1 from dune.items where id = $1")) return { rows: [{ exists: Boolean(fixtures.itemStillExists) }] };
+      if (text.includes("delete from dune.items where id = $1")) return { rows: [], rowCount: 1 };
       if (text.includes("dune.delete_item")) return { rows: [{ ok: true }] };
       if (text.includes("from dune.inventories") && text.includes("where actor_id")) return { rows: fixtures.storageRows || [] };
       if (text.includes("count(*)::int")) return { rows: fixtures.countRows || [{ count: 0 }] };

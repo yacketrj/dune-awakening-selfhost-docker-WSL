@@ -24,7 +24,7 @@ const DEFAULT_KIT = {
 };
 
 const DEFAULT_CONFIG = {
-  enabled: false,
+  enabled: true,
   version: DEFAULT_KIT_ID,
   activeKitId: DEFAULT_KIT_ID,
   autoGrantKitId: DEFAULT_KIT_ID,
@@ -35,7 +35,7 @@ const DEFAULT_CONFIG = {
   autoGrantEnabled: false,
   autoGrantIntervalSeconds: 60,
   grantWhen: "first_online",
-  autoGrantRules: [{ id: "auto-rule-1", enabled: true, kitId: DEFAULT_KIT_ID, grantWhen: "first_online", lastSeenDays: 30 }]
+  autoGrantRules: [{ id: "auto-rule-1", enabled: false, kitId: DEFAULT_KIT_ID, grantWhen: "first_online", lastSeenDays: 30 }]
 };
 
 export function carePackageCapabilities() {
@@ -46,7 +46,7 @@ export function carePackageCapabilities() {
     retryFailedGrant: true,
     automaticScanner: true,
     currency: false,
-    reason: "Care Package grants use existing RedBlink dune admin grant-item/grant-item-id and award-xp commands. Auto-grant is disabled by default and only scans when the Care Package and auto-grant are both explicitly enabled."
+    reason: "Care Package grants use existing RedBlink dune admin grant-item/grant-item-id and award-xp commands. Automatic grants run when Care Package is enabled and at least one rule is enabled."
   };
 }
 
@@ -167,10 +167,11 @@ export async function grantEligibleCarePackages(config, players = [], body = {},
 export async function runCarePackageAutoScan(config, players = [], source = "auto", context = {}) {
   const kitConfig = readConfig(config);
   if (!kitConfig.enabled) return { ok: true, skipped: true, reason: "Care Package is disabled", results: [] };
-  if (!kitConfig.autoGrantEnabled) return { ok: true, skipped: true, reason: "Auto-grant is disabled", results: [] };
   const rules = kitConfig.autoGrantRules.filter((rule) => rule.enabled);
   if (!rules.length) return { ok: true, skipped: true, reason: "No enabled auto-grant rules", results: [] };
   const results = [];
+  const pendingReturns = readPendingReturns(config);
+  let pendingChanged = false;
   for (const rule of rules) {
     const kit = selectedKit(kitConfig, rule.kitId, rule.grantWhen, rule.lastSeenDays);
     if (!kit.items.length && !kit.xp) {
@@ -178,9 +179,15 @@ export async function runCarePackageAutoScan(config, players = [], source = "aut
       continue;
     }
     const history = carePackageHistory(config, 500).rows;
-    const rows = players.map((player) => eligibilityForPlayer(kit, history, normalizePlayer(player), { requireOnline: true }));
+    const rows = players.map((player) => {
+      const normalized = normalizePlayer(player);
+      if (kit.grantWhen !== "last_seen") return eligibilityForPlayer(kit, history, normalized, { requireOnline: true });
+      return lastSeenReturnEligibility(config, pendingReturns, kit, rule, history, normalized);
+    });
     for (const player of rows) {
       if (!player.eligible) {
+        if (player.markPending) pendingChanged = markPendingReturn(pendingReturns, kit, rule, player) || pendingChanged;
+        if (player.clearPending) pendingChanged = clearPendingReturn(pendingReturns, kit, rule, player) || pendingChanged;
         results.push(skippedGrant(config, kit, player, player.reason || "not eligible", source));
         continue;
       }
@@ -194,11 +201,13 @@ export async function runCarePackageAutoScan(config, players = [], source = "aut
           funcomId: player.funcom_id || player.fls_id || player.action_player_id,
           flsId: player.fls_id || player.action_player_id
         }, context));
+        if (kit.grantWhen === "last_seen") pendingChanged = clearPendingReturn(pendingReturns, kit, rule, player) || pendingChanged;
       } catch (error) {
         results.push(failedGrant(config, kit, player, error.message || String(error), source));
       }
     }
   }
+  if (pendingChanged) writePendingReturns(config, pendingReturns);
   return summarizeGrantResults(results);
 }
 
@@ -335,6 +344,53 @@ function eligibilityForPlayer(kit, history, player, options = {}) {
   return { ...player, eligible: true, reason: "" };
 }
 
+function lastSeenReturnEligibility(config, pendingReturns, kit, rule, history, player) {
+  const staleEligibility = eligibilityForPlayer(kit, history, player);
+  const online = String(player.online_status || "").toLowerCase() === "online";
+  const key = pendingReturnKey(kit, rule, player);
+  const pending = Boolean(pendingReturns[key]);
+  if (staleEligibility.eligible && !online) {
+    return { ...staleEligibility, eligible: false, reason: "Waiting for player to return online", markPending: true };
+  }
+  if (online && pending) {
+    if (hasSuccessfulGrant(config, player.action_player_id, kit.id, player.actor_id)) {
+      return { ...player, eligible: false, reason: `Already granted ${kit.name}`, clearPending: true };
+    }
+    return { ...player, eligible: true, reason: "Returning player qualified" };
+  }
+  if (online && staleEligibility.eligible) return staleEligibility;
+  return staleEligibility;
+}
+
+function pendingReturnKey(kit, rule, player) {
+  const playerKey = String(player.action_player_id || player.actor_id || "").trim();
+  return `${kit.id}:${rule.id}:${playerKey}`;
+}
+
+function markPendingReturn(pendingReturns, kit, rule, player) {
+  const key = pendingReturnKey(kit, rule, player);
+  const next = {
+    kitId: kit.id,
+    kitName: kit.name,
+    ruleId: rule.id,
+    action_player_id: player.action_player_id || "",
+    actor_id: player.actor_id || "",
+    character_name: player.character_name || "",
+    last_seen: player.last_seen || "",
+    qualifiedAt: pendingReturns[key]?.qualifiedAt || new Date().toISOString()
+  };
+  if (JSON.stringify(pendingReturns[key] || {}) === JSON.stringify(next)) return false;
+  pendingReturns[key] = next;
+  return true;
+}
+
+function clearPendingReturn(pendingReturns, kit, rule, player) {
+  const key = pendingReturnKey(kit, rule, player);
+  if (!pendingReturns[key]) return false;
+  delete pendingReturns[key];
+  return true;
+}
+
 function grantMatchesPlayer(row, player) {
   const rowActorId = String(row.actor_id || row.actorId || "").trim();
   const playerActorId = String(player.actor_id || player.player_pawn_id || "").trim();
@@ -454,7 +510,7 @@ function validateAutoGrantRules(body, kits, fallbackKitId, fallbackGrantWhen) {
   if (!kits.length) return [];
   const rawRules = Array.isArray(body.autoGrantRules)
     ? body.autoGrantRules
-    : [{ id: "auto-rule-1", enabled: true, kitId: body.autoGrantKitId || fallbackKitId, grantWhen: body.grantWhen || fallbackGrantWhen, lastSeenDays: body.lastSeenDays || 30 }];
+    : [{ id: "auto-rule-1", enabled: false, kitId: body.autoGrantKitId || fallbackKitId, grantWhen: body.grantWhen || fallbackGrantWhen, lastSeenDays: body.lastSeenDays || 30 }];
   if (rawRules.length > 24) throw new Error("Care Package supports at most 24 auto-grant rules");
   const used = new Set();
   return rawRules.map((rule, index) => {
@@ -709,6 +765,10 @@ function grantsPath(config) {
   return resolve(config.generatedDir, "care-package-grants.jsonl");
 }
 
+function pendingReturnsPath(config) {
+  return resolve(config.generatedDir, "care-package-pending-returns.json");
+}
+
 function readConfig(config) {
   const file = configPath(config);
   if (!existsSync(file)) return DEFAULT_CONFIG;
@@ -726,5 +786,23 @@ function appendGrant(config, row) {
   const file = grantsPath(config);
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(row)}\n`, { mode: 0o600 });
+  try { chmodSync(file, 0o600); } catch {}
+}
+
+function readPendingReturns(config) {
+  const file = pendingReturnsPath(config);
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePendingReturns(config, value) {
+  const file = pendingReturnsPath(config);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   try { chmodSync(file, 0o600); } catch {}
 }

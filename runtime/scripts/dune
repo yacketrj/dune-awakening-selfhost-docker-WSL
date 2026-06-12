@@ -250,7 +250,7 @@ Usage:
   runtime/scripts/dune restart <service>
   runtime/scripts/dune update [check|auto enable|auto disable|auto status|--yes]
   runtime/scripts/dune self-update [check|list|install [latest|previous|<tag>]]
-  runtime/scripts/dune restart-schedule [enable <HH:MM>|disable|status]
+  runtime/scripts/dune restart-schedule [enable <HH:MM> [notify-minutes]|disable|status]
   runtime/scripts/dune db backup [output-dir]
   runtime/scripts/dune db list
   runtime/scripts/dune db status
@@ -308,6 +308,7 @@ Usage:
   runtime/scripts/dune admin teleport <player-id> <x> <y> <z> [yaw]
   runtime/scripts/dune admin spawn-vehicle <player-id> <vehicle-id> <template-name> [offset-units]
   runtime/scripts/dune admin spawn-vehicle-at <player-id> <vehicle-id> <template-name> <x> <y> <z> [rotation]
+  runtime/scripts/dune admin broadcast-restart-warning <minutes>
   runtime/scripts/dune admin vehicle-list
   runtime/scripts/dune admin unsupported
   runtime/scripts/dune admin history

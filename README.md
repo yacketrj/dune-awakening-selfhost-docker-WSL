@@ -1,10 +1,10 @@
 # RedBlink Dune Awakening Self-Host Docker
 
-## With Arrakis Server Console
+## With RedBlink Dune Docker Console
 
-This project packages the Dune Awakening Docker server stack together with **Arrakis Server Console**, a built-in browser admin panel for setup, operations, player tools, backups, logs, updates, and care packages.
+This project packages the Dune Awakening Docker server stack together with **RedBlink Dune Docker Console**, a built-in browser admin panel for setup, operations, player tools, backups, logs, updates, and care packages.
 
-Arrakis Server Console helps server owners manage:
+RedBlink Dune Docker Console helps server owners manage:
 
 - setup, status, and readiness
 - services and logs
@@ -25,7 +25,7 @@ This project is unofficial. It is not affiliated with, endorsed by, sponsored by
 - Required game ports opened in your firewall/router
 - Enough disk and RAM for your server layout
 - Funcom self-host token or required game auth token
-- Browser access to Arrakis Server Console
+- Browser access to RedBlink Dune Docker Console
 
 ## Fresh Ubuntu Quick Start
 
@@ -64,7 +64,7 @@ Start the Docker server stack:
 docker compose up -d
 ```
 
-Start Arrakis Server Console:
+Start RedBlink Dune Docker Console:
 
 ```bash
 docker compose -f docker-compose.web.yml up -d --build
@@ -86,7 +86,7 @@ Replace `SERVER_IP` with your server IP address. Continue setup in the web UI.
 
 ## First-Time Web Setup
 
-1. Open Arrakis Server Console.
+1. Open RedBlink Dune Docker Console.
 2. Sign in with the generated admin password.
 3. Go to **Setup**.
 4. Enter or confirm required server values.
@@ -103,7 +103,7 @@ Game ports and the admin panel are separate concerns. Open game ports for player
 
 | Port | Purpose | Public exposure |
 |---|---|---|
-| `8088/tcp` | Arrakis Server Console web admin | Prefer local/LAN/VPN only. Do not casually expose to the whole internet. |
+| `8088/tcp` | RedBlink Dune Docker Console web admin | Prefer local/LAN/VPN only. Do not casually expose to the whole internet. |
 | `7777/udp` | Default Overmap client game port | Public game port if players connect from the internet. |
 | `7778/udp` | Default Survival_1 client game port | Public game port if players connect from the internet. |
 | `7888/udp` | Default Survival_1 inter-server/IGW port | Usually internal/server-to-server; expose only if your deployment requires it. |
@@ -170,19 +170,19 @@ Same-LAN players connecting through the public address may need NAT reflection/h
 | Browse database safely | Database |
 | View item/vehicle/skill catalogs and command history | Admin Tools |
 
-Advanced CLI usage still exists, but normal admins should start with Arrakis Server Console.
+Advanced CLI usage still exists, but normal admins should start with RedBlink Dune Docker Console.
 
 ## Feature Status
 
 | Status | Features |
 |---|---|
 | Working | Home/status/readiness, Services/logs, Backups create/list, Updates check game/stack, Database read-only browser, Players/profile/inventory, Give Item, Give Item by ID, Add XP, Set Skill Points, Give Water, Teleport, Kick Player, Spawn Vehicle, Care Package grants, Admin Tools actions/history |
-| Partial / experimental | Broadcast publishes to RabbitMQ and logs history but does not appear in-game, Care Package auto-grant runs only while Arrakis Server Console is running, Live Map shows markers/list without a calibrated background map, progression/events/stats/history schema mappings are incomplete |
+| Partial / experimental | Broadcast publishes to RabbitMQ and logs history but does not appear in-game, Care Package auto-grant runs only while RedBlink Dune Docker Console is running, Live Map shows markers/list without a calibrated background map, progression/events/stats/history schema mappings are incomplete |
 | Blocked / not implemented | Verified Shutdown Broadcast delivery, unsafe import/restore flows without explicit confirmation |
 
 ## Security Notes
 
-Arrakis Server Console controls Docker and game admin operations. Protect it like a production admin console.
+RedBlink Dune Docker Console controls Docker and game admin operations. Protect it like a production admin console.
 
 - Keep authentication enabled.
 - Use a strong admin password and do not share it.
@@ -190,15 +190,15 @@ Arrakis Server Console controls Docker and game admin operations. Protect it lik
 - `docker-compose.web.yml` mounts `/var/run/docker.sock`; this gives the web container powerful Docker control.
 - Back up before destructive operations.
 - Dangerous actions require backend confirmation phrases, not only frontend prompts.
-- Do not expose Arrakis Server Console directly to the public internet.
+- Do not expose RedBlink Dune Docker Console directly to the public internet.
 
 ## Troubleshooting
 
-### Arrakis Server Console is not loading
+### RedBlink Dune Docker Console is not loading
 
 ```bash
 docker compose -f docker-compose.web.yml ps
-docker compose -f docker-compose.web.yml logs -f arrakis-console
+docker compose -f docker-compose.web.yml logs -f redblink-dune-docker-console
 ```
 
 Confirm `8088/tcp` is reachable from your browser or admin network.
@@ -212,7 +212,7 @@ This can be normal during startup. Open **Home**, **Services**, and **Logs** in 
 Use **Logs** in the web UI and refresh the selected service. If the web admin itself is the issue:
 
 ```bash
-docker compose -f docker-compose.web.yml restart arrakis-console
+docker compose -f docker-compose.web.yml restart redblink-dune-docker-console
 ```
 
 ### Docker disk space issue
@@ -224,10 +224,10 @@ docker system df
 
 Free space carefully. Do not delete runtime backups or generated state unless you know what you are removing.
 
-### Restart Arrakis Server Console
+### Restart RedBlink Dune Docker Console
 
 ```bash
-docker compose -f docker-compose.web.yml restart arrakis-console
+docker compose -f docker-compose.web.yml restart redblink-dune-docker-console
 ```
 
 ## License

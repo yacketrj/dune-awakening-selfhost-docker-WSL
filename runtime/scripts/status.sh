@@ -36,7 +36,7 @@ value_is_known() {
 
 is_running() {
   local name="$1"
-  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$name"
+  [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" = "true" ]
 }
 
 is_private_ipv4() {

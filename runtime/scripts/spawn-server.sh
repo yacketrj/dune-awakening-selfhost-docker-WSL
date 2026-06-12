@@ -371,10 +371,21 @@ release_port_reservation "$CONTAINER_NAME"
 
 memory_for_map() {
   local map="$1"
+  local partition="${2:-}"
   local map_key
   local env_key
+  local partition_env_key
   local configured
   local recommended
+
+  if [ -n "$partition" ]; then
+    partition_env_key="DUNE_MEMORY_PARTITION_${partition}"
+    configured="${!partition_env_key:-}"
+    if [ -n "$configured" ]; then
+      echo "$configured"
+      return 0
+    fi
+  fi
 
   map_key="$(printf '%s' "$map" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g; s/__*/_/g; s/^_//; s/_$//')"
   env_key="DUNE_MEMORY_${map_key}"
@@ -424,7 +435,7 @@ print(default)
 PY
 }
 
-MEMORY="$(memory_for_map "$MAP_NAME")"
+MEMORY="$(memory_for_map "$MAP_NAME" "$PARTITION_ID")"
 mapfile -t SIETCH_RUNTIME_ARGS < <(runtime/scripts/sietches.sh runtime-args "$MAP_NAME" "$PARTITION_ID" 2>/dev/null || true)
 mapfile -t LOG_RUNTIME_ARGS < <(full_stdout_log_args)
 if [ "$MAP_NAME" = "Survival_1" ]; then

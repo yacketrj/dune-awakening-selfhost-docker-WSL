@@ -40,6 +40,7 @@ Usage:
   runtime/scripts/dune admin teleport <player-id> <x> <y> <z> [yaw]
   runtime/scripts/dune admin spawn-vehicle <player-id> <vehicle-id> <template-name> [offset-units]
   runtime/scripts/dune admin spawn-vehicle-at <player-id> <vehicle-id> <template-name> <x> <y> <z> [rotation]
+  runtime/scripts/dune admin broadcast-restart-warning <minutes>
   runtime/scripts/dune admin vehicle-list
   runtime/scripts/dune admin unsupported
   runtime/scripts/dune admin history
@@ -448,6 +449,29 @@ for arg in sys.argv[2:]:
 if command == "AwardXP" and "Category" not in obj:
     obj["Category"] = "Combat"
 print(json.dumps(obj, separators=(",", ":")))
+PY
+}
+
+build_restart_warning_json() {
+  local minutes="$1"
+  python3 - "$minutes" <<'PY'
+import json
+import sys
+
+minutes = int(sys.argv[1])
+title = "Server Restart Incoming"
+body = f"The server will restart in approximately {minutes} minutes."
+print(json.dumps({
+    "ServerCommand": "ServiceBroadcast",
+    "BroadcastType": "Generic",
+    "BroadcastPayload": {
+        "BroadcastDuration": 30,
+        "LocalizedText": [
+            {"Key": "en", "Title": title, "Body": body},
+            {"Key": "en-US", "Title": title, "Body": body},
+        ],
+    },
+}, separators=(",", ":")))
 PY
 }
 
@@ -1145,12 +1169,21 @@ compute_spawn_in_front() {
   python3 - "$x" "$y" "$z" "$qx" "$qy" "$qz" "$qw" "$offset" <<'PY'
 import json, math, sys
 x, y, z, qx, qy, qz, qw, offset = map(float, sys.argv[1:])
-# Unreal uses X/Y as horizontal axes and Z as up. Derive yaw from the pawn quaternion.
-siny_cosp = 2.0 * (qw * qz + qx * qy)
-cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
-yaw = math.atan2(siny_cosp, cosy_cosp)
-sx = x + math.cos(yaw) * offset
-sy = y + math.sin(yaw) * offset
+# Unreal uses X/Y as horizontal axes and Z as up. Use the pawn's +X forward vector,
+# projected onto the ground plane, so pitch/roll do not skew the spawn point.
+fx = 1.0 - 2.0 * (qy * qy + qz * qz)
+fy = 2.0 * (qx * qy + qw * qz)
+length = math.hypot(fx, fy)
+if length < 1e-6:
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    fx, fy = math.cos(yaw), math.sin(yaw)
+else:
+    fx, fy = fx / length, fy / length
+yaw = math.atan2(fy, fx)
+sx = x + fx * offset
+sy = y + fy * offset
 print(json.dumps({
     "x": sx,
     "y": sy,
@@ -1685,12 +1718,12 @@ spawn_vehicle_at_command() {
   echo "Actor class: $actor_class"
   echo "Template: $template"
   publish_player_command "SpawnVehicleAt" "$player" 0 \
-    "ClassName=$vehicle_id=string" "TemplateName=$template=string" \
+    "ClassName=$actor_class=string" "TemplateName=$template=string" \
     "X=$x=float" "Y=$y=float" "Z=$z=float" "Rotation=$rotation=float" "Persistent=1.0=float"
 }
 
 spawn_vehicle_command() {
-  local player="${1:-}" class_name="${2:-}" template="${3:-}" offset="${4:-400}"
+  local player="${1:-}" class_name="${2:-}" template="${3:-}" offset="${4:-1000}"
   local resolved_player row status map partition server x y z qx qy qz qw dimension actor_class spawn_json sx sy sz rotation
   [ -n "$player" ] && [ -n "$class_name" ] && [ -n "$template" ] || {
     echo "Usage: dune admin spawn-vehicle <player-id> <vehicle-id> <template-name> [offset-units]" >&2
@@ -1718,6 +1751,20 @@ spawn_vehicle_command() {
   echo "Player location: map=${map:-unknown} partition=${partition:-unknown} X=$x Y=$y Z=$z"
   echo "Computed spawn point $offset units in front: X=$sx Y=$sy Z=$sz Rotation=$rotation"
   spawn_vehicle_at_command "$resolved_player" "$class_name" "$template" "$sx" "$sy" "$sz" "$rotation"
+}
+
+broadcast_restart_warning_command() {
+  local minutes="${1:-}"
+  [ -n "$minutes" ] || { echo "Usage: dune admin broadcast-restart-warning <minutes>" >&2; exit 2; }
+  validate_int "$minutes" "Minutes"
+  if [ "$minutes" -lt 1 ] || [ "$minutes" -gt 1440 ]; then
+    echo "Minutes must be between 1 and 1440." >&2
+    exit 2
+  fi
+  local inner_json
+  inner_json="$(build_restart_warning_json "$minutes")"
+  publish_inner_json "$inner_json" "restart-warning"
+  audit_admin_action "ServiceBroadcast" "all" "Server Restart Incoming" "$inner_json" "$ADMIN_COMMAND_PATH" "published"
 }
 
 unsupported_command() {
@@ -1821,6 +1868,10 @@ case "$cmd" in
   spawn-vehicle-at)
     shift || true
     spawn_vehicle_at_command "$@"
+    ;;
+  broadcast-restart-warning)
+    shift || true
+    broadcast_restart_warning_command "$@"
     ;;
   vehicle-list)
     shift || true

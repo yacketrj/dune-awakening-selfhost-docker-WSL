@@ -522,6 +522,9 @@ def seed_profile_from_legacy_config() -> dict:
                 profile_set_key(profile, "map", spec[0], spec[1], str(value), map_name=canonical_map(map_name))
     for partition_id, entry in config.get("partitions", {}).items():
         map_name = canonical_map(str(entry.get("map") or "Survival_1"))
+        for field_id, value in entry.get("userengine", {}).items():
+            if field_id in PARTITION_ENGINE_FIELDS:
+                set_profile_field(profile, "partition", map_name, str(partition_id), field_id, str(value))
         for field_id, value in entry.get("usergame", {}).items():
             set_profile_field(profile, "partition", map_name, str(partition_id), field_id, str(value))
     return profile
@@ -749,12 +752,20 @@ def set_profile_field(profile: dict, scope: str, map_name: str, partition_id: st
         return
 
     if scope == "partition":
-        if field_id not in PARTITION_FIELDS:
+        if field_id not in PARTITION_FIELDS and field_id not in PARTITION_ENGINE_FIELDS:
             raise SystemExit(f"Unknown partition field: {field_id}")
         target_map = canonical_map(map_name or "Survival_1")
         target_partition = str(partition_id or "").strip()
         if not target_partition:
             raise SystemExit("Partition save requires a partition id.")
+        if field_id in PARTITION_ENGINE_FIELDS:
+            spec = PARTITION_ENGINE_FIELDS[field_id]
+            if spec[0] and spec[1]:
+                if value == "":
+                    profile_remove_key(profile, "partition", spec[0], spec[1], target_map, target_partition)
+                else:
+                    profile_set_key(profile, "partition", spec[0], spec[1], value, target_map, target_partition)
+            return
         if field_id == "partition_pvp_enabled":
             profile_remove_key(profile, "partition", "/Script/DuneSandbox.PvpPveSettings", "m_PvpEnabledPartitions", target_map, target_partition, {"+"})
             if truthy(value):
@@ -839,8 +850,22 @@ def merged_partition_values(config: dict, map_name: str, partition_id: str) -> d
     return profile_partition_values(read_profile(), map_name, partition_id)
 
 
+def profile_partition_engine_values(profile: dict, map_name: str, partition_id: str) -> dict[str, str]:
+    target_map = canonical_map(map_name)
+    target_partition = str(partition_id)
+    values = profile_engine_values(profile)
+    for key, spec in PARTITION_ENGINE_FIELDS.items():
+        section, ini_key, _ = spec
+        if not section or not ini_key:
+            continue
+        partition_value = profile_get_key(profile, "partition", section, ini_key, target_map, target_partition)
+        if partition_value is not None:
+            values[key] = partition_value
+    return values
+
+
 def merged_partition_engine_values(config: dict, map_name: str, partition_id: str) -> dict[str, str]:
-    return profile_engine_values(read_profile())
+    return profile_partition_engine_values(read_profile(), map_name, partition_id)
 
 
 def print_rows(rows: dict[str, str], order: dict[str, tuple[str | None, str | None, str]]) -> int:
@@ -921,7 +946,7 @@ def set_partition_engine_field(map_name: str, partition_id: str, field_id: str, 
     if field_id not in PARTITION_ENGINE_FIELDS:
         raise SystemExit(f"Unknown partition engine field: {field_id}")
     profile = read_profile()
-    set_profile_field(profile, "engine", "", "", field_id, value)
+    set_profile_field(profile, "partition", map_name, str(partition_id), field_id, value)
     write_profile(profile)
     return 0
 
@@ -1123,8 +1148,8 @@ def render_ini_sections(section_lines: dict[str, list[str]], leading_comments: l
     return "\n".join(lines).rstrip() + "\n"
 
 
-def compiled_userengine_ini(profile: dict) -> str:
-    values = profile_engine_values(profile)
+def compiled_userengine_ini(profile: dict, map_name: str = "", partition_id: str | None = None) -> str:
+    values = profile_partition_engine_values(profile, map_name, str(partition_id)) if map_name and partition_id else profile_engine_values(profile)
     section_lines: dict[str, list[str]] = {}
     for field_id, spec in ENGINE_FIELDS.items():
         section, key, default = spec
@@ -1171,8 +1196,8 @@ def compiled_usergame_ini(profile: dict, map_name: str, partition_id: str | None
     ])
 
 
-def write_compiled_userengine(path: Path, profile: dict) -> None:
-    atomic_write_text(path, compiled_userengine_ini(profile))
+def write_compiled_userengine(path: Path, profile: dict, map_name: str = "", partition_id: str | None = None) -> None:
+    atomic_write_text(path, compiled_userengine_ini(profile, map_name, partition_id))
 
 
 def write_compiled_usergame(path: Path, profile: dict, map_name: str, partition_id: str | None = None) -> None:
@@ -1460,7 +1485,7 @@ def materialize_current_runtime_files() -> int:
         engine_path = user_settings_dir / "UserEngine.ini"
         game_path = user_settings_dir / "UserGame.ini"
         expected_engine_paths.add(engine_path.resolve())
-        write_compiled_userengine(engine_path, profile)
+        write_compiled_userengine(engine_path, profile, canonical_map(map_name), partition_id)
         write_compiled_usergame(game_path, profile, canonical_map(map_name), partition_id)
 
     for engine_path in game_root.glob("*/Saved/UserSettings/UserEngine.ini"):
@@ -1479,7 +1504,7 @@ def materialize(map_name: str, saved_dir: str, partition_id: str | None = None) 
     user_settings_dir.mkdir(parents=True, exist_ok=True)
     engine_path = user_settings_dir / "UserEngine.ini"
     game_path = user_settings_dir / "UserGame.ini"
-    write_compiled_userengine(engine_path, profile)
+    write_compiled_userengine(engine_path, profile, target_map, str(partition_id) if partition_id else None)
     write_compiled_usergame(game_path, profile, target_map, str(partition_id) if partition_id else None)
     return 0
 

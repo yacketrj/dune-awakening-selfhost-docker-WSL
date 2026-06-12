@@ -21,7 +21,7 @@ export function TaskProgress({ task, onDismiss }: { task: Task | null; onDismiss
   }, [task?.id]);
 
   useEffect(() => {
-    if (liveTask?.status !== "succeeded" || !onDismiss) return;
+    if (!liveTask || !terminalStatuses.has(liveTask.status) || !onDismiss) return;
     const id = window.setTimeout(onDismiss, 8000);
     return () => window.clearTimeout(id);
   }, [liveTask?.id, liveTask?.status, onDismiss]);
@@ -30,20 +30,29 @@ export function TaskProgress({ task, onDismiss }: { task: Task | null; onDismiss
   return (
     <section className="panel">
       <div className="panel-title">
-        <h3>{taskTitle(liveTask)}</h3>
+        <h3 className={!terminalStatuses.has(liveTask.status) ? "loading-dots" : ""}>{formatUiSentence(taskTitle(liveTask), !terminalStatuses.has(liveTask.status))}</h3>
         <div className="action-row">
           <StatusBadge status={liveTask.status} />
           {terminalStatuses.has(liveTask.status) && <button onClick={onDismiss}>Dismiss</button>}
         </div>
       </div>
-      <p>{taskMessage(liveTask)}</p>
-      {liveTask.errorMessage && <p className="error">{liveTask.errorMessage}</p>}
+      <p>{formatUiSentence(taskMessage(liveTask))}</p>
+      {liveTask.errorMessage && <p className="error">{formatUiSentence(liveTask.errorMessage)}</p>}
       <details className="technical-details">
         <summary>Technical details</summary>
         <pre className="log-box">{liveTask.logLines.slice(-120).map((line) => line.line).join("\n")}</pre>
       </details>
     </section>
   );
+}
+
+function formatUiSentence(value: unknown, pending = false) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const clean = text.replace(/(?:\s*\.\s*){2,}$/g, "").replace(/\s+[.!?]$/g, "").trim();
+  const capitalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+  if (pending) return capitalized.replace(/[.!?]+$/g, "");
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
 }
 
 function taskTitle(task: Task) {

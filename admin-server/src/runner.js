@@ -75,7 +75,7 @@ export function buildDuneArgs(operation, payload = {}) {
     case "serverTitle":
       return ["config", "title", validateServerTitle(payload.title), "--yes"];
     case "restartScheduleEnable":
-      return ["restart-schedule", "enable", validateUpdateTime(payload.time || "05:00")];
+      return ["restart-schedule", "enable", validateUpdateTime(payload.time || "05:00"), String(validateInteger(payload.notifyMinutes ?? 15, 1, 1440))];
     case "restartAll":
       return ["restart", "gateway"];
     case "logs":
@@ -134,7 +134,7 @@ export function buildDuneArgs(operation, payload = {}) {
         String(validateNumber(payload.yaw || 0, -360, 360))
       ];
     case "adminSpawnVehicle":
-      return ["admin", "spawn-vehicle", validatePlayerId(payload.playerId), validateVehicleId(payload.vehicleId), validateVehicleTemplate(payload.template), String(validateNumber(payload.offset ?? 400, 0, 100000))];
+      return ["admin", "spawn-vehicle", validatePlayerId(payload.playerId), validateVehicleId(payload.vehicleId), validateVehicleTemplate(payload.template), String(validateNumber(payload.offset ?? 1000, 0, 100000))];
     case "adminCleanInventory":
       return ["admin", "clean-inventory", validatePlayerId(payload.playerId)];
     case "adminResetProgression":
@@ -168,11 +168,11 @@ export function buildDuneArgs(operation, payload = {}) {
     case "memoryStatus":
       return ["memory", "status"];
     case "memorySet":
-      return ["memory", "set", validateMemoryTarget(payload.map), validateMemoryValue(payload.memory)];
+      return ["memory", "set", validateMemoryTarget(memoryTarget(payload)), validateMemoryValue(payload.memory)];
     case "memorySetNoRestart":
-      return ["memory", "set-no-restart", validateMemoryTarget(payload.map), validateMemoryValue(payload.memory)];
+      return ["memory", "set-no-restart", validateMemoryTarget(memoryTarget(payload)), validateMemoryValue(payload.memory)];
     case "memoryUnset":
-      return ["memory", "unset", validateMemoryTarget(payload.map)];
+      return ["memory", "unset", validateMemoryTarget(memoryTarget(payload))];
     case "sietchesShow":
       return ["sietches", "show", validateMapName(payload.map)];
     case "sietchesDimensions":
@@ -494,6 +494,13 @@ function validateMemoryTarget(value) {
   const raw = String(value || "").trim();
   if (raw === "default" || /^[A-Za-z0-9_:-]{1,80}$/.test(raw)) return raw;
   throw new Error("Invalid memory target");
+}
+
+function memoryTarget(payload = {}) {
+  const map = String(payload.map || "");
+  const partitionId = String(payload.partitionId || "").trim();
+  if (map === "Survival_1" && partitionId) return `partition:${validatePartitionId(partitionId)}`;
+  return map;
 }
 
 function validateMemoryValue(value) {

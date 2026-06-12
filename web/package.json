@@ -1,5 +1,5 @@
 {
-  "name": "arrakis-server-console-web",
+  "name": "redblink-dune-docker-console-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

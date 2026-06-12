@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordAdminHistory } from "../src/audit.js";
+import { audit, recordAdminHistory } from "../src/audit.js";
 
 test("records safe web admin history rows for RMQ attempts", () => {
   const generatedDir = mkdtempSync(join(tmpdir(), "arrakis-history-"));
@@ -22,6 +22,23 @@ test("records safe web admin history rows for RMQ attempts", () => {
     assert.match(text, /Hello World/);
     assert.doesNotMatch(text, /secret/);
     assert.doesNotMatch(text, /\nsecond line/);
+  } finally {
+    rmSync(generatedDir, { recursive: true, force: true });
+  }
+});
+
+test("redacts password fields in audit details without corrupting JSON", () => {
+  const generatedDir = mkdtempSync(join(tmpdir(), "arrakis-audit-"));
+  const auditLog = join(generatedDir, "audit.jsonl");
+  try {
+    audit({ auditLog }, { method: "POST", url: "/api/maps/sietches", socket: { remoteAddress: "127.0.0.1" } }, "task.sietchesSetPassword", {
+      action: "set-password",
+      partitionId: "33",
+      password: "secret"
+    });
+    const row = JSON.parse(readFileSync(auditLog, "utf8").trim());
+    assert.equal(row.detail.password, "<redacted>");
+    assert.equal(row.detail.partitionId, "33");
   } finally {
     rmSync(generatedDir, { recursive: true, force: true });
   }

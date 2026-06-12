@@ -22,3 +22,15 @@ export function redact(value) {
 export function redactLines(lines) {
   return lines.map((line) => redact(line));
 }
+
+export function redactValue(value) {
+  if (Array.isArray(value)) return value.map((item) => redactValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      /password|token|secret|credential/i.test(key) ? "<redacted>" : redactValue(item)
+    ]));
+  }
+  if (typeof value === "string") return redact(value);
+  return value;
+}

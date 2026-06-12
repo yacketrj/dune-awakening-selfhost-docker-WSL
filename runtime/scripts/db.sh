@@ -1363,7 +1363,7 @@ can_manage_systemd_units() {
 }
 
 docker_helper_image() {
-  printf '%s' "${DUNE_SYSTEMD_HELPER_IMAGE:-arrakis-server-console:dev}"
+  printf '%s' "${DUNE_SYSTEMD_HELPER_IMAGE:-redblink-dune-docker-console:dev}"
 }
 
 can_manage_host_systemd_with_docker() {

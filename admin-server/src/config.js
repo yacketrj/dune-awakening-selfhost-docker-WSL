@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 
-export const APP_NAME = "Arrakis Server Console";
+export const APP_NAME = "RedBlink Dune Docker Console";
 
 export function loadConfig() {
   const repoRoot = resolve(process.env.DUNE_DOCKER_DIR || process.env.RUNTIME_DIR || process.cwd());

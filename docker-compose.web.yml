@@ -1,10 +1,10 @@
 services:
-  arrakis-console:
+  redblink-dune-docker-console:
     build:
       context: .
       dockerfile: admin-server/Dockerfile
-    image: arrakis-server-console:dev
-    container_name: arrakis-server-console
+    image: redblink-dune-docker-console:dev
+    container_name: redblink-dune-docker-console
     restart: unless-stopped
     # Host networking lets the console reach RedBlink defaults such as
     # Postgres on 127.0.0.1:15432 and bind ADMIN_BIND_PORT directly.

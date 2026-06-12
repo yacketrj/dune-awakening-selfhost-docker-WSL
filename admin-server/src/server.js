@@ -140,7 +140,7 @@ async function handleApi(req, res) {
   }
   if (path === "/api/auth/login" && req.method === "POST") {
     const body = await readJson(req);
-    if (!config.authDisabled && !auth.passwordMatches(body.password)) return json(res, 401, { error: "Invalid password" });
+    if (!config.authDisabled && !auth.passwordMatches(body.password)) return json(res, 401, { error: "Incorrect password. Please try again!" });
     const session = auth.makeSession();
     setSessionCookie(res, session, config);
     audit(config, req, "auth.login");
@@ -266,6 +266,11 @@ async function handleApi(req, res) {
   if (path.match(/^\/api\/players\/[^/]+\/add-currency$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.add-currency", "ADD CURRENCY", (playerId, body) => duneDb.addCurrency(db, playerId, body));
   if (path.match(/^\/api\/players\/[^/]+\/add-faction-reputation$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.add-faction-reputation", "ADD FACTION REPUTATION", (playerId, body) => duneDb.addFactionReputation(db, playerId, body));
   if (path.match(/^\/api\/players\/[^/]+\/add-intel$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.add-intel", "ADD INTEL", (playerId, body) => duneDb.addIntel(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/specializations\/add-xp$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.specializations.add-xp", "ADD SPECIALIZATION XP", (playerId, body) => duneDb.addSpecializationXp(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/specializations\/grant-max$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.specializations.grant-max", "GRANT MAX SPECIALIZATION", (playerId, body) => duneDb.grantMaxSpecialization(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/specializations\/reset$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.specializations.reset", "RESET SPECIALIZATION", (playerId, body) => duneDb.resetSpecialization(db, playerId, body));
+  if (path.match(/^\/api\/players\/[^/]+\/specializations\/keystones\/grant-all$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.specializations.keystones.grant-all", "GRANT ALL KEYSTONES", (playerId) => duneDb.grantAllSpecializationKeystones(db, playerId));
+  if (path.match(/^\/api\/players\/[^/]+\/specializations\/keystones\/reset-all$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.specializations.keystones.reset-all", "RESET ALL KEYSTONES", (playerId) => duneDb.resetAllSpecializationKeystones(db, playerId));
   if (path.match(/^\/api\/players\/[^/]+\/crafting-recipes\/unlock$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.crafting-recipes.unlock", "UNLOCK CRAFTING RECIPE", (playerId, body) => duneDb.unlockCraftingRecipe(db, playerId, body));
   if (path.match(/^\/api\/players\/[^/]+\/research-items\/unlock$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.research-items.unlock", "UNLOCK RESEARCH ITEM", (playerId, body) => duneDb.unlockResearchItem(db, playerId, body));
   if (path.match(/^\/api\/players\/[^/]+\/journey\/complete$/) && req.method === "POST") return playerDbMutation(req, res, path, "players.journey.complete", "COMPLETE JOURNEY NODE", (playerId, body) => duneDb.completeJourneyNode(db, playerId, body, journeyTagsData));
@@ -309,6 +314,7 @@ async function handleApi(req, res) {
 
   if (path === "/api/map/status") return mapStatusRoute(res);
   if (path === "/api/map/capabilities") return dbJson(res, () => duneDb.liveMapCapabilities(db));
+  if (path === "/api/map/teleport-player" && req.method === "POST") return liveMapTeleportPlayerRoute(req, res);
   if (path === "/api/map/partitions") return dbJson(res, () => duneDb.liveMapPartitions(db));
   if (path === "/api/map/markers") return liveMapMarkersRoute(res, url);
   if (path === "/api/map/players") return dbJson(res, () => duneDb.liveMapPlayers(db, url.searchParams.get("map") || ""));
@@ -376,6 +382,39 @@ async function liveMapMarkersRoute(res, url) {
     ...configPayload,
     partitions: partitions.rows || []
   });
+}
+
+async function liveMapTeleportPlayerRoute(req, res) {
+  const body = await readJson(req);
+  const playerId = String(body.playerId || "");
+  const payload = {
+    playerId,
+    x: Number(body.x),
+    y: Number(body.y),
+    z: Number(body.z ?? 5000),
+    yaw: Number(body.yaw || 0),
+    partitionId: Number(body.partitionId || 0)
+  };
+  if (!Number.isFinite(payload.x) || !Number.isFinite(payload.y) || !Number.isFinite(payload.z)) {
+    return json(res, 400, { error: "Valid X, Y, and Z coordinates are required." });
+  }
+  if (body.online === true) {
+    try {
+      buildDuneArgs("adminTeleport", payload);
+    } catch (error) {
+      return json(res, 400, { error: redact(error.message || error) });
+    }
+    audit(config, req, "live-map.teleport.live", { playerId, x: payload.x, y: payload.y, z: payload.z, partitionId: payload.partitionId });
+    return json(res, 202, { path: "live", task: tasks.create("admin", "adminTeleport", payload) });
+  }
+  try {
+    const result = await duneDb.teleportOfflinePlayerToCoords(db, playerId, payload);
+    audit(config, req, "live-map.teleport.offline", { playerId, supported: result.supported, x: payload.x, y: payload.y, z: payload.z, partitionId: payload.partitionId });
+    return json(res, 200, { path: "offline", ...result });
+  } catch (error) {
+    audit(config, req, "live-map.teleport.offline", { playerId, supported: false, error: redact(error.message || error) });
+    return json(res, 400, { error: redact(error.message || error) });
+  }
 }
 
 function readCpuUsagePercent() {
@@ -449,12 +488,31 @@ async function commandJson(res, operation, payload = {}) {
 }
 
 async function clearAdminHistoryRoute(req, res) {
+  const body = await readJson(req).catch(() => ({}));
   const historyDir = join(config.repoRoot, "runtime/generated");
+  const historyFile = join(historyDir, "admin-command-history.tsv");
   mkdirSync(historyDir, { recursive: true });
-  writeFileSync(join(historyDir, "admin-command-history.tsv"), "");
+  if (body.scope === "admin-tools") {
+    const current = existsSync(historyFile) ? readFileSync(historyFile, "utf8") : "";
+    const next = current.split(/\r?\n/).filter((line) => line && !isAdminToolsHistoryLine(line)).join("\n");
+    writeFileSync(historyFile, next ? `${next}\n` : "");
+    audit(config, req, "admin.history.clear", { ok: true, scope: "admin-tools" });
+    return json(res, 200, { ok: true });
+  }
+  writeFileSync(historyFile, "");
   writeFileSync(join(historyDir, "admin-command-audit.jsonl"), "");
-  audit(config, req, "admin.history.clear", { ok: true });
+  audit(config, req, "admin.history.clear", { ok: true, scope: "all" });
   return json(res, 200, { ok: true });
+}
+
+function isAdminToolsHistoryLine(line) {
+  const parts = String(line || "").split("\t");
+  const command = String(parts[1] || "").trim();
+  const target = String(parts[2] || "").trim();
+  if (/^web-(broadcast|shutdown-broadcast)$/i.test(command)) return true;
+  if (/^web-hydrate-all$/i.test(command)) return true;
+  if (/^KickPlayer$/i.test(command) && /^(all|\*)$/i.test(target)) return true;
+  return false;
 }
 
 async function safeCommandJson(res, operation, payload = {}) {
@@ -1322,6 +1380,10 @@ async function giveItemsRoute(req, res, path) {
   }
   const ok = results.every((result) => result.ok);
   audit(config, req, "players.give-items", { playerId, count: body.items.length, ok, results });
+  if (body.historyScope === "admin-tools") {
+    const friendly = body.historyFriendly || "Grant Items";
+    recordAdminHistory(config, { command: "web-hydrate-all", target: "all", friendly, path: "players.give-items", result: ok ? "published" : "failed", message: `${friendly} for ${playerId}` });
+  }
   return json(res, ok ? 200 : 207, { ok, results });
 }
 
