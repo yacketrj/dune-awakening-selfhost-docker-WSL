@@ -39,8 +39,8 @@ export function TaskProgress({ task, onDismiss }: { task: Task | null; onDismiss
       <p>{formatUiSentence(taskMessage(liveTask))}</p>
       {liveTask.operation === "init" && <ProgressBar progress={initTaskProgress(liveTask)} />}
       {liveTask.errorMessage && <p className="error">{formatUiSentence(liveTask.errorMessage)}</p>}
-      <details className="technical-details">
-        <summary>Technical details</summary>
+      <details className={liveTask.operation === "init" ? "task-technical-details" : "technical-details"}>
+        <summary>{liveTask.operation === "init" ? "Deployment log" : "Technical details"}</summary>
         <pre className="log-box">{liveTask.logLines.slice(-120).map((line) => line.line).join("\n")}</pre>
       </details>
     </section>

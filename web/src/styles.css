@@ -693,14 +693,15 @@ main { padding: 22px; min-width: 0; }
   max-height: 380px;
 }
 .concise-output { max-height: 180px; }
-.technical-details { display: none; margin-top: 12px; }
+.technical-details, .task-technical-details { display: none; margin-top: 12px; }
+.task-technical-details { display: block; }
 body.debug .technical-details { display: block; }
-.technical-details summary {
+.technical-details summary, .task-technical-details summary {
   cursor: pointer;
   color: #ffd08a;
   width: max-content;
 }
-.technical-details[open] summary { margin-bottom: 8px; }
+.technical-details[open] summary, .task-technical-details[open] summary { margin-bottom: 8px; }
 .advanced-debug { opacity: .85; }
 .log-box.large { min-height: 480px; }
 .logs-action-row { width: 100%; }
