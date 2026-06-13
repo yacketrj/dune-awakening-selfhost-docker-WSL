@@ -42,6 +42,8 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   --entrypoint bash \
+  -e "DUNE_CONTAINER_REPO_ROOT=${DUNE_CONTAINER_REPO_ROOT:-$PWD}" \
+  -e "DUNE_HOST_REPO_ROOT=${DUNE_HOST_REPO_ROOT:-$PWD}" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$(host_path "$PWD"):$PWD" \
   -w "$PWD" \
