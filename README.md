@@ -13,7 +13,7 @@
 
 RedBlink Dune Docker Console is a browser-based admin console for running the Dune Awakening dedicated server stack on your own self-hosted server.
 
-It is built for fresh servers and first-time admins. The installer prepares the host, starts the Web UI, generates a strong local admin password, and then the browser setup wizard walks through the rest. Running directly on Linux is the most efficient option, but Docker Desktop on Windows/WSL2 and virtual machines can also work when networking and resources are configured correctly.
+It is built for fresh servers and first-time admins. The installer prepares the host, starts the Web UI on port `8088`, generates a strong local admin password, and then the browser setup wizard walks through the rest. Running directly on Linux is the most efficient option, but Docker Desktop on Windows/WSL2 and virtual machines can also work when networking and resources are configured correctly.
 
 This project is unofficial. It is not affiliated with, endorsed by, sponsored by, or supported by Funcom.
 
@@ -33,7 +33,7 @@ The installer is meant to do the setup work for you:
 - installs Docker automatically on supported Linux servers
 - starts and enables Docker when it is installed but not running
 - checks Docker Compose
-- starts the RedBlink Dune Docker Console Web UI
+- starts the RedBlink Dune Docker Console Web UI so you can open it remotely
 - prints the browser address to open
 - tells the local server admin where the generated first-login password was saved
 
@@ -41,7 +41,7 @@ The README does not publish the password location. The installer and local conso
 
 ## What Happens In The Browser
 
-Open the Web UI address shown by the installer and sign in with the generated admin password. First-time setup stays focused on the wizard; the main operational menu remains hidden until setup is complete.
+Open the Web UI address shown by the installer and sign in with the generated admin password. The Web UI listens on `0.0.0.0:8088` by default so you can finish installation from your browser on another machine. First-time setup stays focused on the wizard; the main operational menu remains hidden until setup is complete.
 
 The wizard guides you through:
 
@@ -80,11 +80,11 @@ You will need:
 
 ## Ports
 
-Keep the Web UI private. Use LAN, VPN, SSH tunnel, protected reverse proxy, or firewall allowlisting for admin access.
+The Web UI listens on all network interfaces by default for first-time setup. Use a strong generated password, and restrict access with your server firewall, VPN, protected reverse proxy, or allowlisting when possible.
 
 | Port | Purpose | Exposure |
 |---|---|---|
-| `8088/tcp` | Web admin console | Private admin access only |
+| `8088/tcp` | Web admin console | Remote admin setup; restrict to trusted admins |
 | `7777-7810/udp` | Normal Dune game traffic | Forward for public servers |
 | `31982/tcp` | Game stack messaging | Forward only when your setup requires it |
 | `15432/tcp` | Local database | Never public |
@@ -115,7 +115,7 @@ Once setup is complete, the dashboard unlocks the normal tools:
 RedBlink Dune Docker Console controls Docker and game admin operations. Treat it like a private server admin panel.
 
 - Keep authentication enabled.
-- Keep the Web UI off the public internet.
+- The Web UI starts on all interfaces so remote browser setup works. Restrict access to trusted admins as soon as practical.
 - Do not share the admin password.
 - Back up before destructive actions.
 - The console uses Docker access to manage the stack, so only trusted admins should use it.
