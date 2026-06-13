@@ -200,7 +200,7 @@ read_admin_password() {
   local password_file="$1"
   local attempt
   for attempt in $(seq 1 20); do
-    if [ -s "$password_file" ]; then
+    if [ -r "$password_file" ] && [ -s "$password_file" ]; then
       tr -d '\r\n' < "$password_file"
       return
     fi
