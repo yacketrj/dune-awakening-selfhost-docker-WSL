@@ -38,7 +38,7 @@ const swapMemoryState = {
   enabled: false,
   running: false,
   baselineLimits: new Map(),
-  lastMessage: "Swap Memory is off.",
+  lastMessage: "Memory Balancer is off.",
   lastAction: "",
   lastError: "",
   updatedAt: null
@@ -1044,14 +1044,14 @@ async function swapMemoryRoute(req, res) {
 
   if (enabled) {
     swapMemoryState.baselineLimits.clear();
-    swapMemoryState.lastMessage = "Swap Memory is monitoring running maps";
+    swapMemoryState.lastMessage = "Memory Balancer is monitoring running maps";
     await captureSwapMemoryBaseline();
     void runSwapMemoryTick();
   } else {
     swapMemoryState.lastMessage = "Restoring configured memory limits.";
     await restoreSwapMemoryBaseline();
     swapMemoryState.baselineLimits.clear();
-    swapMemoryState.lastMessage = "Swap Memory is off. Configured memory limits are active.";
+    swapMemoryState.lastMessage = "Memory Balancer is off. Configured memory limits are active.";
   }
 
   audit(config, req, "maps.memory.swap", { enabled });
@@ -1207,7 +1207,7 @@ async function runSwapMemoryTick() {
     }
     const target = rows.filter((row) => row.percent >= SWAP_MEMORY_HIGH_WATERMARK).sort((a, b) => b.percent - a.percent)[0];
     if (!target) {
-      swapMemoryState.lastMessage = "Swap Memory is monitoring running maps";
+      swapMemoryState.lastMessage = "Memory Balancer is monitoring running maps";
       swapMemoryState.lastAction = "";
       swapMemoryState.lastError = "";
       swapMemoryState.updatedAt = new Date().toISOString();
@@ -1234,7 +1234,7 @@ async function runSwapMemoryTick() {
     swapMemoryState.updatedAt = new Date().toISOString();
   } catch (error) {
     swapMemoryState.lastError = redact(error.message || error);
-    swapMemoryState.lastMessage = "Swap Memory could not rebalance memory.";
+    swapMemoryState.lastMessage = "Memory Balancer could not rebalance memory.";
     swapMemoryState.updatedAt = new Date().toISOString();
   } finally {
     swapMemoryState.running = false;
@@ -1251,7 +1251,8 @@ async function configuredMemoryLimitsByContainer() {
   const limits = new Map();
   for (const row of rows) {
     const key = memoryTargetForContainer(row.container);
-    const configured = byMap.get(key);
+    const partitionId = partitionIdFromContainer(row.container);
+    const configured = byMap.get(key) || (partitionId ? configuredMemoryForPartition(byMap, partitionId) : 0);
     if (configured > 0) limits.set(row.container, configured);
   }
   return limits;
@@ -1263,6 +1264,19 @@ function memoryTargetForContainer(container) {
   if (survivalPartition) return `Survival_1:${survivalPartition[1]}`;
   if (container === "dune-server-overmap") return "Overmap";
   return mapFromContainerName(container);
+}
+
+function partitionIdFromContainer(container) {
+  const match = String(container || "").match(/^dune-server-.+-(\d+)$/);
+  return match ? match[1] : "";
+}
+
+function configuredMemoryForPartition(byMap, partitionId) {
+  const suffix = `:${partitionId}`;
+  for (const [map, bytes] of byMap.entries()) {
+    if (String(map).endsWith(suffix) && bytes > 0) return bytes;
+  }
+  return 0;
 }
 
 function parseMemorySettingBytes(value) {

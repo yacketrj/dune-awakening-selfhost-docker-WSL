@@ -5454,7 +5454,11 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     onError("");
     try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
   }
-  async function runTaskAndRefresh(action: () => Promise<{ task: Task }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied") {
+  function applyOptimisticMemoryUpdates(updates: Array<{ map: string; partitionId?: string; memory: string }> = []) {
+    if (!updates.length) return;
+    setMemoryText((current) => updateMemoryStatusText(current, updates));
+  }
+  async function runTaskAndRefresh(action: () => Promise<{ task: Task }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied", options: { memoryUpdates?: Array<{ map: string; partitionId?: string; memory: string }> } = {}) {
     const response = await action();
     const started: HomeTaskResult = { status: "running", title: runningTitle };
     setMapsResult(started);
@@ -5473,13 +5477,14 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       ? { status: "succeeded", title: successTitle, details: taskTechnicalDetails(final) }
       : { status: "failed", title: "Map Change Failed", details: taskTechnicalDetails(final) || final.errorMessage || final.progressMessage };
     mapsDisplayedTerminalTaskRef.current.add(final.id);
+    if (next.status === "succeeded") applyOptimisticMemoryUpdates(options.memoryUpdates);
     setMapsResult(next);
     persistMapsTask(null);
     await loadMaps();
     await loadUserEngine();
     if (userGameMapName) await loadSelectedSettings(userGameMapName, userGamePartitionId);
   }
-  async function runTaskSequenceAndRefresh(actions: Array<{ label: string; run: () => Promise<{ task: Task }> }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied", options: { saveAcceptedMessage?: string } = {}) {
+  async function runTaskSequenceAndRefresh(actions: Array<{ label: string; run: () => Promise<{ task: Task }> }>, runningTitle = "Applying Map Changes", successTitle = "Map Changes Applied", options: { saveAcceptedMessage?: string; memoryUpdates?: Array<{ map: string; partitionId?: string; memory: string }> } = {}) {
     if (!actions.length) return;
     const savingMessage = "Saving settings.";
     setMapsResult({ status: "running", title: runningTitle, message: savingMessage });
@@ -5529,6 +5534,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       ? { status: "succeeded", title: successTitle, message: options.saveAcceptedMessage || undefined, details: options.saveAcceptedMessage ? undefined : taskTechnicalDetails(final) }
       : { status: "failed", title: "Map Change Failed", details: final ? taskTechnicalDetails(final) || final.errorMessage || final.progressMessage : "No task result." };
     if (final?.id) mapsDisplayedTerminalTaskRef.current.add(final.id);
+    if (next.status === "succeeded") applyOptimisticMemoryUpdates(options.memoryUpdates);
     if (!handedOffToWarming || next.status !== "succeeded") setMapsResult(next);
     persistMapsTask(null);
     await loadMaps();
@@ -5865,7 +5871,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
     const originalMemory = memoryInputValue(String(row.memory || ""));
     const modeChanged = modeDraft !== originalMode && String(row.mode) !== "Core Map";
     const memoryChanged = memory !== originalMemory;
-    const partitionId = String(row.partitionId || row.partition || "").trim();
+    const partitionId = "";
     const activeChanged = rowName === "Survival_1" && activeSietchesDirty;
     const requestedActiveSietches = Number(activeSietches);
     const currentActiveCount = Number(currentActiveSietches) || survivalSietchRows.filter((sietch) => sietch.active).length || survivalSietchRows.length;
@@ -5920,7 +5926,10 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         actions,
         `Saving ${rowName} Settings`,
         activeChanged ? "Sietch Changes Saved" : "Map Settings Saved",
-        { saveAcceptedMessage: successMessage }
+        {
+          saveAcceptedMessage: successMessage,
+          memoryUpdates: memoryChanged ? [{ map: rowName, memory: `${memory}g` }] : []
+        }
       );
     }
   }
@@ -6025,7 +6034,10 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
       const successMessage = sietchActions.length > 0
         ? "Sietch settings saved successfully. Changes may take a short time to appear in-game."
         : "Memory settings saved successfully.";
-      await runTaskSequenceAndRefresh(actions, `Saving ${sietchTargetDisplayName(sietch, draft.displayName)} Settings`, "Sietch Saved", { saveAcceptedMessage: successMessage });
+      await runTaskSequenceAndRefresh(actions, `Saving ${sietchTargetDisplayName(sietch, draft.displayName)} Settings`, "Sietch Saved", {
+        saveAcceptedMessage: successMessage,
+        memoryUpdates: memoryChanged ? [{ map: "Survival_1", partitionId: sietch.partitionId, memory: `${memory}g` }] : []
+      });
     }
   }
   async function enableDualDeepDesert() {
@@ -6071,7 +6083,8 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
         confirmation: "SAVE MAP SETTINGS"
       }),
       `Saving ${deepDesertPartitionName(row)} Settings`,
-      "Deep Desert Saved"
+      "Deep Desert Saved",
+      { memoryUpdates: [{ map: "DeepDesert_1", partitionId, memory: `${memory}g` }] }
     );
   }
   async function forceDespawnMap(row: Record<string, unknown>) {
@@ -6151,7 +6164,7 @@ function MapsPanel({ setTask, onError }: { setTask: (task: Task) => void; onErro
   const modifiersAvailable = mapsLoaded && !loading;
   const advancedAvailable = mapsLoaded && !loading;
   return <section className="panel maps-panel">
-    <div className="panel-title"><h2>Maps & Sietches</h2><div className="maps-title-actions">{swapMemory?.enabled && <span className={`maps-swap-status ${swapMemory.lastError ? "danger" : ""}`}>{swapMemory.lastError ? `Swap Memory error: ${swapMemory.lastError}` : swapMemory.lastMessage || "Swap Memory is monitoring running maps"}</span>}<button className={`switch-toggle maps-swap-toggle ${swapMemory?.enabled ? "enabled" : "disabled"}`} disabled={swapMemorySaving} onClick={() => run(toggleSwapMemory)}><span className="switch-label">Swap Memory</span><strong className="switch-state">{swapMemory?.enabled ? "ON" : "OFF"}</strong></button><button disabled={loading} onClick={() => run(loadMaps)}>{loading ? "Refreshing..." : "Refresh Maps"}</button></div></div>
+    <div className="panel-title"><h2>Maps & Sietches</h2><div className="maps-title-actions">{swapMemory?.enabled && <span className={`maps-swap-status ${swapMemory.lastError ? "danger" : ""}`}>{swapMemory.lastError ? `Memory Balancer error: ${swapMemory.lastError}` : swapMemory.lastMessage || "Memory Balancer is monitoring running maps"}</span>}<button className={`switch-toggle maps-swap-toggle ${swapMemory?.enabled ? "enabled" : "disabled"}`} disabled={swapMemorySaving} onClick={() => run(toggleSwapMemory)}><span className="switch-label">Memory Balancer</span><strong className="switch-state">{swapMemory?.enabled ? "ON" : "OFF"}</strong></button><button disabled={loading} onClick={() => run(loadMaps)}>{loading ? "Refreshing..." : "Refresh Maps"}</button></div></div>
     {dirtySummary && <p className="dirty-note">Unsaved changes: {dirtySummary}</p>}
     {mapsResult ? <div className="maps-result-slot"><HomeTaskResultCard result={mapsResult} /></div> : null}
     <section className="action-section">
@@ -7142,6 +7155,30 @@ function parseMemoryRows(text: string): Record<string, unknown>[] {
     if (!match) return null;
     return { map: match[1].trim(), memory: formatMemoryValue(match[2].trim()) };
   }).filter(Boolean) as Record<string, unknown>[];
+}
+
+function updateMemoryStatusText(text: string, updates: Array<{ map: string; partitionId?: string; memory: string }>) {
+  const normalizedUpdates = updates.map((update) => ({
+    key: update.partitionId ? `${update.map}:${update.partitionId}` : update.map,
+    memory: formatMemoryValue(update.memory)
+  })).filter((update) => update.key && update.memory);
+  if (!normalizedUpdates.length) return text;
+  const pending = new globalThis.Map(normalizedUpdates.map((update) => [update.key, update.memory]));
+  const lines = String(text || "").split(/\r?\n/);
+  const nextLines = lines.map((line) => {
+    const match = line.trim().match(/^(.+?)\s{2,}(.+)$/);
+    if (!match) return line;
+    const key = match[1].trim();
+    const memory = pending.get(key);
+    if (!memory) return line;
+    pending.delete(key);
+    return `${key.padEnd(28)} ${memory}`;
+  });
+  const insertLines = Array.from(pending.entries()).map(([key, memory]) => `${key.padEnd(28)} ${memory}`);
+  if (!insertLines.length) return nextLines.join("\n");
+  const hasBody = nextLines.some((line) => line.trim());
+  const base = hasBody ? nextLines : ["=== Memory configuration ===", "Default memory: built-in per-map defaults, or server catalog for other dynamic maps", "", "MAP                          MEMORY"];
+  return [...base, ...insertLines].join("\n");
 }
 
 function parseServerPartitionRows(text: string): Record<string, unknown>[] {

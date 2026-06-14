@@ -507,7 +507,7 @@ function validateMemoryTarget(value) {
 function memoryTarget(payload = {}) {
   const map = String(payload.map || "");
   const partitionId = String(payload.partitionId || "").trim();
-  if (map === "Survival_1" && partitionId) return `partition:${validatePartitionId(partitionId)}`;
+  if (partitionId) return `partition:${validatePartitionId(partitionId)}`;
   return map;
 }
 

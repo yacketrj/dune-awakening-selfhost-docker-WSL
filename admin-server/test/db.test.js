@@ -35,13 +35,39 @@ test("builds table preview query with quoted identifiers and parameters", async 
   const db = {
     query: async (text, values) => {
       calls.push({ text, values });
+      if (text.includes("pg_index")) return { rows: [{ name: "id" }] };
       return { fields: [{ name: "id", dataTypeID: 20 }], rows: [{ id: 1 }] };
     }
   };
   const result = await tablePreview(db, "dune", "player_state", 25, 5);
-  assert.match(calls[0].text, /"dune"\."player_state" limit \$1 offset \$2/);
-  assert.deepEqual(calls[0].values, [25, 5]);
+  assert.match(calls[1].text, /json_build_object\('pk'/);
+  assert.match(calls[1].text, /"dune"\."player_state" order by "id" limit \$1 offset \$2/);
+  assert.deepEqual(calls[1].values, [25, 5]);
   assert.equal(result.rows[0].id, 1);
+});
+
+test("manual row edit uses stable primary key row identifiers when available", async () => {
+  const calls = [];
+  const rowId = JSON.stringify({ pk: { id: 1 } });
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("pg_index")) return { rows: [{ name: "id" }] };
+      if (text.includes("information_schema.columns")) {
+        return { rows: [
+          { name: "id" },
+          { name: "goal_amount" }
+        ] };
+      }
+      return { fields: [], rows: [], rowCount: 1, command: "UPDATE" };
+    }
+  };
+  const result = await updateTableRow(db, "dune", "landsraad_tasks", rowId, { id: "1", goal_amount: "70001" });
+  assert.equal(result.updatedRows, 1);
+  const updateCall = calls.find((call) => String(call.text).startsWith("update"));
+  assert.ok(updateCall);
+  assert.match(updateCall.text, /where "id" = \$3$/);
+  assert.deepEqual(updateCall.values, ["1", "70001", 1]);
 });
 
 test("database table list returns exact row counts", async () => {

@@ -19,7 +19,7 @@ This project is unofficial. It is not affiliated with, endorsed by, sponsored by
 - Live map marker/list view for online player and server activity
 - Map management for dynamic or always-on maps, Sietches, and Deep Desert layouts
 - Interactive UserEngine and UserGame editing without manually editing config files
-- Memory controls, including per-map memory settings and swap memory tools
+- Memory controls, including per-map memory settings and the Memory Balancer
 - Autoscaler controls for starting, stopping, and reconciling dynamic map servers
 - Database browser plus database backup, restore, import, and maintenance tools
 - And much more!

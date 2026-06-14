@@ -272,7 +272,7 @@ running_info_for_partition() {
     fi
     return
   fi
-  container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^dune-server-survival-1-${partition}$" | head -n1 || true)"
+  container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^dune-server-.*-${partition}$" | head -n1 || true)"
   if [ -n "$container" ]; then
     echo "dynamic|$container|$partition"
   fi
@@ -318,8 +318,8 @@ restart_partition_if_running() {
   IFS='|' read -r kind container ignored <<< "$info"
 
   echo
-  echo "Survival_1 partition $partition is currently running."
-  echo "The relevant sietch container will restart now so the memory change can apply."
+  echo "Partition $partition is currently running."
+  echo "The relevant map container will restart now so the memory change can apply."
 
   if [ "$partition" = "1" ]; then
     runtime/scripts/dune restart survival
@@ -413,16 +413,15 @@ for row in server_catalog:
 rows = []
 seen = set()
 global_default = env.get("DUNE_MEMORY_DEFAULT", "")
-survival_partitions = []
+partition_rows = []
 for row in catalog:
     name = str(row.get("map", ""))
     if not name or name in seen:
-        if name == "Survival_1":
-            survival_partitions.append(row)
+        if name:
+            partition_rows.append(row)
         continue
     seen.add(name)
-    if name == "Survival_1":
-        survival_partitions.append(row)
+    partition_rows.append(row)
     override = env.get(env_key(name), "")
     catalog_memory = str(
         server_by_map.get(name, {}).get("resources", {}).get("limits", {}).get("memory", "")
@@ -447,14 +446,19 @@ for row in catalog:
 print(f"{'MAP':<28} MEMORY")
 for name, display in rows:
     print(f"{name:<28} {display}")
-for row in sorted(survival_partitions, key=lambda item: (int(item.get("dimension") or 0), int(item.get("id") or 0))):
+for row in sorted(partition_rows, key=lambda item: (str(item.get("map", "")), int(item.get("dimension") or 0), int(item.get("id") or 0))):
+    name = str(row.get("map", ""))
     partition_id = str(row.get("id") or "").strip()
-    if not partition_id:
+    if not name or not partition_id:
         continue
     override = env.get(f"DUNE_MEMORY_PARTITION_{partition_id}", "")
+    if name != "Survival_1" and not override:
+        continue
     parent = env.get("DUNE_MEMORY_SURVIVAL_1", "")
-    display = override or parent or global_default or "16g default"
-    print(f"{('Survival_1:' + partition_id):<28} {display}")
+    if name != "Survival_1":
+        parent = env.get(env_key(name), "")
+    display = override or parent or global_default or ("16g default" if name in {"Survival_1", "DeepDesert_1"} else "3g default")
+    print(f"{(name + ':' + partition_id):<28} {display}")
 PY
   else
     echo "Map catalog not found. Run dune memory list-maps after init."
@@ -552,7 +556,7 @@ set_memory() {
 
   partition="$(partition_id_for_target "$target" || true)"
   if [ -n "$partition" ]; then
-    confirm_set "Survival_1 partition $partition" "$memory" || exit 1
+    confirm_set "partition $partition" "$memory" || exit 1
     key="$(env_key_for "$target")"
     set_env_raw "$key" "$memory"
     echo "Set $key=$memory"
@@ -574,6 +578,9 @@ set_memory() {
   confirm_set "$map" "$memory" || exit 1
   key="$(env_key_for "$map")"
   set_env_raw "$key" "$memory"
+  if [ "$map" = "Survival_1" ]; then
+    unset_env_raw DUNE_MEMORY_PARTITION_1
+  fi
   echo "Set $key=$memory"
   if [ "${DUNE_MEMORY_SKIP_RESTART:-0}" = "1" ]; then
     apply_live_memory_to_map_if_running "$map" "$memory"
@@ -598,7 +605,7 @@ unset_memory() {
 
   partition="$(partition_id_for_target "$target" || true)"
   if [ -n "$partition" ]; then
-    confirm_unset "Survival_1 partition $partition" || exit 1
+    confirm_unset "partition $partition" || exit 1
     key="$(env_key_for "$target")"
     unset_env_raw "$key"
     echo "Removed $key"

@@ -69,6 +69,37 @@ print_web_console_url() {
   echo "  http://$(detect_web_console_ip):$port"
 }
 
+start_compose_service_if_available() {
+  local compose_file="$1"
+  local service="$2"
+  local env_prefix="${3:-}"
+
+  if [ ! -f "$compose_file" ]; then
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is not available; cannot start $service from $compose_file."
+    return 1
+  fi
+  if ! docker compose -f "$compose_file" config --services 2>/dev/null | grep -qx "$service"; then
+    echo "Compose service $service was not found in $compose_file."
+    return 1
+  fi
+  if docker ps --format '{{.Names}}' | grep -qx "$service"; then
+    return 0
+  fi
+
+  echo "Starting $service..."
+  case "$env_prefix" in
+    web)
+      DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" docker compose -f "$compose_file" up -d --build "$service"
+      ;;
+    *)
+      docker compose -f "$compose_file" up -d --build "$service"
+      ;;
+  esac
+}
+
 case "$cmd" in
   init|help|--help|-h) ;;
   *) auto_repair_stack_git_state ;;
@@ -124,6 +155,8 @@ EOF
 
   start)
     rm -f runtime/generated/manual-stop.env
+    start_compose_service_if_available docker-compose.yml orchestrator
+    start_compose_service_if_available docker-compose.web.yml redblink-dune-docker-console web
     DUNE_IGNORE_MANUAL_STOP=1 runtime/scripts/start-all.sh
     ;;
 

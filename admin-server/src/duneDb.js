@@ -54,6 +54,21 @@ export async function tableColumns(db, schema, table) {
   return result.rows;
 }
 
+async function tablePrimaryKeyColumns(db, schema, table) {
+  assertIdentifier(schema, "schema");
+  assertIdentifier(table, "table");
+  const result = await db.query(`
+    select a.attname as name
+    from pg_index i
+    join pg_class c on c.oid = i.indrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join unnest(i.indkey) with ordinality as k(attnum, ordinality) on true
+    join pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+    where n.nspname = $1 and c.relname = $2 and i.indisprimary
+    order by k.ordinality`, [schema, table]);
+  return result.rows.map((row) => row.name).filter(Boolean);
+}
+
 export async function tableCount(db, schema, table) {
   const safe = quoteQualified(schema, table);
   const result = await db.query(`select count(*)::bigint as count from ${safe}`);
@@ -64,7 +79,14 @@ export async function tablePreview(db, schema, table, limit = 50, offset = 0) {
   const safe = quoteQualified(schema, table);
   const maxLimit = intParam(limit, "limit", 1, 500);
   const safeOffset = intParam(offset, "offset", 0);
-  const result = await db.query(`select ctid::text as __rowid, * from ${safe} limit $1 offset $2`, [maxLimit, safeOffset]);
+  const primaryKeys = await tablePrimaryKeyColumns(db, schema, table);
+  const rowIdSql = primaryKeys.length
+    ? `json_build_object('pk', json_build_object(${primaryKeys.map((key) => `'${key}', ${quoteIdentifier(key)}`).join(", ")}))::text`
+    : "ctid::text";
+  const orderSql = primaryKeys.length
+    ? ` order by ${primaryKeys.map((key) => quoteIdentifier(key)).join(", ")}`
+    : " order by ctid";
+  const result = await db.query(`select ${rowIdSql} as __rowid, * from ${safe}${orderSql} limit $1 offset $2`, [maxLimit, safeOffset]);
   return { schema, table, limit: maxLimit, offset: safeOffset, ...rowsResult(result) };
 }
 
@@ -72,8 +94,7 @@ export async function updateTableRow(db, schema, table, rowId, values = {}) {
   assertIdentifier(schema, "schema");
   assertIdentifier(table, "table");
   const safe = quoteQualified(schema, table);
-  const targetRow = String(rowId || "").trim();
-  if (!/^\(\d+,\d+\)$/.test(targetRow)) throw new Error("Invalid row identifier");
+  const rowRef = await rowReference(db, schema, table, rowId);
   const columns = await tableColumns(db, schema, table);
   const editable = new Map(columns.map((column) => [column.name, column]));
   const entries = Object.entries(values || {}).filter(([key]) => key !== "__rowid" && editable.has(key));
@@ -81,21 +102,52 @@ export async function updateTableRow(db, schema, table, rowId, values = {}) {
   if (entries.length > 100) throw new Error("Too many columns in one row update");
 
   if (schema === "dune" && table === "player_virtual_currency_balances" && Object.prototype.hasOwnProperty.call(values, "balance")) {
-    return updateCurrencyBalanceViaGameFunction(db, safe, targetRow, values);
+    return updateCurrencyBalanceViaGameFunction(db, safe, rowRef, values);
   }
 
-  const itemEditMessage = schema === "dune" && table === "items" ? await manualItemEditMessage(db, safe, targetRow) : undefined;
+  const itemEditMessage = schema === "dune" && table === "items" ? await manualItemEditMessage(db, safe, rowRef) : undefined;
   const assignments = entries.map(([key], index) => `${quoteIdentifier(key)} = $${index + 1}`);
   const params = entries.map(([, value]) => normalizeEditableValue(value));
-  params.push(targetRow);
-  const result = await withKnownLiveRefresh(db, () => db.query(`update ${safe} set ${assignments.join(", ")} where ctid = $${params.length}::tid`, params), {
+  const whereParams = rowRef.params.map((value) => normalizeEditableValue(value));
+  const result = await withKnownLiveRefresh(db, () => db.query(`update ${safe} set ${assignments.join(", ")} where ${rowWhereSql(rowRef, params.length)}`, [...params, ...whereParams]), {
     features: liveRefreshFeaturesForTable(schema, table, entries.map(([key]) => key))
   });
   return { ok: true, updatedRows: result.rowCount || 0, schema, table, message: result.rowCount ? itemEditMessage : undefined };
 }
 
-async function updateCurrencyBalanceViaGameFunction(db, safeTable, rowId, values) {
-  const current = await db.query(`select player_controller_id, currency_id, balance from ${safeTable} where ctid = $1::tid`, [rowId]);
+async function rowReference(db, schema, table, rowId) {
+  const raw = String(rowId || "").trim();
+  if (/^\(\d+,\d+\)$/.test(raw)) return { type: "ctid", params: [raw] };
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Invalid row identifier");
+  }
+  const pk = parsed?.pk;
+  if (!pk || typeof pk !== "object" || Array.isArray(pk)) throw new Error("Invalid row identifier");
+
+  const primaryKeys = await tablePrimaryKeyColumns(db, schema, table);
+  if (!primaryKeys.length) throw new Error("This table does not expose a stable row identifier. Refresh the table and try again.");
+  for (const key of primaryKeys) {
+    if (!Object.prototype.hasOwnProperty.call(pk, key)) throw new Error("Row identifier is missing a primary key value");
+  }
+  return {
+    type: "pk",
+    columns: primaryKeys,
+    params: primaryKeys.map((key) => pk[key])
+  };
+}
+
+function rowWhereSql(rowRef, offset = 0, qualifier = "") {
+  const prefix = qualifier ? `${quoteIdentifier(qualifier)}.` : "";
+  if (rowRef.type === "ctid") return `${prefix}ctid = $${offset + 1}::tid`;
+  return rowRef.columns.map((key, index) => `${prefix}${quoteIdentifier(key)} = $${offset + index + 1}`).join(" and ");
+}
+
+async function updateCurrencyBalanceViaGameFunction(db, safeTable, rowRef, values) {
+  const current = await db.query(`select player_controller_id, currency_id, balance from ${safeTable} where ${rowWhereSql(rowRef)}`, rowRef.params);
   const row = current.rows[0];
   if (!row) return { ok: true, updatedRows: 0, schema: "dune", table: "player_virtual_currency_balances" };
   const controllerId = intParam(values.player_controller_id ?? row.player_controller_id, "player controller id", 1);
@@ -123,7 +175,7 @@ async function updateCurrencyBalanceViaGameFunction(db, safeTable, rowId, values
   return { ok: true, updatedRows: 1, schema: "dune", table: "player_virtual_currency_balances", message };
 }
 
-async function manualItemEditMessage(db, safeTable, rowId) {
+async function manualItemEditMessage(db, safeTable, rowRef) {
   const result = await db.query(`
     select it.id,
            it.template_id,
@@ -133,8 +185,8 @@ async function manualItemEditMessage(db, safeTable, rowId) {
     left join dune.inventories inv on inv.id = it.inventory_id
     left join dune.actors a on a.id = inv.actor_id
     left join dune.player_state ps on ps.account_id = a.owner_account_id
-    where it.ctid = $1::tid
-    limit 1`, [rowId]);
+    where ${rowWhereSql(rowRef, 0, "it")}
+    limit 1`, rowRef.params);
   const row = result.rows[0];
   if (!row) return undefined;
   if (String(row.online_status || "").toLowerCase() === "online") {
