@@ -1,6 +1,6 @@
 import { Fragment, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Archive, ChevronDown, ChevronUp, Database, FileText, Gift, Heart, Home, Lock, Map as MapIcon, MessageCircle, PackagePlus, Play, RefreshCw, Server, Settings, Shield, Sparkles, Users, X } from "lucide-react";
+import { Archive, ChevronDown, ChevronUp, Database, FileText, Gift, Grid2X2, Heart, Home, List, Lock, Map as MapIcon, MessageCircle, PackagePlus, Play, RefreshCw, Server, Settings, Shield, Sparkles, Users, X } from "lucide-react";
 import { api, post, setCsrfToken } from "./api/client";
 import { serverApi } from "./api/server";
 import type { PerformanceSnapshot } from "./api/server";
@@ -4514,6 +4514,7 @@ function ItemCatalogSelector({ label = "Select Item", selected, onSelect, placeh
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState("all");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   async function load() {
     setLoading(true);
     try {
@@ -4544,15 +4545,35 @@ function ItemCatalogSelector({ label = "Select Item", selected, onSelect, placeh
           {categories.map((option) => <option key={option} value={option}>{option === "all" ? `All Categories (${items.length})` : `${titleCase(option)} (${categoryCounts[option] || 0})`}</option>)}
         </select>
       </label>
-      <input className="catalog-filter-input" aria-label="Filter Items" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={placeholder} />
+      <div className="catalog-search-tools">
+        <input className="catalog-filter-input" aria-label="Filter Items" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={placeholder} />
+        <div className="catalog-view-toggle" aria-label="Item catalog view">
+          <button type="button" className={viewMode === "grid" ? "active" : ""} title="Grid view" aria-label="Grid view" aria-pressed={viewMode === "grid"} onClick={() => setViewMode("grid")}><Grid2X2 size={17} /></button>
+          <button type="button" className={viewMode === "list" ? "active" : ""} title="List view" aria-label="List view" aria-pressed={viewMode === "list"} onClick={() => setViewMode("list")}><List size={18} /></button>
+        </div>
+      </div>
     </div>
-    <div className="catalog-item-picker" aria-label={label}>
-      {loading ? <div className="catalog-loading">Loading Items...</div> : filteredItems.map((item) => {
+    <div className={`catalog-item-picker ${viewMode === "list" ? "list-view" : "grid-view"}`} aria-label={label}>
+      {loading ? <div className="catalog-loading">Loading Items...</div> : viewMode === "list" ? <table className="catalog-item-table">
+        <thead><tr><th>Preview</th><th>Item Name</th><th>Item ID</th><th>Category</th><th>Source</th></tr></thead>
+        <tbody>{filteredItems.map((item) => {
+          const active = selected?.id === item.id && selected?.name === item.name;
+          const fullName = catalogItemName(item);
+          return <tr className={active ? "active" : ""} key={`${item.id}-${item.name}-${item.source}`} title={fullName} onClick={() => onSelect(item)}>
+            <td><CatalogItemThumb item={item} small /></td>
+            <td className="catalog-item-name-cell">{fullName}</td>
+            <td>{item.id}</td>
+            <td>{item.category ? titleCase(item.category) : ""}</td>
+            <td>{item.source || ""}</td>
+          </tr>;
+        })}</tbody>
+      </table> : filteredItems.map((item) => {
         const active = selected?.id === item.id && selected?.name === item.name;
-        return <button type="button" className={`catalog-item-option ${active ? "active" : ""}`} key={`${item.id}-${item.name}-${item.source}`} onClick={() => onSelect(item)}>
+        const fullName = catalogItemName(item);
+        return <button type="button" className={`catalog-item-option ${active ? "active" : ""}`} key={`${item.id}-${item.name}-${item.source}`} title={fullName} onClick={() => onSelect(item)}>
           <CatalogItemThumb item={item} />
           <span>
-            <strong>{item.name}</strong>
+            <strong>{fullName}</strong>
             <small>{item.id}{item.category ? ` - ${titleCase(item.category)}` : ""}</small>
           </span>
         </button>;
