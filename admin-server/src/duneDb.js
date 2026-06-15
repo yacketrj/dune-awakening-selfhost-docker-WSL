@@ -1,5 +1,7 @@
 import { assertIdentifier, intParam, isReadOnlySql, quoteIdentifier, quoteQualified, rowsResult } from "./db.js";
 
+const MAX_INTEL_POINTS = 2779;
+
 export class UnsupportedCapabilityError extends Error {
   constructor(message, details = {}) {
     super(message);
@@ -1487,17 +1489,18 @@ export async function addFactionReputation(db, id, { factionId, amount }) {
 
 export async function addIntel(db, id, { amount }) {
   await requireCapability(await supportsIntelMutation(db), "Intel mutation requires dune.actors.properties with TechKnowledgePlayerComponent.");
-  const delta = intParam(amount, "intel amount", -1000000000, 1000000000);
-  if (delta === 0) throw new Error("Intel amount cannot be zero");
+  const delta = intParam(amount, "intel amount", 1, 1000000000);
   return db.transaction(async (tx) => {
     const player = await resolvePlayerMutationTarget(tx, id);
+    requireOfflinePlayer(player, "Intel grants");
     const current = await tx.query(`
       select (properties->'TechKnowledgePlayerComponent'->>'m_TechKnowledgePoints')::bigint as intel
       from dune.actors
       where id = $1 and properties ? 'TechKnowledgePlayerComponent'`, [player.actorId]);
     if (!current.rows.length) throw new UnsupportedCapabilityError(`TechKnowledgePlayerComponent not found for player ${player.actorId}.`);
     const oldValue = Number(current.rows[0]?.intel || 0);
-    const nextValue = Math.max(0, oldValue + delta);
+    const applied = Math.min(delta, Math.max(0, MAX_INTEL_POINTS - oldValue));
+    const nextValue = oldValue + applied;
     await tx.query(`
       update dune.actors
       set properties = jsonb_set(properties, '{TechKnowledgePlayerComponent,m_TechKnowledgePoints}', to_jsonb($2::bigint))
@@ -1507,9 +1510,12 @@ export async function addIntel(db, id, { amount }) {
       player,
       oldValue,
       newValue: nextValue,
-      amount: delta,
-      message: playerOnline(player)
-        ? "Intel was updated in the database. The player may need to relog before the new intel amount appears in-game."
+      amount: applied,
+      requestedAmount: delta,
+      maxValue: MAX_INTEL_POINTS,
+      capped: applied < delta,
+      message: applied < delta
+        ? `Intel was updated up to the spendable cap of ${MAX_INTEL_POINTS} and will be loaded when the player next joins.`
         : "Intel was updated in the database and will be loaded when the player next joins."
     };
   });

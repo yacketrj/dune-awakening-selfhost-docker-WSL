@@ -356,7 +356,37 @@ test("intel mutation updates TechKnowledge points on the player actor", async ()
   const result = await addIntel(db, 123, { amount: 25 });
   assert.equal(result.oldValue, 10);
   assert.equal(result.newValue, 35);
+  assert.equal(result.amount, 25);
+  assert.equal(result.capped, false);
   assert.ok(calls.some((call) => call.text.includes("TechKnowledgePlayerComponent") && call.text.includes("jsonb_set") && call.values[1] === 35));
+});
+
+test("intel mutation requires offline player to avoid live state overwrite", async () => {
+  const calls = [];
+  const db = fakeMutationDb(calls, {
+    playerRows: [{ actor_id: 123, account_id: 44, controller_id: 55, online_status: "Online" }],
+    intelRows: [{ intel: 10 }]
+  });
+  await assert.rejects(
+    () => addIntel(db, 123, { amount: 25 }),
+    /require the player to be offline/
+  );
+  assert.equal(calls.some((call) => call.text.includes("m_TechKnowledgePoints") && call.text.includes("update")), false);
+});
+
+test("intel mutation clamps grants to the spendable cap", async () => {
+  const calls = [];
+  const db = fakeMutationDb(calls, {
+    intelRows: [{ intel: 2770 }]
+  });
+  const result = await addIntel(db, 123, { amount: 25 });
+  assert.equal(result.oldValue, 2770);
+  assert.equal(result.newValue, 2779);
+  assert.equal(result.amount, 9);
+  assert.equal(result.requestedAmount, 25);
+  assert.equal(result.maxValue, 2779);
+  assert.equal(result.capped, true);
+  assert.ok(calls.some((call) => call.text.includes("TechKnowledgePlayerComponent") && call.text.includes("jsonb_set") && call.values[1] === 2779));
 });
 
 test("crafting recipe listing uses verified BaseRecipeId names and player unlock status", async () => {
