@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Archive, Database, FileText, Gift, Heart, Home, Map as MapIcon, MessageCircle, PackagePlus, RefreshCw, Server, Settings, Shield, Sparkles, Users } from "lucide-react";
 import { api, post, setCsrfToken } from "./api/client";
 import { serverApi } from "./api/server";
@@ -8,20 +8,8 @@ import { setupApi, type Task } from "./api/setup";
 import { SetupWizard } from "./components/SetupWizard";
 import { TaskProgress } from "./components/TaskProgress";
 import { ConfirmDialog, type ConfirmDialogDetail, type ConfirmDialogRequest } from "./components/common/ConfirmDialog";
-import { AddonsPanel, loadPinnedAddons, savePinnedAddons, type PinnedAddon } from "./features/addons/AddonsPanel";
-import { AdminToolsPanel } from "./features/adminTools/AdminToolsPanel";
-import { BackupsPanel } from "./features/backups/BackupsPanel";
-import { CarePackagePanel } from "./features/carePackage/CarePackagePanel";
-import { DatabasePanel } from "./features/database/DatabasePanel";
-import { LogsPanel } from "./features/logs/LogsPanel";
-import { LiveMapPanel } from "./features/liveMap/LiveMapPanel";
-import { MapsPanel } from "./features/maps/MapsPanel";
-import { CharacterAdminUI } from "./features/players/CharacterAdminUI";
+import { loadPinnedAddons, savePinnedAddons, type PinnedAddon } from "./features/addons/pinnedAddons";
 import { preloadPlayerAdminIconRailAssets } from "./features/players/PlayerCategoryIconRail";
-import { PlayersPanel } from "./features/players/PlayersPanel";
-import { StoragePanel } from "./features/storage/StoragePanel";
-import { ServicesPanel } from "./features/services/ServicesPanel";
-import { SettingsPanel } from "./features/settings/SettingsPanel";
 import {
   HomePanel,
   ServerPanel,
@@ -34,13 +22,27 @@ import {
   type HomeLoadResult,
   type HomeTaskResult
 } from "./features/server/ServerPanels";
-import { UpdatesPanel } from "./features/updates/UpdatesPanel";
 import { parseUpdateTask, stackVersionButtonLabel, stackVersionButtonTitle } from "./features/updates/updateUtils";
 import { formatUiSentence, stripAnsi, summarizeCommandText, titleCase } from "./lib/display";
 
 type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Care Package" | "Addons" | "Database" | "Storage" | "Backups" | "Logs" | "Updates" | "Settings";
 type SetupState = { files: Record<string, boolean>; config: Record<string, unknown> };
 let openConfirmDialog: ((request: ConfirmDialogRequest) => void) | null = null;
+
+const AddonsPanel = lazy(() => import("./features/addons/AddonsPanel").then((module) => ({ default: module.AddonsPanel })));
+const AdminToolsPanel = lazy(() => import("./features/adminTools/AdminToolsPanel").then((module) => ({ default: module.AdminToolsPanel })));
+const BackupsPanel = lazy(() => import("./features/backups/BackupsPanel").then((module) => ({ default: module.BackupsPanel })));
+const CarePackagePanel = lazy(() => import("./features/carePackage/CarePackagePanel").then((module) => ({ default: module.CarePackagePanel })));
+const DatabasePanel = lazy(() => import("./features/database/DatabasePanel").then((module) => ({ default: module.DatabasePanel })));
+const LogsPanel = lazy(() => import("./features/logs/LogsPanel").then((module) => ({ default: module.LogsPanel })));
+const LiveMapPanel = lazy(() => import("./features/liveMap/LiveMapPanel").then((module) => ({ default: module.LiveMapPanel })));
+const MapsPanel = lazy(() => import("./features/maps/MapsPanel").then((module) => ({ default: module.MapsPanel })));
+const CharacterAdminUI = lazy(() => import("./features/players/CharacterAdminUI").then((module) => ({ default: module.CharacterAdminUI })));
+const PlayersPanel = lazy(() => import("./features/players/PlayersPanel").then((module) => ({ default: module.PlayersPanel })));
+const ServicesPanel = lazy(() => import("./features/services/ServicesPanel").then((module) => ({ default: module.ServicesPanel })));
+const SettingsPanel = lazy(() => import("./features/settings/SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
+const StoragePanel = lazy(() => import("./features/storage/StoragePanel").then((module) => ({ default: module.StoragePanel })));
+const UpdatesPanel = lazy(() => import("./features/updates/UpdatesPanel").then((module) => ({ default: module.UpdatesPanel })));
 
 function confirmDialog(message: string, options: Partial<Omit<ConfirmDialogRequest, "message" | "resolve">> = {}) {
   return new Promise<boolean>((resolve) => {
@@ -126,6 +128,12 @@ function KofiLogo({ size = 18 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <path fill="currentColor" d="M4.2 6.1h12.5c1.7 0 3 1.3 3 3v.3h.5a3.3 3.3 0 0 1 0 6.6h-.8a6.6 6.6 0 0 1-6 3.9H7.7A6.7 6.7 0 0 1 1 13.2V9.3c0-1.8 1.4-3.2 3.2-3.2Zm15.5 7.5h.5a1 1 0 0 0 0-2h-.5v2ZM8.6 9.4c-.8 0-1.5.6-1.5 1.5 0 2 3.5 4 3.8 4.1.3-.1 3.8-2.1 3.8-4.1 0-.9-.7-1.5-1.5-1.5-.8 0-1.5.5-2.3 1.4-.8-.9-1.5-1.4-2.3-1.4Z" />
   </svg>;
+}
+
+function LazyTabBoundary({ children, label = "Loading Section" }: { children: React.ReactNode; label?: string }) {
+  return <Suspense fallback={<section className="panel loading-panel tab-loading-panel"><span className="spinner" aria-hidden="true" /><strong className="loading-dots">{label}</strong></section>}>
+    {children}
+  </Suspense>;
 }
 
 export function App() {
@@ -438,45 +446,45 @@ export function App() {
           setSetupJump((current) => ({ step: 4, nonce: current.nonce + 1 }));
           setTab("Setup");
         }} />}
-        {tab === "Services" && <ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setSelectedLogService(service); setTab("Logs"); }} onError={setError} confirmAction={confirmDialog} />}
-        {tab === "Players" && <PlayersPanel onError={setError} renderCharacterAdmin={(props) => <CharacterAdminUI {...props} onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} formatMutationResult={formatMutationResult} />} />}
-        {tab === "Admin Tools" && <AdminToolsPanel onError={setError} confirmAction={confirmDialog} />}
-        {tab === "Live Map" && <LiveMapPanel onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} taskTechnicalDetails={taskTechnicalDetails} />}
-        {tab === "Maps" && <MapsPanel onError={setError} confirmAction={confirmDialog} confirmSettingsRestart={confirmSettingsRestart} waitForTaskWithUpdates={waitForTaskWithUpdates} taskTechnicalDetails={taskTechnicalDetails} />}
-        {tab === "Care Package" && <CarePackagePanel onError={setError} confirmAction={confirmDialog} />}
-        {tab === "Addons" && <AddonsPanel pinnedAddons={pinnedAddons} setPinnedAddons={setPinnedAddons} selectedAddonId={selectedPinnedAddonId} clearSelectedAddon={() => setSelectedPinnedAddonId("")} setAddonCount={setAddonCount} confirmAction={confirmDialog} />}
-        {tab === "Database" && <DatabasePanel />}
-        {tab === "Storage" && <StoragePanel onError={setError} confirmAction={confirmDialog} formatMutationResult={formatMutationResult} />}
-        {tab === "Backups" && <BackupsPanel
-          backupRestoreTask={backupRestoreTask}
-          setBackupRestoreTask={setBackupRestoreTask}
-          onError={setError}
-          confirmAction={confirmDialog}
-          waitForTask={waitForTaskSilently}
-          waitForTaskWithUpdates={waitForTaskWithUpdates}
-          withTimeout={withTimeout}
-          toHourMinuteTime={toHourMinuteTime}
-          sanitizeTimeInput={sanitizeTimeInput}
-          isValidHourMinuteTime={isValidHourMinuteTime}
-          commandStatusSummary={commandStatusSummary}
-          taskTechnicalDetails={taskTechnicalDetails}
-          isTerminalTask={isTerminalTask}
-        />}
-        {tab === "Logs" && <LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} />}
-        {tab === "Updates" && <UpdatesPanel
-          confirmAction={confirmDialog}
-          waitForTask={waitForTaskSilently}
-          parseKeyValueText={parseKeyValueText}
-          formatTimerStatus={formatTimerStatus}
-          toHourMinuteTime={toHourMinuteTime}
-          sanitizeTimeInput={sanitizeTimeInput}
-          isValidHourMinuteTime={isValidHourMinuteTime}
-          commandStatusSummary={commandStatusSummary}
-          taskTechnicalDetails={taskTechnicalDetails}
-          formatResultTitle={formatResultTitle}
-          formatResultMessage={formatResultMessage}
-        />}
-        {tab === "Settings" && <SettingsPanel onPasswordChanged={logoutAfterPasswordChange} />}
+        {tab === "Services" && <LazyTabBoundary label="Loading Services"><ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setSelectedLogService(service); setTab("Logs"); }} onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {tab === "Players" && <LazyTabBoundary label="Loading Players"><PlayersPanel onError={setError} renderCharacterAdmin={(props) => <LazyTabBoundary label="Loading Player Details"><CharacterAdminUI {...props} onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} formatMutationResult={formatMutationResult} /></LazyTabBoundary>} /></LazyTabBoundary>}
+        {tab === "Admin Tools" && <LazyTabBoundary label="Loading Admin Tools"><AdminToolsPanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {tab === "Live Map" && <LazyTabBoundary label="Loading Live Map"><LiveMapPanel onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
+        {tab === "Maps" && <LazyTabBoundary label="Loading Maps"><MapsPanel onError={setError} confirmAction={confirmDialog} confirmSettingsRestart={confirmSettingsRestart} waitForTaskWithUpdates={waitForTaskWithUpdates} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
+        {tab === "Care Package" && <LazyTabBoundary label="Loading Care Package"><CarePackagePanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {tab === "Addons" && <LazyTabBoundary label="Loading Addons"><AddonsPanel pinnedAddons={pinnedAddons} setPinnedAddons={setPinnedAddons} selectedAddonId={selectedPinnedAddonId} clearSelectedAddon={() => setSelectedPinnedAddonId("")} setAddonCount={setAddonCount} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {tab === "Database" && <LazyTabBoundary label="Loading Database"><DatabasePanel /></LazyTabBoundary>}
+        {tab === "Storage" && <LazyTabBoundary label="Loading Storage"><StoragePanel onError={setError} confirmAction={confirmDialog} formatMutationResult={formatMutationResult} /></LazyTabBoundary>}
+        {tab === "Backups" && <LazyTabBoundary label="Loading Backups"><BackupsPanel
+            backupRestoreTask={backupRestoreTask}
+            setBackupRestoreTask={setBackupRestoreTask}
+            onError={setError}
+            confirmAction={confirmDialog}
+            waitForTask={waitForTaskSilently}
+            waitForTaskWithUpdates={waitForTaskWithUpdates}
+            withTimeout={withTimeout}
+            toHourMinuteTime={toHourMinuteTime}
+            sanitizeTimeInput={sanitizeTimeInput}
+            isValidHourMinuteTime={isValidHourMinuteTime}
+            commandStatusSummary={commandStatusSummary}
+            taskTechnicalDetails={taskTechnicalDetails}
+            isTerminalTask={isTerminalTask}
+          /></LazyTabBoundary>}
+        {tab === "Logs" && <LazyTabBoundary label="Loading Logs"><LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} /></LazyTabBoundary>}
+        {tab === "Updates" && <LazyTabBoundary label="Loading Updates"><UpdatesPanel
+            confirmAction={confirmDialog}
+            waitForTask={waitForTaskSilently}
+            parseKeyValueText={parseKeyValueText}
+            formatTimerStatus={formatTimerStatus}
+            toHourMinuteTime={toHourMinuteTime}
+            sanitizeTimeInput={sanitizeTimeInput}
+            isValidHourMinuteTime={isValidHourMinuteTime}
+            commandStatusSummary={commandStatusSummary}
+            taskTechnicalDetails={taskTechnicalDetails}
+            formatResultTitle={formatResultTitle}
+            formatResultMessage={formatResultMessage}
+          /></LazyTabBoundary>}
+        {tab === "Settings" && <LazyTabBoundary label="Loading Settings"><SettingsPanel onPasswordChanged={logoutAfterPasswordChange} /></LazyTabBoundary>}
         {tab !== "Maps" && <TaskProgress task={task} onDismiss={() => setTask(null)} />}
         <footer className="app-footer"><Heart size={16} fill="currentColor" /><span>Created with love by <a href={REDBLINK_REPO_URL} target="_blank" rel="noreferrer">RedBlink</a></span></footer>
       </main>
