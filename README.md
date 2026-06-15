@@ -68,6 +68,20 @@ bash -c 'set -euo pipefail; if ! command -v curl >/dev/null 2>&1; then sudo apt-
 
 The installer downloads the latest release, prepares the server, starts the Web UI, and tells you what address to open in your browser. If you are on the same network as the server, use the same-network address. If you are connecting over the internet, use the public address and allow TCP `8088` in your firewall.
 
+## Community Addons
+
+Dune Docker Console includes a Community Addons area for extra tools built by the community. Server owners can discover, install, enable, and remove addons from the Web UI without replacing the main console.
+
+Addons are designed to let the community experiment with new panels, reports, helpers, and server-owner workflows while keeping the core console clean. Each addon declares what it needs before it is installed, so server owners can review permissions first.
+
+Have an idea you want to build for Dune Docker Console? Start with the official addon template:
+
+```text
+https://github.com/Red-Blink/dune-docker-addon-template
+```
+
+The template gives addon developers a ready-to-use structure, examples, validation, and GitHub release packaging. Build your addon in its own repo, publish a release, then submit it to the community addons list when it is ready for others to try.
+
 ## Contributing & Project Notes
 
 - Issues, fixes, and improvements are welcome.

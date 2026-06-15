@@ -969,7 +969,7 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
         const canForceDespawn = mapCanForceDespawn(row);
         const mapSettingsDirty = isSelected && ((modeDraft !== modeInputValue(String(row.mode || "")) && String(row.mode) !== "Core Map") || memory !== memoryInputValue(String(row.memory || "")) || (isSurvivalRow && (activeSietchesDirty || primarySietchDirty)));
         const primaryDraft = primarySurvivalSietch ? sietchDrafts[primarySurvivalSietch.partitionId] || { displayName: primarySurvivalSietch.displayName, password: primarySurvivalSietch.password } : undefined;
-        const displayStatus = isSurvivalRow && primarySurvivalSietch ? partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
+        const displayStatus = isSurvivalRow && primarySurvivalSietch ? readinessStatusByPartitionId.get(primarySurvivalSietch.partitionId) || partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
         return <Fragment key={rowName}><tr><td>{isSurvivalRow ? <SietchMapName name={rowName} sietch={primarySurvivalSietch} draft={primaryDraft} /> : rowName}</td><td>{displayStatus}</td><td>{String(row.mode || "Not Available")}</td><td><MemoryUsageBar row={memoryRow} fallback={liveMemoryFallback(row)} configuredLimit={row.memory} /></td><td className="actions-column"><button className="stable-action-button" onClick={() => selectMap(row)}>{isSelected ? "Close" : "Edit"}</button></td></tr>
           {isSelected && <tr className="inline-edit-row" key={`${rowName}-edit`}><td colSpan={5}>
             <section className="inline-edit-panel">
@@ -1489,6 +1489,14 @@ function parseReadinessPartitionStatuses(text: string) {
   const statuses = new globalThis.Map<string, string>();
   for (const rawLine of stripAnsi(text).split(/\r?\n/)) {
     const line = rawLine.trim();
+    const baseSurvivalMatch = line.match(/^(OK|WAIT|FAIL)\s+Survival_1\s+(.+)$/i);
+    if (baseSurvivalMatch) {
+      const [, state, detail] = baseSurvivalMatch;
+      if (/^OK$/i.test(state) && /\bready\b/i.test(detail)) statuses.set("1", "Running");
+      else if (/^WAIT$/i.test(state) && /\bwarming\b/i.test(detail)) statuses.set("1", "Warming");
+      else if (/^FAIL$/i.test(state)) statuses.set("1", "Not Running");
+      continue;
+    }
     const match = line.match(/^(OK|WAIT|FAIL)\s+dune-server-survival-1-(\d+)\s+(.+)$/i);
     if (!match) continue;
     const [, state, partitionId, detail] = match;

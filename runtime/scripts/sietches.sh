@@ -1132,6 +1132,8 @@ refresh_survival_sietch_metadata_state() {
   sync_survival_usersettings_state
   apply_survival_sietch_labels_from_config
   refresh_survival_browser_state
+  refresh_survival_director_state
+  refresh_survival_gateway_state
 }
 
 sync_survival_sietch_topology_state() {
@@ -1420,8 +1422,7 @@ where wp.partition_id = ranked.partition_id;
   sync_partition_catalog_from_db
   sync_sietch_config_from_db "reconcile-$map" >/dev/null || true
   if [ "$map" = "Survival_1" ]; then
-    sync_survival_usersettings_state
-    apply_survival_sietch_labels_from_config
+    refresh_survival_control_plane_state
   fi
   if [ "$map" = "Survival_1" ] && [ "$topology_changed" -eq 1 ] && [ "$target" -gt "$initial_assigned_count" ] 2>/dev/null; then
     wait_for_survival_topology_settle "$target" 90 || true
