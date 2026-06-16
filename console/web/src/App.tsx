@@ -1,5 +1,5 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { Archive, Database, FileText, Gift, Heart, Home, Map as MapIcon, MessageCircle, PackagePlus, RefreshCw, Server, Settings, Shield, Sparkles, Users } from "lucide-react";
+import { Archive, Database, FileText, Gift, Heart, Home, Map as MapIcon, MessageCircle, PackagePlus, RefreshCw, Server, Settings, Sparkles, Users } from "lucide-react";
 import { api, post, setCsrfToken } from "./api/client";
 import { serverApi } from "./api/server";
 import { updatesApi } from "./api/updates";
@@ -25,7 +25,7 @@ import {
 import { parseUpdateTask, stackVersionButtonLabel, stackVersionButtonTitle } from "./features/updates/updateUtils";
 import { formatUiSentence, stripAnsi, summarizeCommandText, titleCase } from "./lib/display";
 
-type Tab = "Home" | "Setup" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Care Package" | "Addons" | "Database" | "Storage" | "Backups" | "Logs" | "Updates" | "Settings";
+type Tab = "Home" | "Server Control" | "Services" | "Players" | "Admin Tools" | "Live Map" | "Maps" | "Care Package" | "Addons" | "Database" | "Storage" | "Backups" | "Logs" | "Updates" | "Settings";
 type SetupState = { files: Record<string, boolean>; config: Record<string, unknown> };
 let openConfirmDialog: ((request: ConfirmDialogRequest) => void) | null = null;
 
@@ -87,7 +87,6 @@ const navGroups: { title: string; items: { tab: Tab; icon: React.ReactNode }[] }
     title: "Server Operations",
     items: [
       { tab: "Home", icon: <Home size={18} /> },
-      { tab: "Setup", icon: <Shield size={18} /> },
       { tab: "Server Control", icon: <Server size={18} /> },
       { tab: "Backups", icon: <Archive size={18} /> },
       { tab: "Database", icon: <Database size={18} /> },
@@ -161,6 +160,7 @@ export function App() {
   const [setupState, setSetupState] = useState<SetupState | null>(null);
   const [setupStateLoaded, setSetupStateLoaded] = useState(false);
   const [setupJump, setSetupJump] = useState({ step: 0, nonce: 0 });
+  const [redeploySetupOpen, setRedeploySetupOpen] = useState(false);
   const [error, setError] = useState("");
   const [confirmRequest, setConfirmRequest] = useState<ConfirmDialogRequest | null>(null);
   const setupComplete = Boolean(setupState?.files?.complete ?? (setupState?.files?.env && setupState?.files?.token && setupState?.files?.battlegroup));
@@ -198,12 +198,10 @@ export function App() {
       if (cancelled) return;
       setSetupState(state);
       setSetupStateLoaded(true);
-      if (!(state.files?.complete ?? (state.files?.env && state.files?.token && state.files?.battlegroup))) setTab("Setup");
     }).catch((err) => {
       if (cancelled) return;
       setError(err instanceof Error ? err.message : String(err));
       setSetupStateLoaded(true);
-      setTab("Setup");
     });
     return () => { cancelled = true; };
   }, [auth]);
@@ -385,14 +383,19 @@ export function App() {
     );
   }
 
+  const visibleTitle = redeploySetupOpen ? "Redeploy" : tab;
+  const visibleSubtitle = redeploySetupOpen
+    ? "Update setup values and redeploy your Dune server."
+    : "Run and manage your self-hosted Dune server from the browser.";
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <button className="sidebar-home-button" type="button" onClick={() => setTab("Home")} title="Open Home">
+          <button className="sidebar-home-button" type="button" onClick={() => { setRedeploySetupOpen(false); setTab("Home"); }} title="Open Home">
             <h1>Dune Docker Console</h1>
           </button>
-          <button className="stack-version-button" title={stackVersionButtonTitle(stackVersionStatus)} aria-label={stackVersionButtonTitle(stackVersionStatus)} onClick={() => setTab("Updates")}>{stackVersionButtonLabel(stackVersionStatus)}</button>
+          <button className="stack-version-button" title={stackVersionButtonTitle(stackVersionStatus)} aria-label={stackVersionButtonTitle(stackVersionStatus)} onClick={() => { setRedeploySetupOpen(false); setTab("Updates"); }}>{stackVersionButtonLabel(stackVersionStatus)}</button>
         </div>
         <nav className="sidebar-nav">
           {navGroups.map((group) => (
@@ -401,13 +404,14 @@ export function App() {
               {group.items.map((item) => (
                 <Fragment key={item.tab}>
                   <button className={tab === item.tab && (!selectedPinnedAddonId || item.tab !== "Addons") ? "active" : ""} onClick={() => {
-                    if (item.tab === "Setup") setSetupJump((current) => ({ step: 0, nonce: current.nonce + 1 }));
+                    setRedeploySetupOpen(false);
                     setSelectedPinnedAddonId("");
                     setTab(item.tab);
                   }}>{item.icon}<span>{item.tab}</span>{item.tab === "Addons" && addonCount > 0 && <span className="sidebar-nav-count">{addonCount}</span>}</button>
                   {item.tab === "Addons" && pinnedAddons.length > 0 && <div className="sidebar-addon-children">
                     {pinnedAddons.map((addon) => (
                       <button key={addon.id} className={tab === "Addons" && selectedPinnedAddonId === addon.id ? "active" : ""} onClick={() => {
+                        setRedeploySetupOpen(false);
                         setSelectedPinnedAddonId(addon.id);
                         setTab("Addons");
                       }}>{addon.name}</button>
@@ -422,8 +426,8 @@ export function App() {
           ))}
         </nav>
       </aside>
-      <main className={tab === "Home" ? "home-main" : undefined}>
-        {tab === "Home" && (
+      <main className={!redeploySetupOpen && tab === "Home" ? "home-main" : undefined}>
+        {!redeploySetupOpen && tab === "Home" && (
           <div className="home-backdrop" aria-hidden="true">
             <span className="home-sand-fine" />
             <span className="home-sand-near" />
@@ -431,8 +435,8 @@ export function App() {
         )}
         <header className="topbar">
           <div>
-            <strong>{tab}</strong>
-            <span>Run and manage your self-hosted Dune server from the browser.</span>
+            <strong>{visibleTitle}</strong>
+            <span>{visibleSubtitle}</span>
           </div>
           <div className="topbar-links" aria-label="Community links">
             <a className="community-button discord" href={REDBLINK_DISCORD_URL} target="_blank" rel="noreferrer" title="Join Discord"><span>Join Discord</span><DiscordLogo size={19} /></a>
@@ -440,22 +444,23 @@ export function App() {
           </div>
         </header>
         {error && <div className="error-banner">{error}</div>}
-        {tab === "Home" && <HomePanel status={status} readiness={readiness} taskResult={homeTaskResult} setTaskResult={setHomeTaskResult} funcomTokenResult={funcomTokenResult} setFuncomTokenResult={setFuncomTokenResult} runningAction={homeRunningAction} setRunningAction={setHomeRunningAction} onLoad={loadStackStatus} confirmAction={confirmDialog} />}
-        {tab === "Setup" && <SetupWizard initialStep={setupJump.step} jumpNonce={setupJump.nonce} mode="redeploy" onSetupComplete={async () => setSetupState(await setupApi.state())} />}
-        {tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} status={status} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} taskResult={homeTaskResult} setTaskResult={setHomeTaskResult} funcomTokenResult={funcomTokenResult} setFuncomTokenResult={setFuncomTokenResult} runningAction={homeRunningAction} setRunningAction={setHomeRunningAction} onError={setError} confirmAction={confirmDialog} onRedeploy={() => {
-          setSetupJump((current) => ({ step: 4, nonce: current.nonce + 1 }));
-          setTab("Setup");
+        {redeploySetupOpen && <SetupWizard initialStep={setupJump.step} jumpNonce={setupJump.nonce} mode="redeploy" onSetupComplete={async () => setSetupState(await setupApi.state())} />}
+        {!redeploySetupOpen && tab === "Home" && <HomePanel status={status} readiness={readiness} taskResult={homeTaskResult} setTaskResult={setHomeTaskResult} funcomTokenResult={funcomTokenResult} setFuncomTokenResult={setFuncomTokenResult} runningAction={homeRunningAction} setRunningAction={setHomeRunningAction} onLoad={loadStackStatus} confirmAction={confirmDialog} />}
+        {!redeploySetupOpen && tab === "Server Control" && <ServerPanel setTask={setTask} setStatus={setStatus} status={status} setReadiness={setReadiness} setPorts={setPorts} setDoctor={setDoctor} ports={ports} readiness={readiness} doctor={doctor} taskResult={homeTaskResult} setTaskResult={setHomeTaskResult} funcomTokenResult={funcomTokenResult} setFuncomTokenResult={setFuncomTokenResult} runningAction={homeRunningAction} setRunningAction={setHomeRunningAction} onError={setError} confirmAction={confirmDialog} onRedeploy={() => {
+          setSetupJump((current) => ({ step: 0, nonce: current.nonce + 1 }));
+          setSelectedPinnedAddonId("");
+          setRedeploySetupOpen(true);
         }} />}
-        {tab === "Services" && <LazyTabBoundary label="Loading Services"><ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setSelectedLogService(service); setTab("Logs"); }} onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
-        {tab === "Players" && <LazyTabBoundary label="Loading Players"><PlayersPanel onError={setError} renderCharacterAdmin={(props) => <LazyTabBoundary label="Loading Player Details"><CharacterAdminUI {...props} onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} formatMutationResult={formatMutationResult} /></LazyTabBoundary>} /></LazyTabBoundary>}
-        {tab === "Admin Tools" && <LazyTabBoundary label="Loading Admin Tools"><AdminToolsPanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
-        {tab === "Live Map" && <LazyTabBoundary label="Loading Live Map"><LiveMapPanel onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
-        {tab === "Maps" && <LazyTabBoundary label="Loading Maps"><MapsPanel onError={setError} confirmAction={confirmDialog} confirmSettingsRestart={confirmSettingsRestart} waitForTaskWithUpdates={waitForTaskWithUpdates} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
-        {tab === "Care Package" && <LazyTabBoundary label="Loading Care Package"><CarePackagePanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
-        {tab === "Addons" && <LazyTabBoundary label="Loading Addons"><AddonsPanel pinnedAddons={pinnedAddons} setPinnedAddons={setPinnedAddons} selectedAddonId={selectedPinnedAddonId} clearSelectedAddon={() => setSelectedPinnedAddonId("")} setAddonCount={setAddonCount} confirmAction={confirmDialog} /></LazyTabBoundary>}
-        {tab === "Database" && <LazyTabBoundary label="Loading Database"><DatabasePanel /></LazyTabBoundary>}
-        {tab === "Storage" && <LazyTabBoundary label="Loading Storage"><StoragePanel onError={setError} confirmAction={confirmDialog} formatMutationResult={formatMutationResult} /></LazyTabBoundary>}
-        {tab === "Backups" && <LazyTabBoundary label="Loading Backups"><BackupsPanel
+        {!redeploySetupOpen && tab === "Services" && <LazyTabBoundary label="Loading Services"><ServicesPanel services={services} setServices={setServices} setTask={setTask} openLogs={(service) => { setRedeploySetupOpen(false); setSelectedLogService(service); setTab("Logs"); }} onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Players" && <LazyTabBoundary label="Loading Players"><PlayersPanel onError={setError} renderCharacterAdmin={(props) => <LazyTabBoundary label="Loading Player Details"><CharacterAdminUI {...props} onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} formatMutationResult={formatMutationResult} /></LazyTabBoundary>} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Admin Tools" && <LazyTabBoundary label="Loading Admin Tools"><AdminToolsPanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Live Map" && <LazyTabBoundary label="Loading Live Map"><LiveMapPanel onError={setError} confirmAction={confirmDialog} waitForTask={waitForTaskSilently} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Maps" && <LazyTabBoundary label="Loading Maps"><MapsPanel onError={setError} confirmAction={confirmDialog} confirmSettingsRestart={confirmSettingsRestart} waitForTaskWithUpdates={waitForTaskWithUpdates} taskTechnicalDetails={taskTechnicalDetails} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Care Package" && <LazyTabBoundary label="Loading Care Package"><CarePackagePanel onError={setError} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Addons" && <LazyTabBoundary label="Loading Addons"><AddonsPanel pinnedAddons={pinnedAddons} setPinnedAddons={setPinnedAddons} selectedAddonId={selectedPinnedAddonId} clearSelectedAddon={() => setSelectedPinnedAddonId("")} setAddonCount={setAddonCount} confirmAction={confirmDialog} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Database" && <LazyTabBoundary label="Loading Database"><DatabasePanel /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Storage" && <LazyTabBoundary label="Loading Storage"><StoragePanel onError={setError} confirmAction={confirmDialog} formatMutationResult={formatMutationResult} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Backups" && <LazyTabBoundary label="Loading Backups"><BackupsPanel
             backupRestoreTask={backupRestoreTask}
             setBackupRestoreTask={setBackupRestoreTask}
             onError={setError}
@@ -470,8 +475,8 @@ export function App() {
             taskTechnicalDetails={taskTechnicalDetails}
             isTerminalTask={isTerminalTask}
           /></LazyTabBoundary>}
-        {tab === "Logs" && <LazyTabBoundary label="Loading Logs"><LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} /></LazyTabBoundary>}
-        {tab === "Updates" && <LazyTabBoundary label="Loading Updates"><UpdatesPanel
+        {!redeploySetupOpen && tab === "Logs" && <LazyTabBoundary label="Loading Logs"><LogsPanel selectedService={selectedLogService} setSelectedService={setSelectedLogService} text={logs} setText={setLogs} onError={setError} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab === "Updates" && <LazyTabBoundary label="Loading Updates"><UpdatesPanel
             confirmAction={confirmDialog}
             waitForTask={waitForTaskSilently}
             parseKeyValueText={parseKeyValueText}
@@ -484,8 +489,8 @@ export function App() {
             formatResultTitle={formatResultTitle}
             formatResultMessage={formatResultMessage}
           /></LazyTabBoundary>}
-        {tab === "Settings" && <LazyTabBoundary label="Loading Settings"><SettingsPanel onPasswordChanged={logoutAfterPasswordChange} /></LazyTabBoundary>}
-        {tab !== "Maps" && <TaskProgress task={task} onDismiss={() => setTask(null)} />}
+        {!redeploySetupOpen && tab === "Settings" && <LazyTabBoundary label="Loading Settings"><SettingsPanel onPasswordChanged={logoutAfterPasswordChange} /></LazyTabBoundary>}
+        {!redeploySetupOpen && tab !== "Maps" && <TaskProgress task={task} onDismiss={() => setTask(null)} />}
         <footer className="app-footer"><Heart size={16} fill="currentColor" /><span>Created with love by <a href={REDBLINK_REPO_URL} target="_blank" rel="noreferrer">RedBlink</a></span></footer>
       </main>
       <ConfirmDialog request={confirmRequest} onClose={closeConfirmDialog} />
