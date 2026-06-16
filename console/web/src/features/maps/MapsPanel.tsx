@@ -87,6 +87,48 @@ function MapCommandSummary({ text }: { text: string }) {
   </section>;
 }
 
+function MapModeGuide() {
+  const modes = [
+    {
+      key: "core",
+      name: "Core Map",
+      summary: "Required World Service",
+      detail: "Survival_1 and Overmap stay online because login, travel, server browser state, and the main world route depend on them."
+    },
+    {
+      key: "dynamic",
+      name: "Dynamic",
+      summary: "Starts On Demand",
+      detail: "The map starts when players travel to it, then shuts down after it becomes idle."
+    },
+    {
+      key: "always-on",
+      name: "Always On",
+      summary: "Kept Running",
+      detail: "The map remains online all the time, even when no players are currently using it."
+    },
+    {
+      key: "overmap-active",
+      name: "Overmap Active",
+      summary: "Follows Overmap Players",
+      detail: "The map starts while players are online in Overmap. When Overmap is empty, it waits 5 minutes before shutting down if no one is using it."
+    },
+    {
+      key: "disabled",
+      name: "Disabled",
+      summary: "Blocked From Deployment",
+      detail: "The map stays offline and will not auto-start, even if travel demand appears in-world."
+    }
+  ];
+  return <div className="map-mode-guide" aria-label="Map mode guide">
+    {modes.map((mode) => <article className={`map-mode-guide-card mode-${mode.key}`} key={mode.key}>
+      <strong>{mode.name}</strong>
+      <span>{mode.summary}</span>
+      <p>{mode.detail}</p>
+    </article>)}
+  </div>;
+}
+
 function inferStatus(text: string) {
   if (!text) return "Unknown";
   if (/failed|failure|error|fatal|unhealthy|down|missing|cannot|could not/i.test(text)) return "Failed";
@@ -958,6 +1000,7 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
     {mapsResult && mapsResultScope === "maps" ? <div className="maps-result-slot"><HomeTaskResultCard result={mapsResult} /></div> : null}
     <section className="action-section">
       <h4>Maps Overview</h4>
+      <MapModeGuide />
       {loading && !mapRows.length && <div className="empty"><span className="loading-dots">Loading Maps</span></div>}
       {!loading && loadError && !mapRows.length && <div className="result-panel"><strong>Map list could not be loaded.</strong><p>{loadError}</p><button onClick={() => run(loadMaps)}>Retry</button></div>}
       {mapRows.length ? <div className="table-wrap maps-overview-table-wrap"><table className="maps-overview-table"><thead><tr><th>Map</th><th>Status</th><th>Mode</th><th>Memory</th><th className="actions-column">Action</th></tr></thead><tbody>{mapRows.map((row) => {
@@ -966,17 +1009,18 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
         const isDeepDesertRow = /^DeepDesert_/i.test(rowName);
         const isSelected = selectedMapName === rowName && (!(isSurvivalRow || isDeepDesertRow) || !selectedPartitionId);
         const memoryRow = memoryForMap(liveMemory, rowName, row);
-        const canForceDespawn = mapCanForceDespawn(row);
         const mapSettingsDirty = isSelected && ((modeDraft !== modeInputValue(String(row.mode || "")) && String(row.mode) !== "Core Map") || memory !== memoryInputValue(String(row.memory || "")) || (isSurvivalRow && (activeSietchesDirty || primarySietchDirty)));
         const primaryDraft = primarySurvivalSietch ? sietchDrafts[primarySurvivalSietch.partitionId] || { displayName: primarySurvivalSietch.displayName, password: primarySurvivalSietch.password } : undefined;
-        const displayStatus = isSurvivalRow && primarySurvivalSietch ? readinessStatusByPartitionId.get(primarySurvivalSietch.partitionId) || partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
+        const baseStatus = isSurvivalRow && primarySurvivalSietch ? readinessStatusByPartitionId.get(primarySurvivalSietch.partitionId) || partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
+        const displayStatus = statusWithLiveMemory(baseStatus, memoryRow);
+        const canForceDespawn = mapCanForceDespawn({ ...row, status: displayStatus });
         return <Fragment key={rowName}><tr><td>{isSurvivalRow ? <SietchMapName name={rowName} sietch={primarySurvivalSietch} draft={primaryDraft} /> : rowName}</td><td>{displayStatus}</td><td>{String(row.mode || "Not Available")}</td><td><MemoryUsageBar row={memoryRow} fallback={liveMemoryFallback(row)} configuredLimit={row.memory} /></td><td className="actions-column"><button className="stable-action-button" onClick={() => selectMap(row)}>{isSelected ? "Close" : "Edit"}</button></td></tr>
           {isSelected && <tr className="inline-edit-row" key={`${rowName}-edit`}><td colSpan={5}>
             <section className="inline-edit-panel">
               <div className="panel-title"><h4>Edit {rowName}</h4></div>
               <KeyValueGrid items={[["Status", displayStatus], ["Mode", row.mode], ["Memory", row.memory], ["Dimensions", row.dimensions], ...(isSurvivalRow && primarySurvivalSietch ? [["Password", primarySurvivalSietch.passwordSet ? "Set" : "Not Set"] as [string, unknown]] : [])]} />
               <div className="action-line">
-                <label className="compact-select">Mode<select value={modeDraft} disabled={String(row.mode) === "Core Map"} onChange={(event) => setModeDraft(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option></select></label>
+                <label className="compact-select">Mode<select value={modeDraft} disabled={String(row.mode) === "Core Map"} onChange={(event) => setModeDraft(event.target.value)}><option value="dynamic">Dynamic</option><option value="always-on">Always On</option><option value="overmap-active">Overmap Active</option><option value="disabled">Disabled</option></select></label>
                 <label className="memory-number-field">Memory<input type="number" min="1" step="1" value={memory} onChange={(event) => setMemory(event.target.value)} placeholder="8" /></label>
                 <span className="unit-label">GB</span>
                 {isSurvivalRow && <label className="memory-number-field">Active Sietches<input type="number" min="1" max="64" step="1" value={activeSietches} onChange={(event) => setActiveSietches(event.target.value)} /></label>}
@@ -1268,6 +1312,12 @@ function memoryForMap(rows: LiveMapMemoryRow[], map: string, row?: Record<string
   }) || null;
 }
 
+function statusWithLiveMemory(status: string, memoryRow: LiveMapMemoryRow | null) {
+  const normalized = String(status || "Not Available");
+  if (/^(Not Running|Not Available)$/i.test(normalized) && memoryRow && memoryRow.usedBytes > 0) return "Warming";
+  return normalized;
+}
+
 function partitionMemoryValue(memoryText: string, partitionId: string, fallback: string, mapName = "Survival_1") {
   const target = `${mapName}:${partitionId}`;
   const row = parseMemoryRows(memoryText).find((item) => String(item.map || "") === target);
@@ -1405,7 +1455,7 @@ function parseMapRows(text: string): Record<string, unknown>[] {
   }
   const rows = stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => {
     if (!line || /^=+/.test(line) || /^MAP\s+/i.test(line)) return false;
-    return /\bCurrent:\s*(dynamic|always-on)\b/i.test(line) || /\bPartitions:\s*\d+/i.test(line) || /\bAssigned:\s*\d+/i.test(line);
+    return /\bCurrent:\s*(dynamic|always-on|overmap-active|disabled)\b/i.test(line) || /\bPartitions:\s*\d+/i.test(line) || /\bAssigned:\s*\d+/i.test(line);
   }).map((line) => {
     const map = line.split(/\s+/)[0];
     const assigned = line.match(/\bAssigned:\s*(\d+)/i)?.[1] || "";
@@ -1413,7 +1463,7 @@ function parseMapRows(text: string): Record<string, unknown>[] {
     return {
       map,
       status: assigned && Number(assigned) > 0 ? "Assigned" : "Not Running",
-      mode: friendlyMapMode(line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || line.match(/\b(dynamic|always-on)\b/i)?.[1] || ""),
+      mode: friendlyMapMode(line.match(/\bCurrent:\s*(dynamic|always-on|overmap-active|disabled)\b/i)?.[1] || line.match(/\b(dynamic|always-on|overmap-active|disabled)\b/i)?.[1] || ""),
       partitions: partitions || "Unknown",
       assigned: assigned || "Unknown",
       memory: line.match(/\b\d+\s*[gGmM][bB]?\b/)?.[0] || "",
@@ -1579,6 +1629,8 @@ function friendlyMapMode(value: string) {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "dynamic") return "Dynamic";
   if (normalized === "always-on") return "Always On";
+  if (normalized === "overmap-active") return "Overmap Active";
+  if (normalized === "disabled") return "Disabled";
   if (normalized === "core map" || normalized === "core") return "Core Map";
   return value ? titleCase(value) : "Not Available";
 }
@@ -1587,6 +1639,8 @@ function modeInputValue(value: string) {
   const normalized = String(value || "").toLowerCase();
   if (/core/.test(normalized)) return "always-on";
   if (/always/.test(normalized)) return "always-on";
+  if (/overmap/.test(normalized)) return "overmap-active";
+  if (/disabled/.test(normalized)) return "disabled";
   return "dynamic";
 }
 

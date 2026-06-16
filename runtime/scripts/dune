@@ -370,7 +370,7 @@ Usage:
   dune database [status|schemas|tables|counts|columns|preview|sql|export]
   dune maps list
   dune maps mode [map]
-  dune maps set <map> <dynamic|always-on>
+  dune maps set <map> <dynamic|always-on|overmap-active|disabled>
   dune maps reconcile
   dune deepdesert dual [status|enable|disable|bootstrap|repair]
   dune config title ["New Server Name"]

@@ -90,11 +90,11 @@ export function parseSkillModules(text) {
 }
 
 export function parseMapListRows(text) {
-  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bCurrent:\s*(dynamic|always-on)\b/i.test(line)).map((line) => {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bCurrent:\s*(dynamic|always-on|overmap-active|disabled)\b/i.test(line)).map((line) => {
     const map = line.split(/\s+/)[0];
     return {
       map,
-      mode: friendlyMode(line.match(/\bCurrent:\s*(dynamic|always-on)\b/i)?.[1] || ""),
+      mode: friendlyMode(line.match(/\bCurrent:\s*(dynamic|always-on|overmap-active|disabled)\b/i)?.[1] || ""),
       partitions: line.match(/\bPartitions:\s*(\d+)/i)?.[1] || "",
       assigned: line.match(/\bAssigned:\s*(\d+)/i)?.[1] || ""
     };
@@ -257,6 +257,8 @@ function isFlsSummaryLine(line) {
 function friendlyMode(value) {
   if (value === "dynamic") return "Dynamic";
   if (value === "always-on") return "Always On";
+  if (value === "overmap-active") return "Overmap Active";
+  if (value === "disabled") return "Disabled";
   return value || "Not Available";
 }
 

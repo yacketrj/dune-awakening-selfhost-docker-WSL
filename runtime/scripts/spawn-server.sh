@@ -6,7 +6,7 @@ cd "$(dirname "$0")/../.."
 usage() {
   cat <<'EOF'
 Usage:
-  dune spawn <map-name|partition-id>
+  dune spawn <map-name|partition-id> [--force]
 
 Examples:
   dune spawn DeepDesert_1
@@ -25,6 +25,13 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ] || [ $# -lt 1 ]; then
 fi
 
 TARGET="$1"
+FORCE=0
+if [ "${2:-}" = "--force" ]; then
+  FORCE=1
+elif [ -n "${2:-}" ]; then
+  usage
+  exit 2
+fi
 
 [ -f .env ] && . ./.env
 [ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
@@ -344,6 +351,12 @@ if [ -z "$ROW" ]; then
 fi
 
 IFS='|' read -r PARTITION_ID MAP_NAME DIMENSION_INDEX LABEL ASSIGNED_SERVER <<< "$ROW"
+
+if [ "$FORCE" != "1" ] && runtime/scripts/map-modes.sh is-disabled "$MAP_NAME" >/dev/null 2>&1; then
+  echo "Refusing to spawn disabled map: $MAP_NAME"
+  echo "Set the map mode to Dynamic, Overmap Active, or Always On first."
+  exit 1
+fi
 
 if [ -n "$ASSIGNED_SERVER" ]; then
   if clear_dead_partition_assignment "$PARTITION_ID" "$ASSIGNED_SERVER"; then

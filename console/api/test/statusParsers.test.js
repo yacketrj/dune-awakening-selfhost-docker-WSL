@@ -98,7 +98,9 @@ Overmap      READY        Up 29 minutes`;
 
 const mapsListOutput = `SH_Arrakeen                  Current: dynamic   Partitions: 1   Assigned: 0
 DeepDesert_1                 Current: dynamic   Partitions: 1   Assigned: 0
-CB_Dungeon_ThePit            Current: always-on Partitions: 1   Assigned: 1`;
+CB_Dungeon_ThePit            Current: always-on Partitions: 1   Assigned: 1
+SH_HarkoVillage              Current: overmap-active Partitions: 1   Assigned: 0
+Story_ProcesVerbal           Current: disabled  Partitions: 1   Assigned: 0`;
 
 const memoryStatusOutput = `=== Memory configuration ===
 Default memory: built-in per-map defaults, or server catalog for other dynamic maps
@@ -240,8 +242,8 @@ Bindu Sprint [BeneGesserit]
 
 test("map list parser keeps every dynamic map row and formats mode", () => {
   const rows = parseMapListRows(mapsListOutput);
-  assert.deepEqual(rows.map((row) => row.map), ["SH_Arrakeen", "DeepDesert_1", "CB_Dungeon_ThePit"]);
-  assert.deepEqual(rows.map((row) => row.mode), ["Dynamic", "Dynamic", "Always On"]);
+  assert.deepEqual(rows.map((row) => row.map), ["SH_Arrakeen", "DeepDesert_1", "CB_Dungeon_ThePit", "SH_HarkoVillage", "Story_ProcesVerbal"]);
+  assert.deepEqual(rows.map((row) => row.mode), ["Dynamic", "Dynamic", "Always On", "Overmap Active", "Disabled"]);
   assert.equal(rows[0].assigned, "0");
 });
 

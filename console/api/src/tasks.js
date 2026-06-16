@@ -129,6 +129,7 @@ function restartOperations(payload = {}) {
   if (payload.restartMode === "none") return [];
   if (payload.restartMode === "stack") return ["stop", "start"];
   if (payload.restartMode === "service") return ["restartService"];
+  if (payload.restartMode === "respawn" && payload.mode === "disabled") return [];
   if (payload.restartMode === "respawn") return ["mapsDespawn", "mapsSpawn"];
   return [];
 }

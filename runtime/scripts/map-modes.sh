@@ -14,6 +14,8 @@ Usage:
   dune maps mode <map>
   dune maps set <map> dynamic
   dune maps set <map> always-on
+  dune maps set <map> overmap-active
+  dune maps set <map> disabled
   dune maps reconcile
 
 Survival_1 and Overmap are protected always-on maps and are not configurable here.
@@ -85,7 +87,10 @@ try:
 except Exception:
     data = {}
 mode = data.get("maps", {}).get(target, {}).get("mode", "dynamic")
-print("always-on" if mode == "always-on" else "dynamic")
+if mode in {"always-on", "overmap-active", "disabled"}:
+    print(mode)
+else:
+    print("dynamic")
 PY
 }
 
@@ -123,8 +128,8 @@ set_mode() {
   fi
 
   case "$mode" in
-    dynamic|always-on) ;;
-    *) echo "Mode must be dynamic or always-on."; exit 2 ;;
+    dynamic|always-on|overmap-active|disabled) ;;
+    *) echo "Mode must be dynamic, always-on, overmap-active, or disabled."; exit 2 ;;
   esac
 
   ensure_state_file
@@ -155,6 +160,11 @@ PY
   echo "Map mode saved: $canonical -> $mode"
   if [ "$mode" = "always-on" ]; then
     reconcile_map "$canonical"
+  elif [ "$mode" = "disabled" ]; then
+    echo "Map is disabled. It will not be deployed by autoscaler demand or normal spawn commands."
+    despawn_map "$canonical"
+  elif [ "$mode" = "overmap-active" ]; then
+    echo "Map will spawn while Overmap has active players and despawn after ${GRACE_SECONDS}s idle."
   else
     echo "Map remains running if already active. It is eligible for normal despawn after ${GRACE_SECONDS}s."
   fi
@@ -174,7 +184,7 @@ list_maps() {
     order by min(wp.partition_id);
   " | while IFS='|' read -r map partitions assigned; do
     [ -n "${map:-}" ] || continue
-    printf '%-28s Current: %-9s Partitions: %-3s Assigned: %s\n' "$map" "$(mode_for_map "$map")" "$partitions" "$assigned"
+    printf '%-28s Current: %-14s Partitions: %-3s Assigned: %s\n' "$map" "$(mode_for_map "$map")" "$partitions" "$assigned"
   done
 }
 
@@ -215,6 +225,29 @@ reconcile_map() {
     fi
     echo "SPAWN always-on map=$map partition=$partition_id"
     runtime/scripts/spawn-server.sh "$partition_id"
+  done <<< "$rows"
+}
+
+despawn_map() {
+  local map="$1"
+  local rows partition_id assigned running
+
+  require_postgres
+  rows="$(docker exec dune-postgres psql -U postgres -d dune -At -F '|' -c "
+    select partition_id, coalesce(server_id, '')
+    from dune.world_partition
+    where map = '${map//\'/\'\'}'
+    order by partition_id;
+  ")"
+
+  while IFS='|' read -r partition_id assigned; do
+    [ -n "${partition_id:-}" ] || continue
+    running="$(docker ps --format '{{.Names}}' | grep -Ec "^dune-server-$(printf '%s' "$map" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')-${partition_id}$" || true)"
+    if [ -z "$assigned" ] && [ "$running" = "0" ]; then
+      continue
+    fi
+    echo "DESPAWN disabled map=$map partition=$partition_id"
+    runtime/scripts/despawn-server.sh "$partition_id" --force || true
   done <<< "$rows"
 }
 
@@ -266,6 +299,14 @@ case "$cmd" in
   is-always-on)
     map="$(canonical_map "${2:-}")"
     [ "$(mode_for_map "$map")" = "always-on" ]
+    ;;
+  is-overmap-active)
+    map="$(canonical_map "${2:-}")"
+    [ "$(mode_for_map "$map")" = "overmap-active" ]
+    ;;
+  is-disabled)
+    map="$(canonical_map "${2:-}")"
+    [ "$(mode_for_map "$map")" = "disabled" ]
     ;;
   grace-remaining)
     map="$(canonical_map "${2:-}")"

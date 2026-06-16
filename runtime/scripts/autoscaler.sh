@@ -1047,6 +1047,24 @@ map_is_always_on() {
   runtime/scripts/map-modes.sh is-always-on "$map" >/dev/null 2>&1
 }
 
+map_is_overmap_active() {
+  local map="$1"
+  runtime/scripts/map-modes.sh is-overmap-active "$map" >/dev/null 2>&1
+}
+
+map_is_disabled() {
+  local map="$1"
+  runtime/scripts/map-modes.sh is-disabled "$map" >/dev/null 2>&1
+}
+
+overmap_active_maps() {
+  runtime/scripts/map-modes.sh list 2>/dev/null | awk '
+    /^[[:alnum:]_:-]+[[:space:]]/ && /Current:[[:space:]]+overmap-active/ {
+      print $1
+    }
+  '
+}
+
 map_dynamic_grace_remaining() {
   local map="$1"
   DUNE_AUTOSCALER_DESPAWN_GRACE_SECONDS="$DESPAWN_GRACE_SECONDS" runtime/scripts/map-modes.sh grace-remaining "$map" 2>/dev/null || echo 0
@@ -1156,12 +1174,16 @@ handle_demand() {
   esac
 
   if map_is_always_on "$map"; then
-    clear_idle_since "$(state_key "$map" "$server_id")"
     return 0
   fi
 
   if ! map_exists "$map"; then
     echo "WARN unknown map from Director travel queue: $map"
+    return 0
+  fi
+
+  if map_is_disabled "$map"; then
+    echo "SKIP demand map=$map num=$num mode=disabled"
     return 0
   fi
 
@@ -1282,20 +1304,10 @@ handle_idle_row() {
     return 0
   fi
 
-  case "$map" in
-    SH_Arrakeen|SH_HarkoVillage)
-      if map_has_active_presence "Overmap"; then
-        clear_idle_since "$key"
-        return 0
-      fi
-      ;;
-    DeepDesert_1)
-      if map_has_active_presence "Overmap"; then
-        clear_idle_since "$key"
-        return 0
-      fi
-      ;;
-  esac
+  if map_is_overmap_active "$map" && map_has_active_presence "Overmap"; then
+    clear_idle_since "$key"
+    return 0
+  fi
 
   local now since age
   now="$(date +%s)"
@@ -1320,12 +1332,14 @@ ensure_social_hub_companions() {
   local map companion assigned running
 
   for map in SH_Arrakeen SH_HarkoVillage; do
+    map_is_disabled "$map" && continue
     if ! map_has_active_presence "$map"; then
       continue
     fi
 
     companion="$(companion_map_for "$map" 2>/dev/null || true)"
     [ -n "$companion" ] || continue
+    map_is_disabled "$companion" && continue
 
     assigned="$(map_assigned_count "$companion")"
     running="$(container_count_for_map "$companion")"
@@ -1349,7 +1363,12 @@ ensure_overmap_travel_maps_prewarmed() {
     return 0
   fi
 
-  for map in SH_Arrakeen SH_HarkoVillage; do
+  while IFS= read -r map; do
+    [ -n "${map:-}" ] || continue
+    map_is_disabled "$map" && continue
+    if [ "$map" = "DeepDesert_1" ]; then
+      continue
+    fi
     assigned="$(map_assigned_count "$map")"
     running="$(container_count_for_map "$map")"
 
@@ -1357,13 +1376,15 @@ ensure_overmap_travel_maps_prewarmed() {
       continue
     fi
 
-    echo "SPAWN social-hub-prewarm map=$map source=Overmap"
+    echo "SPAWN overmap-active map=$map source=Overmap"
     runtime/scripts/spawn-server.sh "$map" || {
-      echo "ERROR failed to prewarm social hub map=$map source=Overmap"
+      echo "ERROR failed to spawn overmap-active map=$map source=Overmap"
     }
-  done
+  done < <(overmap_active_maps)
 
   map="DeepDesert_1"
+  map_is_overmap_active "$map" || return 0
+  map_is_disabled "$map" && return 0
   desired_active="$(active_dimensions_for_map "$map" | tr -d '[:space:]')"
   [ -n "$desired_active" ] || desired_active=1
 
@@ -1730,6 +1751,10 @@ scan_reconnect_demand() {
         target_row="$(partition_target_info "$target_partition_id")"
         IFS='|' read -r target_partition_id target_map target_dimension target_server_id <<< "$target_row"
       else
+        if map_is_disabled "$target_map"; then
+          echo "SKIP reconnect partition=$target_partition_id map=$target_map account=$account_id mode=disabled"
+          continue
+        fi
         running="$(container_count_for_map "$target_map")"
         if [ "$running" = "0" ]; then
           echo "SPAWN reconnect partition=$target_partition_id map=$target_map account=$account_id"
@@ -1823,6 +1848,8 @@ for line in sys.stdin:
     if match:
         map_name = match.group(1)
         num = int(match.group(2))
+        if map_name == "DeepDesert_1":
+            continue
     else:
         match = dimension_request_pattern.search(line)
         if not match:

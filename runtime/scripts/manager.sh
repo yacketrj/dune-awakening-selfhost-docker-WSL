@@ -3538,29 +3538,22 @@ configure_maps_menu() {
     map="${maps[$((choice - 1))]}"
     mode="$("$DUNE" maps mode "$map" | awk '{print $2}')"
     while true; do
-      if [ "$mode" = "always-on" ]; then
-        menu_or_back "$map" \
-          "Change To Dynamic" \
-          "Show Running Partitions" \
-          "Back" || break
-        sub="$MENU_CHOICE"
-        case "$sub" in
-          1) run_cmd "$DUNE" maps set "$map" dynamic; pause; break ;;
-          2) run_cmd "$DUNE" sietches dimensions "$map"; pause ;;
-          3) break ;;
-        esac
-      else
-        menu_or_back "$map" \
-          "Change To Always On" \
-          "Show Running Partitions" \
-          "Back" || break
-        sub="$MENU_CHOICE"
-        case "$sub" in
-          1) run_cmd "$DUNE" maps set "$map" always-on; pause; break ;;
-          2) run_cmd "$DUNE" sietches dimensions "$map"; pause ;;
-          3) break ;;
-        esac
-      fi
+      menu_or_back "$map" \
+        "Change To Dynamic" \
+        "Change To Always On" \
+        "Change To Overmap Active" \
+        "Change To Disabled" \
+        "Show Running Partitions" \
+        "Back" || break
+      sub="$MENU_CHOICE"
+      case "$sub" in
+        1) run_cmd "$DUNE" maps set "$map" dynamic; pause; break ;;
+        2) run_cmd "$DUNE" maps set "$map" always-on; pause; break ;;
+        3) run_cmd "$DUNE" maps set "$map" overmap-active; pause; break ;;
+        4) run_cmd "$DUNE" maps set "$map" disabled; pause; break ;;
+        5) run_cmd "$DUNE" sietches dimensions "$map"; pause ;;
+        6) break ;;
+      esac
     done
   done
 }

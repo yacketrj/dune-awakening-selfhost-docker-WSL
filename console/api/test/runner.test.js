@@ -54,6 +54,8 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("adminResetProgression", { playerId: "FLS_TEST" }), ["admin", "reset-progression", "FLS_TEST"]);
   assert.deepEqual(buildDuneArgs("mapsMode", { map: "DeepDesert_1" }), ["maps", "mode", "DeepDesert_1"]);
   assert.deepEqual(buildDuneArgs("mapsSetMode", { map: "DeepDesert_1", mode: "always-on" }), ["maps", "set", "DeepDesert_1", "always-on"]);
+  assert.deepEqual(buildDuneArgs("mapsSetMode", { map: "DeepDesert_1", mode: "overmap-active" }), ["maps", "set", "DeepDesert_1", "overmap-active"]);
+  assert.deepEqual(buildDuneArgs("mapsSetMode", { map: "DeepDesert_1", mode: "disabled" }), ["maps", "set", "DeepDesert_1", "disabled"]);
   assert.deepEqual(buildDuneArgs("mapsSpawn", { target: "30" }), ["spawn", "30"]);
   assert.deepEqual(buildDuneArgs("mapsDespawn", { target: "DeepDesert_1" }), ["despawn", "DeepDesert_1", "--force"]);
   assert.deepEqual(buildDuneArgs("autoscalerAction", { action: "restart" }), ["autoscaler", "restart"]);
@@ -107,6 +109,17 @@ test("uses the global UserGame reset operation in restart tasks", () => {
   assert.deepEqual(taskOperations("userSettingsResetAndRestart", { scope: "global", restartMode: "none" }), [
     "userSettingsResetGlobalGame",
     "userSettingsMaterializeCurrent"
+  ]);
+});
+
+test("does not respawn maps when changing a running map to disabled", () => {
+  assert.deepEqual(taskOperations("mapsApplySettings", { modeChanged: true, mode: "disabled", restartMode: "respawn" }), [
+    "mapsSetMode"
+  ]);
+  assert.deepEqual(taskOperations("mapsApplySettings", { modeChanged: true, mode: "overmap-active", restartMode: "respawn" }), [
+    "mapsSetMode",
+    "mapsDespawn",
+    "mapsSpawn"
   ]);
 });
 

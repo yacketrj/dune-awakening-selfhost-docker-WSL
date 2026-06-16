@@ -490,8 +490,8 @@ function validateMapName(value) {
 
 function validateMapMode(value) {
   const raw = String(value || "").trim();
-  if (raw === "dynamic" || raw === "always-on") return raw;
-  throw new Error("Map mode must be dynamic or always-on");
+  if (["dynamic", "always-on", "overmap-active", "disabled"].includes(raw)) return raw;
+  throw new Error("Map mode must be dynamic, always-on, overmap-active, or disabled");
 }
 
 function validateMapOrPartition(value) {
