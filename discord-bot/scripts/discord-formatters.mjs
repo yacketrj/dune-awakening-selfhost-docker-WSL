@@ -186,26 +186,41 @@ function issueLines(data, overall) {
 function deriveIssues(data, overall) {
   const rows = [];
   if (BAD_STATES.test(statusText(overall))) rows.push(`Overall status is ${statusText(overall)}`);
-  for (const [path, value] of flattenLeaves(data)) {
-    const state = statusText(value);
-    if (!BAD_STATES.test(state)) continue;
-    rows.push(`${pathLabel(path)} is ${state}`);
-  }
+  collectBadStateIssues(data, [], "", rows);
   return rows;
 }
 
-function flattenLeaves(value, path = []) {
-  if (value === null || value === undefined) return [];
-  if (typeof value !== "object") return [[path, value]];
-  if (Array.isArray(value)) return value.flatMap((item, index) => flattenLeaves(item, [...path, String(index)]));
-  return Object.entries(value).flatMap(([key, item]) => flattenLeaves(item, [...path, key]));
+function collectBadStateIssues(value, path, parentName, rows) {
+  if (value === null || value === undefined) return;
+
+  if (typeof value !== "object") {
+    const leaf = path[path.length - 1] || "";
+    const isTopLevelStatus = path.length <= 1 && /^(overall|state|status)$/i.test(leaf);
+    if (isTopLevelStatus) return;
+
+    const state = statusText(value);
+    if (BAD_STATES.test(state)) rows.push(`${pathLabel(path, parentName)} is ${state}`);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectBadStateIssues(item, [...path, String(index)], parentName, rows));
+    return;
+  }
+
+  const contextName = value.name || value.service || value.map || value.id || value.check || parentName;
+  for (const [key, item] of Object.entries(value)) {
+    collectBadStateIssues(item, [...path, key], contextName, rows);
+  }
 }
 
-function pathLabel(path) {
+function pathLabel(path, parentName) {
   const parts = path
     .filter((part) => !/^\d+$/.test(part))
     .filter((part) => !/^(result|payload|services|maps|instances|checks|listeners|state|status|overall)$/i.test(part));
-  return labelCase(parts.slice(-2).join(" ") || "Status");
+
+  const tail = labelCase(parts.slice(-1).join(" ") || "Status");
+  return labelCase([parentName, tail].filter(Boolean).join(" "));
 }
 
 function namedStatusList(rows) {

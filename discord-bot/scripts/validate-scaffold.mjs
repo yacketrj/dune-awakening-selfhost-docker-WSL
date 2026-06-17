@@ -78,7 +78,7 @@ for (const required of ["formatCommandResponse", "embeds", "allowed_mentions", "
 }
 
 const formatter = readFileSync("scripts/discord-formatters.mjs", "utf8");
-for (const required of ["formatHealthResponse", "formatPublicStatusResponse", "formatReadinessResponse", "formatServicesResponse", "formatDiagnosticResponse", "redact"]) {
+for (const required of ["formatHealthResponse", "formatStatusCard", "formatReadinessResponse", "formatServicesResponse", "deriveIssues", "redact"]) {
   if (!formatter.includes(required)) {
     console.error(`Discord formatter missing required marker: ${required}`);
     process.exit(1);
