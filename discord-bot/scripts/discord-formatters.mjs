@@ -24,8 +24,11 @@ export function formatCommandResponse(command, payload) {
 }
 
 export function formatDiagnosticJson(title, payload) {
-  const body = JSON.stringify(redact(payload), null, 2).slice(0, 1700);
-  return `**${escapeMarkdown(title)}**\n` + "```json\n" + body + "\n```";
+  const clean = redact(payload);
+  const data = clean.result || clean.payload?.result || clean;
+  const rows = flattenObject(data).slice(0, 18);
+  const body = renderKeyValueTable(rows.length ? rows : [["Result", "No diagnostic fields returned."]]);
+  return `**${escapeMarkdown(title.replace("raw diagnostic payload", "diagnostic table"))}**\n` + "```text\n" + body + "\n```";
 }
 
 function commandTitle(command) {
@@ -278,6 +281,28 @@ function asArray(value) {
   return [value];
 }
 
+function flattenObject(value, prefix = "") {
+  if (value === null || value === undefined) return [];
+  if (typeof value !== "object") return [[prefix || "value", value]];
+  const rows = [];
+  for (const [key, item] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (item && typeof item === "object" && !Array.isArray(item)) rows.push(...flattenObject(item, path));
+    else if (Array.isArray(item)) rows.push([path, `${item.length} item(s)`]);
+    else rows.push([path, item]);
+  }
+  return rows;
+}
+
+function renderKeyValueTable(rows) {
+  const keyWidth = Math.min(34, Math.max("Field".length, ...rows.map(([key]) => plainCell(key).length)));
+  const valueWidth = 72;
+  const header = `${padPlain("Field", keyWidth)} | Value`;
+  const separator = `${"-".repeat(keyWidth)}-+-${"-".repeat(24)}`;
+  const body = rows.map(([key, value]) => `${padPlain(truncatePlain(plainCell(key), keyWidth), keyWidth)} | ${truncatePlain(plainCell(value), valueWidth)}`);
+  return [header, separator, ...body].join("\n");
+}
+
 function lines(values) {
   return values.filter(Boolean).join("\n");
 }
@@ -295,6 +320,23 @@ function escapeMarkdown(value) {
     .replace(/~/g, "\\~")
     .replace(/\|/g, "\\|")
     .replace(/>/g, "\\>");
+}
+
+function plainCell(value) {
+  return String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function padPlain(value, width) {
+  const text = String(value || "");
+  return text + " ".repeat(Math.max(0, width - text.length));
+}
+
+function truncatePlain(value, max) {
+  const text = String(value || "");
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
 }
 
 function truncateEmbedText(value, max) {
