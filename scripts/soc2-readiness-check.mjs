@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const requiredFiles = [
   "docs/discord-control-bot/soc2-control-matrix.md",
@@ -17,7 +18,8 @@ const requiredFiles = [
   ".github/workflows/soc2-readiness-check.yml",
   ".github/workflows/semgrep-sast.yml",
   ".github/workflows/trivy-vulnerability-scan.yml",
-  "scripts/generate-vulnerability-report.mjs"
+  "scripts/generate-vulnerability-report.mjs",
+  "scripts/ensure-security-runtimes.sh"
 ];
 
 const forbiddenBotCapabilityPatterns = [
@@ -37,6 +39,21 @@ const requiredDocTerms = new Map([
 ]);
 
 let failed = false;
+
+for (const runtime of ["node", "npm"]) {
+  if (!commandExists(runtime)) {
+    console.error(`[soc2-readiness] Required runtime not found on PATH: ${runtime}`);
+    failed = true;
+  }
+}
+
+for (const optionalRuntime of ["semgrep", "trivy"]) {
+  if (!commandExists(optionalRuntime)) {
+    console.error(`[soc2-readiness] Optional local scan runtime not found: ${optionalRuntime}`);
+    console.error(`[soc2-readiness] Run: bash scripts/ensure-security-runtimes.sh`);
+    failed = true;
+  }
+}
 
 for (const file of requiredFiles) {
   if (!existsSync(file)) {
@@ -97,4 +114,13 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, and read-only safety markers are present.");
+
+function commandExists(command) {
+  const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
+  return result.status === 0;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
