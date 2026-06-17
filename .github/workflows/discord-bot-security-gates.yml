@@ -6,6 +6,7 @@ on:
       - "discord-bot/**"
       - "docs/discord-control-bot/**"
       - ".github/workflows/discord-bot-security-gates.yml"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
   push:
     branches:
       - feature/discord-control-bot
@@ -13,6 +14,7 @@ on:
       - "discord-bot/**"
       - "docs/discord-control-bot/**"
       - ".github/workflows/discord-bot-security-gates.yml"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
 
 permissions:
   contents: read
@@ -32,6 +34,13 @@ jobs:
           test -f discord-bot/package.json
           test -f docs/discord-control-bot/security-gates.md
           test -f docs/discord-control-bot/feature-priority.md
+          test -f docs/discord-control-bot/roadmap.md
+          test -f docs/discord-control-bot/development-standards.md
+          test -f docs/discord-control-bot/soc2-control-matrix.md
+          test -f docs/discord-control-bot/templates/adr-template.md
+          test -f docs/discord-control-bot/templates/threat-model-template.md
+          test -f docs/discord-control-bot/templates/release-checklist.md
+          test -f .github/PULL_REQUEST_TEMPLATE.md
 
       - name: Block Docker socket mounts in bot assets
         run: |
@@ -62,6 +71,10 @@ jobs:
           grep -q "DCA" docs/discord-control-bot/security-gates.md
           grep -q "DAST" docs/discord-control-bot/security-gates.md
           grep -q "Docker socket" docs/discord-control-bot/security-gates.md
+          grep -q "SOC 2" docs/discord-control-bot/soc2-control-matrix.md
+          grep -q "DC-SOC2-SEC-001" docs/discord-control-bot/soc2-control-matrix.md
+          grep -q "Definition of Done" docs/discord-control-bot/development-standards.md
+          grep -q "Milestone P0.1" docs/discord-control-bot/roadmap.md
 
   npm-gates:
     name: NPM / SCA Gates
