@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -16,6 +16,33 @@ for (const script of scriptsToCheck) {
 
 const temp = mkdtempSync(join(tmpdir(), "dune-security-automation-"));
 try {
+  const semgrepPath = join(temp, "semgrep.json");
+  writeFileSync(semgrepPath, JSON.stringify(sampleSemgrepReport(), null, 2), "utf8");
+
+  run("node", ["scripts/generate-vulnerability-report.mjs", semgrepPath], {
+    label: "generate Semgrep vulnerability report"
+  });
+
+  const generatedReportPath = "artifacts/security/vulnerability-report.json";
+  if (!existsSync(generatedReportPath)) {
+    console.error(`[security-automation] expected generated report at ${generatedReportPath}`);
+    process.exit(1);
+  }
+  const generatedReport = JSON.parse(readFileSync(generatedReportPath, "utf8"));
+  const semgrepFindings = generatedReport.findings.filter((finding) => finding.scanner === "semgrep");
+  if (semgrepFindings.length !== 3) {
+    console.error(`[security-automation] expected 3 Semgrep findings, found ${semgrepFindings.length}`);
+    process.exit(1);
+  }
+  if (!semgrepFindings.some((finding) => finding.severity === "HIGH" && finding.vulnerabilityId === "javascript.express.security.audit.xss.mustache.escape-false")) {
+    console.error("[security-automation] expected Semgrep ERROR to map to HIGH");
+    process.exit(1);
+  }
+  if (!semgrepFindings.some((finding) => finding.severity === "MEDIUM" && finding.vulnerabilityId === "javascript.lang.security.audit.detect-non-literal-regexp")) {
+    console.error("[security-automation] expected Semgrep WARNING to map to MEDIUM");
+    process.exit(1);
+  }
+
   const reportPath = join(temp, "vulnerability-report.json");
   writeFileSync(reportPath, JSON.stringify(sampleReport(), null, 2), "utf8");
 
@@ -27,10 +54,11 @@ try {
     }
   });
 
-  assertIncludes(dryRun.stdout, "Tracking 3 unique CRITICAL/HIGH/MEDIUM findings.");
+  assertIncludes(dryRun.stdout, "Tracking 4 unique CRITICAL/HIGH/MEDIUM findings.");
   assertIncludes(dryRun.stdout, "vuln: CRITICAL CVE-2099-0001 in critical-package");
   assertIncludes(dryRun.stdout, "vuln: HIGH CVE-2099-0002 in high-package");
   assertIncludes(dryRun.stdout, "vuln: MEDIUM CVE-2099-0003 in medium-package");
+  assertIncludes(dryRun.stdout, "vuln: HIGH javascript.express.security.audit.xss.mustache.escape-false in src/server.js");
   assertIncludes(dryRun.stdout, "Would check previously auto-tracked issues and close resolved ones.");
   assertNotIncludes(dryRun.stdout, "low-package");
 
@@ -83,26 +111,28 @@ function sampleReport() {
     generatedAt: "2099-01-01T00:00:00.000Z",
     sources: ["synthetic"],
     summary: {
-      total: 4,
-      bySeverity: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1, UNKNOWN: 0 },
-      byCvss: { critical: 1, high: 1, medium: 1, low: 1, none: 0, unknown: 0 },
+      total: 5,
+      bySeverity: { CRITICAL: 1, HIGH: 2, MEDIUM: 1, LOW: 1, UNKNOWN: 0 },
+      byCvss: { critical: 1, high: 1, medium: 1, low: 1, none: 0, unknown: 1 },
       fixable: { total: 3 }
     },
     findings: [
-      finding("CRITICAL", "CVE-2099-0001", "critical-package", "1.0.0", "1.0.1", 9.8),
-      finding("HIGH", "CVE-2099-0002", "high-package", "2.0.0", "2.0.1", 8.1),
-      finding("MEDIUM", "CVE-2099-0003", "medium-package", "3.0.0", "3.0.1", 5.6),
-      finding("LOW", "CVE-2099-0004", "low-package", "4.0.0", "4.0.1", 2.1)
+      finding("trivy", "CRITICAL", "CVE-2099-0001", "critical-package", "1.0.0", "1.0.1", 9.8),
+      finding("trivy", "HIGH", "CVE-2099-0002", "high-package", "2.0.0", "2.0.1", 8.1),
+      finding("trivy", "MEDIUM", "CVE-2099-0003", "medium-package", "3.0.0", "3.0.1", 5.6),
+      finding("trivy", "LOW", "CVE-2099-0004", "low-package", "4.0.0", "4.0.1", 2.1),
+      finding("semgrep", "HIGH", "javascript.express.security.audit.xss.mustache.escape-false", "src/server.js", "n/a", "", null)
     ]
   };
 }
 
-function finding(severity, vulnerabilityId, packageName, installedVersion, fixedVersion, cvssScore) {
+function finding(scanner, severity, vulnerabilityId, packageName, installedVersion, fixedVersion, cvssScore) {
+  const isCve = vulnerabilityId.startsWith("CVE-");
   return {
-    scanner: "trivy",
+    scanner,
     source: "synthetic",
-    target: "synthetic-target",
-    type: "library",
+    target: scanner === "semgrep" ? packageName : "synthetic-target",
+    type: scanner === "semgrep" ? "sast" : "library",
     vulnerabilityId,
     severity,
     cvssScore,
@@ -111,8 +141,39 @@ function finding(severity, vulnerabilityId, packageName, installedVersion, fixed
     installedVersion,
     fixedVersion,
     title: `${severity} synthetic finding for ${packageName}`,
-    primaryUrl: `https://nvd.nist.gov/vuln/detail/${vulnerabilityId}`,
-    cveUrl: `https://nvd.nist.gov/vuln/detail/${vulnerabilityId}`,
-    references: [`https://nvd.nist.gov/vuln/detail/${vulnerabilityId}`]
+    primaryUrl: isCve ? `https://nvd.nist.gov/vuln/detail/${vulnerabilityId}` : "",
+    cveUrl: isCve ? `https://nvd.nist.gov/vuln/detail/${vulnerabilityId}` : "",
+    references: isCve ? [`https://nvd.nist.gov/vuln/detail/${vulnerabilityId}`] : []
+  };
+}
+
+function sampleSemgrepReport() {
+  return {
+    results: [
+      semgrepFinding("javascript.express.security.audit.xss.mustache.escape-false", "ERROR", "src/server.js", 12),
+      semgrepFinding("javascript.lang.security.audit.detect-non-literal-regexp", "WARNING", "src/routes.js", 34),
+      semgrepFinding("javascript.lang.best-practice.console-log", "INFO", "src/index.js", 56)
+    ],
+    errors: []
+  };
+}
+
+function semgrepFinding(checkId, severity, path, line) {
+  return {
+    check_id: checkId,
+    path,
+    start: { line, col: 1 },
+    end: { line, col: 20 },
+    extra: {
+      message: `${severity} synthetic Semgrep finding`,
+      severity,
+      metadata: {
+        category: "security",
+        confidence: "HIGH",
+        impact: severity === "ERROR" ? "HIGH" : "MEDIUM",
+        likelihood: "MEDIUM",
+        references: ["https://semgrep.dev/docs"]
+      }
+    }
   };
 }
