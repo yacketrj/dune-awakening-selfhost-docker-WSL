@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 const outDir = "artifacts/security";
 const jsonOut = `${outDir}/security-evidence-bundle.json`;
 const mdOut = `${outDir}/security-evidence-bundle.md`;
+const skipNestedReadiness = process.env.SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS === "true";
 
 mkdirSync(outDir, { recursive: true });
 
@@ -60,7 +61,7 @@ writeFileSync(mdOut, renderMarkdown(bundle), "utf8");
 console.log(`Wrote ${jsonOut}`);
 console.log(`Wrote ${mdOut}`);
 console.log(`Security evidence bundle: ${bundle.summary.requiredEvidenceMissing} missing required evidence item(s).`);
-if (bundle.summary.requiredEvidenceMissing > 0 || readiness.status !== "passed") {
+if (bundle.summary.requiredEvidenceMissing > 0 || !["passed", "skipped-nested"].includes(readiness.status)) {
   process.exit(1);
 }
 
@@ -85,10 +86,24 @@ function readJsonIfPresent(path) {
 }
 
 function runReadinessCheck() {
+  if (skipNestedReadiness) {
+    return {
+      status: "skipped-nested",
+      command: "node scripts/soc2-readiness-check.mjs",
+      stdout: "Skipped nested readiness check because SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS=true.",
+      stderr: ""
+    };
+  }
   if (!existsSync("scripts/soc2-readiness-check.mjs")) {
     return { status: "missing", command: "node scripts/soc2-readiness-check.mjs", stdout: "", stderr: "missing readiness script" };
   }
-  const result = spawnSync("node", ["scripts/soc2-readiness-check.mjs"], { encoding: "utf8" });
+  const result = spawnSync("node", ["scripts/soc2-readiness-check.mjs"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS: "true"
+    }
+  });
   return {
     status: result.status === 0 ? "passed" : "failed",
     exitCode: result.status,
