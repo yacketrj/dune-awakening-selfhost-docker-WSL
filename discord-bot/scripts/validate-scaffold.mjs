@@ -31,9 +31,16 @@ if (/privileged:\s*true/i.test(dockerfile)) {
 }
 
 const auth = readFileSync("src/security/authorization.ts", "utf8");
-for (const forbiddenCapability of ["write", "destructive", "broadcast", "admin"]) {
-  if (new RegExp(`\\|\\s*\"[^\"]*${forbiddenCapability}[^\"]*\"`).test(auth)) {
-    console.error(`Forbidden capability detected in bot authorization map: ${forbiddenCapability}`);
+const capabilityBlock = auth.match(/export\s+type\s+BotCapability\s*=([\s\S]*?);/);
+if (!capabilityBlock) {
+  console.error("BotCapability type block not found.");
+  process.exit(1);
+}
+
+const capabilityLiterals = [...capabilityBlock[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+for (const capability of capabilityLiterals) {
+  if (/(^|:)write$|destructive|broadcast|admin/i.test(capability)) {
+    console.error(`Forbidden bot capability detected: ${capability}`);
     process.exit(1);
   }
 }
