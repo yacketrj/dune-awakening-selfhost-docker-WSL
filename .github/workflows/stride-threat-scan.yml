@@ -9,6 +9,7 @@ on:
       - "console/api/test/discord*.test.js"
       - "docs/discord-control-bot/**"
       - "scripts/generate-stride-report.mjs"
+      - "scripts/sync-stride-issues.mjs"
       - ".github/workflows/stride-threat-scan.yml"
   push:
     branches:
@@ -20,6 +21,7 @@ on:
       - "console/api/test/discord*.test.js"
       - "docs/discord-control-bot/**"
       - "scripts/generate-stride-report.mjs"
+      - "scripts/sync-stride-issues.mjs"
       - ".github/workflows/stride-threat-scan.yml"
   schedule:
     - cron: "7 11 * * 2"
@@ -27,6 +29,7 @@ on:
 permissions:
   contents: read
   actions: read
+  issues: write
 
 defaults:
   run:
@@ -48,6 +51,19 @@ jobs:
 
       - name: Generate STRIDE report
         run: node scripts/generate-stride-report.mjs
+
+      - name: Track open MEDIUM/HIGH/CRITICAL STRIDE findings as GitHub issues
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/sync-stride-issues.mjs artifacts/security/stride-report.json
+
+      - name: Preview STRIDE issue sync for pull requests
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/sync-stride-issues.mjs artifacts/security/stride-report.json --dry-run
 
       - name: Append STRIDE summary
         if: always()
