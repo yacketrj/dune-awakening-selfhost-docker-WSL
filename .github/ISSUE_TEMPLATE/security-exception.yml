@@ -1,0 +1,61 @@
+name: Security exception
+description: Track a time-bound exception to a security or SOC 2 readiness gate.
+title: "exception: "
+labels: ["type:exception", "security", "risk-accepted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Exceptions must be time-bound, owned, risk-accepted, and reviewed. Do not use this for private vulnerability disclosure.
+  - type: textarea
+    id: exception
+    attributes:
+      label: Exception requested
+      description: What gate, policy, or control is being excepted?
+    validations:
+      required: true
+  - type: input
+    id: control
+    attributes:
+      label: Related control / gate
+      placeholder: DC-SOC2-SEC-006 / Trivy HIGH / Semgrep finding / etc.
+    validations:
+      required: true
+  - type: textarea
+    id: justification
+    attributes:
+      label: Business / technical justification
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk analysis
+      description: Include likelihood, impact, exposure, and affected assets.
+    validations:
+      required: true
+  - type: textarea
+    id: compensating_controls
+    attributes:
+      label: Compensating controls
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Exception owner
+    validations:
+      required: true
+  - type: input
+    id: expiration
+    attributes:
+      label: Expiration date
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
+  - type: textarea
+    id: exit_plan
+    attributes:
+      label: Exit / remediation plan
+    validations:
+      required: true
