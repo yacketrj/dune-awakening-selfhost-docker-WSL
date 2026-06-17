@@ -10,25 +10,23 @@ const FOOTER = {
   text: "Read-only Discord adapter • No server mutation commands enabled"
 };
 
+const BAD_STATES = /^(issue|missing|down|error|failed|offline|degraded)$/i;
+
 export function formatCommandResponse(command, payload) {
   const clean = redact(payload);
   if (isFailure(clean)) return formatErrorResponse(commandTitle(command), clean);
 
   if (command === "health") return formatHealthResponse(clean);
-  if (command === "status") return formatPublicStatusResponse(clean);
-  if (command === "statusDetail") return formatDiagnosticResponse("Arrakis Control Plane — Detailed Status", clean);
+  if (command === "status") return formatStatusCard(commandTitle(command), clean, { publicView: true });
+  if (command === "statusDetail") return formatStatusCard(commandTitle(command), clean, { diagnostic: true });
   if (command === "readiness") return formatReadinessResponse(clean);
   if (command === "services") return formatServicesResponse(clean);
 
-  return formatDiagnosticResponse(commandTitle(command), clean);
+  return formatStatusCard(commandTitle(command), clean, { diagnostic: true });
 }
 
 export function formatDiagnosticJson(title, payload) {
-  const clean = redact(payload);
-  const data = clean.result || clean.payload?.result || clean;
-  const rows = flattenObject(data).slice(0, 18);
-  const body = renderKeyValueTable(rows.length ? rows : [["Result", "No diagnostic fields returned."]]);
-  return `**${escapeMarkdown(title.replace("raw diagnostic payload", "diagnostic table"))}**\n` + "```text\n" + body + "\n```";
+  return formatStatusCard(title, payload, { diagnostic: true }).embeds[0]?.description || "Diagnostic summary unavailable.";
 }
 
 function commandTitle(command) {
@@ -57,104 +55,69 @@ function formatHealthResponse(payload) {
       title: "Arrakis Control Plane — Adapter Health",
       description: "The Discord adapter is online and operating in read-only mode.",
       color: payload.ok ? COLORS.ready : COLORS.issue,
-      fields: [
-        field("State", lines([
-          statusLine("API", payload.ok ? "ONLINE" : "ISSUE"),
-          statusLine("Experimental", truthLabel(payload.experimental)),
-          statusLine("Enabled", truthLabel(payload.enabled))
-        ]), true),
+      fields: compactFields([
+        field("Overall", payload.ok ? "ONLINE" : "ISSUE", true),
+        field("Mode", payload.experimental ? "EXPERIMENTAL" : "STANDARD", true),
         field("Safety", lines([
           statusLine("Read-only", truthLabel(payload.readOnly)),
           statusLine("Writes", payload.writesEnabled ? "ENABLED" : "DISABLED")
         ]), true),
         field("Routes", `${liveRoutes} live / ${plannedRoutes} planned`, true),
-        field("Role policy", roleLines || "No role policy returned.", false)
-      ]
-    })]
-  };
-}
-
-function formatPublicStatusResponse(payload) {
-  const data = payload.result || payload.payload?.result || payload;
-  const overall = data.overall || data.status || (payload.ok ? "READY" : "ISSUE");
-  const maps = asArray(data.maps || data.services || data.instances);
-  const issues = asArray(data.issues);
-
-  return {
-    content: "",
-    embeds: [baseEmbed({
-      title: data.title || "Arrakis Control Plane — Server Status",
-      description: `Overall state: **${escapeMarkdown(statusText(overall))}**`,
-      color: colorForStatus(overall),
-      fields: compactFields([
-        field("Overall", statusText(overall), true),
-        field("Region", safeValue(data.region || data.shardRegion || "Unknown"), true),
-        field("Population", safeValue(data.population ?? data.playerCount ?? "Unknown"), true),
-        field("Maps", formatMapList(maps), false),
-        field("Issues", formatIssueList(issues), false)
+        field("Roles", roleLines || "No role policy returned.", false)
       ])
     })]
   };
 }
 
 function formatReadinessResponse(payload) {
-  const data = payload.result || payload.payload?.result || payload;
+  const data = resultData(payload);
   const ready = data.ready ?? data.ok ?? payload.ok;
-  const issues = asArray(data.issues || data.blockingIssues || data.failures);
-  const services = asArray(data.services || data.maps || data.checks);
-  const counts = serviceCounts(services);
+  const overall = ready ? "READY" : inferOverall(data, payload);
+  const services = serviceRows(data);
+  const issues = issueLines(data, overall);
 
   return {
     content: "",
     embeds: [baseEmbed({
       title: "Arrakis Control Plane — Readiness",
       description: ready ? "Server readiness checks are passing." : "Server readiness has one or more blocking issues.",
-      color: ready ? COLORS.ready : COLORS.issue,
+      color: colorForStatus(overall),
       fields: compactFields([
-        field("Ready", ready ? "YES" : "NO", true),
-        field("Services", `${counts.ready} ready / ${counts.issue} issue / ${counts.down} down`, true),
-        field("Blocking issues", formatIssueList(issues), false),
-        services.length ? field("Checks", formatMapList(services), false) : null
+        field("Overall", statusText(overall), true),
+        field("Issues", bulletList(issues, "No issues reported."), false),
+        services.length ? field("Services", namedStatusList(services), false) : null,
+        field("Checks", namedStatusList(checkRows(data)), false)
       ])
     })]
   };
 }
 
 function formatServicesResponse(payload) {
-  const data = payload.result || payload.payload?.result || payload;
-  const services = asArray(data.services || data.maps || data.instances || data.result);
-  const counts = serviceCounts(services);
+  return formatStatusCard("Arrakis Control Plane — Services", payload, { servicesOnly: true });
+}
+
+function formatStatusCard(title, payload, _options = {}) {
+  const data = resultData(payload);
+  const overall = inferOverall(data, payload);
+  const services = serviceRows(data);
+  const listeners = listenerRows(data, services);
+  const checks = checkRows(data);
+  const issues = issueLines(data, overall);
 
   return {
     content: "",
     embeds: [baseEmbed({
-      title: "Arrakis Control Plane — Services",
-      description: services.length
-        ? `${counts.ready} ready / ${counts.issue} issue / ${counts.down} down`
-        : "No service records were returned by the Console adapter.",
-      color: counts.down ? COLORS.down : counts.issue ? COLORS.issue : COLORS.ready,
-      fields: compactFields([
-        field("Summary", `${counts.ready} ready / ${counts.issue} issue / ${counts.down} down`, true),
-        field("Services", formatMapList(services), false)
-      ])
-    })]
-  };
-}
-
-function formatDiagnosticResponse(title, payload) {
-  const data = payload.result || payload.payload?.result || payload;
-  const overall = data.overall || data.status || (payload.ok ? "OK" : "ISSUE");
-  const issues = asArray(data.issues || data.errors || data.failures);
-
-  return {
-    content: formatDiagnosticJson(`${title} — raw diagnostic payload`, payload),
-    embeds: [baseEmbed({
-      title,
-      description: `Diagnostic summary: **${escapeMarkdown(statusText(overall))}**`,
+      title: data.title || title,
+      description: `Overall\n**${escapeMarkdown(statusText(overall))}**`,
       color: colorForStatus(overall),
       fields: compactFields([
         field("Overall", statusText(overall), true),
-        field("Issues", formatIssueList(issues), false)
+        optionalField("Region", data.region || data.shardRegion, true),
+        optionalField("Population", data.population ?? data.playerCount, true),
+        field("Issues", bulletList(issues, "No issues reported."), false),
+        services.length ? field("Services", namedStatusList(services), false) : null,
+        listeners.length ? field("Listeners", namedStatusList(listeners), false) : null,
+        checks.length ? field("Checks", namedStatusList(checks), false) : null
       ])
     })]
   };
@@ -179,6 +142,81 @@ function formatErrorResponse(title, payload) {
   };
 }
 
+function resultData(payload) {
+  return payload?.result || payload?.payload?.result || payload || {};
+}
+
+function inferOverall(data, payload) {
+  return data.overall || data.status || data.state || (payload?.ok ? "READY" : "ISSUE");
+}
+
+function serviceRows(data) {
+  return asArray(data.services || data.maps || data.instances).map((item) => normalizeRow(item, "Service"));
+}
+
+function listenerRows(data, services = []) {
+  const direct = asArray(data.listeners).map((item) => normalizeRow(item, "Listener"));
+  const nested = services.flatMap((service) => asArray(service.raw?.listeners).map((listener) => normalizeRow(listener, `${service.name} listener`)));
+  return [...direct, ...nested];
+}
+
+function checkRows(data) {
+  return asArray(data.checks || data.readiness || data.healthChecks).map((item) => normalizeRow(item, "Check"));
+}
+
+function normalizeRow(item, fallbackName) {
+  if (typeof item === "string") return { name: item, status: "UNKNOWN", raw: item };
+  const raw = item || {};
+  return {
+    name: raw.name || raw.service || raw.map || raw.id || raw.check || fallbackName,
+    status: statusText(raw.status || raw.state || raw.overall || raw.ok === true && "READY" || raw.ok === false && "ISSUE" || "UNKNOWN"),
+    raw
+  };
+}
+
+function issueLines(data, overall) {
+  const explicit = asArray(data.issues || data.errors || data.failures || data.blockingIssues).map((item) => {
+    if (typeof item === "string") return item;
+    return item.message || item.error || item.name || JSON.stringify(item);
+  });
+  const derived = deriveIssues(data, overall);
+  return dedupe([...explicit, ...derived]).slice(0, 12);
+}
+
+function deriveIssues(data, overall) {
+  const rows = [];
+  if (BAD_STATES.test(statusText(overall))) rows.push(`Overall status is ${statusText(overall)}`);
+  for (const [path, value] of flattenLeaves(data)) {
+    const state = statusText(value);
+    if (!BAD_STATES.test(state)) continue;
+    rows.push(`${pathLabel(path)} is ${state}`);
+  }
+  return rows;
+}
+
+function flattenLeaves(value, path = []) {
+  if (value === null || value === undefined) return [];
+  if (typeof value !== "object") return [[path, value]];
+  if (Array.isArray(value)) return value.flatMap((item, index) => flattenLeaves(item, [...path, String(index)]));
+  return Object.entries(value).flatMap(([key, item]) => flattenLeaves(item, [...path, key]));
+}
+
+function pathLabel(path) {
+  const parts = path
+    .filter((part) => !/^\d+$/.test(part))
+    .filter((part) => !/^(result|payload|services|maps|instances|checks|listeners|state|status|overall)$/i.test(part));
+  return titleCase(parts.slice(-2).join(" ") || "Status");
+}
+
+function namedStatusList(rows) {
+  const lines = rows.map((row) => `**${escapeMarkdown(row.name)}** : ${escapeMarkdown(row.status)}`);
+  return truncateEmbedText(lines.length ? lines.join("\n") : "None reported.", 1024);
+}
+
+function bulletList(rows, fallback) {
+  return truncateEmbedText(rows.length ? rows.map((row) => `• ${escapeMarkdown(row)}`).join("\n") : fallback, 1024);
+}
+
 function baseEmbed({ title, description, color, fields }) {
   return {
     title: truncateEmbedText(title, 256),
@@ -199,51 +237,12 @@ function field(name, value, inline = false) {
   };
 }
 
+function optionalField(name, value, inline = false) {
+  return value === null || value === undefined || value === "" ? null : field(name, safeValue(value), inline);
+}
+
 function compactFields(fields) {
   return (fields || []).filter(Boolean);
-}
-
-function formatMapList(items) {
-  const rows = asArray(items).map((item) => {
-    if (typeof item === "string") return `• ${escapeMarkdown(item)}`;
-    const name = item.name || item.service || item.map || item.id || "Unknown";
-    const state = item.state || item.status || item.overall || "UNKNOWN";
-    const uptime = item.uptime || item.uptimeHuman || item.age || "";
-    const extras = [uptime, clientSummary(item), s2sSummary(item)].filter(Boolean).join(" • ");
-    return `• **${escapeMarkdown(name)}** — ${escapeMarkdown(statusText(state))}${extras ? ` — ${escapeMarkdown(extras)}` : ""}`;
-  });
-  return truncateEmbedText(rows.length ? rows.join("\n") : "No service or map records returned.", 1024);
-}
-
-function formatIssueList(issues) {
-  const rows = asArray(issues).map((issue) => {
-    if (typeof issue === "string") return `• ${escapeMarkdown(issue)}`;
-    return `• ${escapeMarkdown(issue.message || issue.error || issue.name || JSON.stringify(issue))}`;
-  });
-  return truncateEmbedText(rows.length ? rows.join("\n") : "No issues reported.", 1024);
-}
-
-function serviceCounts(services) {
-  const counts = { ready: 0, issue: 0, down: 0 };
-  for (const service of asArray(services)) {
-    const state = statusText(service?.state || service?.status || service?.overall || service);
-    if (/down|failed|error|offline|stopped/i.test(state)) counts.down += 1;
-    else if (/issue|degraded|missing|warn|unknown/i.test(state)) counts.issue += 1;
-    else counts.ready += 1;
-  }
-  return counts;
-}
-
-function clientSummary(item) {
-  const clients = item.clients ?? item.clientCount ?? item.players;
-  if (clients === null || clients === undefined || clients === "") return "";
-  return `clients ${clients}`;
-}
-
-function s2sSummary(item) {
-  const s2s = item.s2s ?? item.s2sState ?? item.serverToServer;
-  if (s2s === null || s2s === undefined || s2s === "") return "";
-  return `S2S ${s2s}`;
 }
 
 function statusLine(label, value) {
@@ -281,34 +280,22 @@ function asArray(value) {
   return [value];
 }
 
-function flattenObject(value, prefix = "") {
-  if (value === null || value === undefined) return [];
-  if (typeof value !== "object") return [[prefix || "value", value]];
-  const rows = [];
-  for (const [key, item] of Object.entries(value)) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    if (item && typeof item === "object" && !Array.isArray(item)) rows.push(...flattenObject(item, path));
-    else if (Array.isArray(item)) rows.push([path, `${item.length} item(s)`]);
-    else rows.push([path, item]);
-  }
-  return rows;
-}
-
-function renderKeyValueTable(rows) {
-  const keyWidth = Math.min(34, Math.max("Field".length, ...rows.map(([key]) => plainCell(key).length)));
-  const valueWidth = 72;
-  const header = `${padPlain("Field", keyWidth)} | Value`;
-  const separator = `${"-".repeat(keyWidth)}-+-${"-".repeat(24)}`;
-  const body = rows.map(([key, value]) => `${padPlain(truncatePlain(plainCell(key), keyWidth), keyWidth)} | ${truncatePlain(plainCell(value), valueWidth)}`);
-  return [header, separator, ...body].join("\n");
-}
-
 function lines(values) {
   return values.filter(Boolean).join("\n");
 }
 
 function safeValue(value) {
   return escapeMarkdown(String(value ?? "Unknown"));
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function dedupe(values) {
+  return [...new Set(values.filter(Boolean).map((value) => String(value)))];
 }
 
 function escapeMarkdown(value) {
@@ -320,23 +307,6 @@ function escapeMarkdown(value) {
     .replace(/~/g, "\\~")
     .replace(/\|/g, "\\|")
     .replace(/>/g, "\\>");
-}
-
-function plainCell(value) {
-  return String(value ?? "")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function padPlain(value, width) {
-  const text = String(value || "");
-  return text + " ".repeat(Math.max(0, width - text.length));
-}
-
-function truncatePlain(value, max) {
-  const text = String(value || "");
-  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
 }
 
 function truncateEmbedText(value, max) {
