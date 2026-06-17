@@ -6,6 +6,7 @@ const outDir = "artifacts/security";
 const jsonOut = `${outDir}/security-evidence-bundle.json`;
 const mdOut = `${outDir}/security-evidence-bundle.md`;
 const skipNestedReadiness = process.env.SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS === "true";
+const CHILD_PROCESS_TIMEOUT_MS = Number(process.env.SECURITY_AUTOMATION_TIMEOUT_MS || 120000);
 
 mkdirSync(outDir, { recursive: true });
 
@@ -99,17 +100,19 @@ function runReadinessCheck() {
   }
   const result = spawnSync("node", ["scripts/soc2-readiness-check.mjs"], {
     encoding: "utf8",
+    timeout: CHILD_PROCESS_TIMEOUT_MS,
     env: {
       ...process.env,
       SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS: "true"
     }
   });
+  const timedOut = result.error?.code === "ETIMEDOUT";
   return {
-    status: result.status === 0 ? "passed" : "failed",
+    status: result.status === 0 ? "passed" : timedOut ? "timed-out" : "failed",
     exitCode: result.status,
     command: "node scripts/soc2-readiness-check.mjs",
-    stdout: result.stdout.trim(),
-    stderr: result.stderr.trim()
+    stdout: (result.stdout || "").trim(),
+    stderr: `${(result.stderr || "").trim()}${timedOut ? `\nTimed out after ${CHILD_PROCESS_TIMEOUT_MS}ms.` : ""}`.trim()
   };
 }
 
