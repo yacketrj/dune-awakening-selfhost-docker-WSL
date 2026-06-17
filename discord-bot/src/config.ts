@@ -10,7 +10,7 @@ export type BotConfig = {
   ownerRoleIds: string[];
   publicStatusChannelId?: string;
   adminAlertChannelId?: string;
-  discordWritesEnabled: boolean;
+  discordWritesEnabled: false;
 };
 
 function requiredEnv(name: string): string {
@@ -44,7 +44,7 @@ export function loadConfig(): BotConfig {
     ownerRoleIds: optionalCsv("DISCORD_OWNER_ROLE_IDS"),
     publicStatusChannelId: optionalEnv("DISCORD_PUBLIC_STATUS_CHANNEL_ID"),
     adminAlertChannelId: optionalEnv("DISCORD_ADMIN_ALERT_CHANNEL_ID"),
-    discordWritesEnabled: process.env.DUNE_DISCORD_WRITES_ENABLED === "true"
+    discordWritesEnabled: false
   };
 }
 
@@ -52,7 +52,4 @@ export function validateConfig(config: BotConfig): void {
   const url = new URL(config.duneConsoleApiUrl);
   if (!/^https?:$/.test(url.protocol)) throw new Error("DUNE_CONSOLE_API_URL must use http or https.");
   if (!config.ownerRoleIds.length) throw new Error("At least one owner role ID must be configured.");
-  if (config.discordWritesEnabled && !config.adminAlertChannelId) {
-    throw new Error("DISCORD_ADMIN_ALERT_CHANNEL_ID is required when Discord write actions are enabled.");
-  }
 }
