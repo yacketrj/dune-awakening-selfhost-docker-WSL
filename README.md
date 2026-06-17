@@ -22,7 +22,51 @@ This project is unofficial. It is not affiliated with, endorsed by, sponsored by
 - Memory controls, including per-map memory settings and the Memory Balancer
 - Autoscaler controls for starting, stopping, and reconciling dynamic map servers
 - Database browser plus database backup, restore, import, and maintenance tools
+- Experimental read-only Discord companion bot for status, readiness, services, and future read-only visibility
 - And much more!
+
+## Discord Companion Bot Status
+
+The `feature/discord-control-bot` branch includes an experimental read-only Discord companion bot and a protected Console API adapter.
+
+Current implemented commands and smoke-tested routes:
+
+| Command | Role | Status |
+|---|---:|---|
+| `/dune health` | Public | Implemented through adapter health |
+| `/dune status` | Public | Implemented with redacted public output |
+| `/dune status detail` | Admin/Owner | Implemented with detailed redacted output |
+| `/dune readiness` | Observer+ | Implemented |
+| `/dune services` | Observer+ | Implemented |
+
+The bot is intentionally read-only. It does not expose write, destructive, database mutation, player mutation, backup restore/delete, Docker control, addon mutation, or broadcast commands.
+
+Discord companion documentation:
+
+- `docs/discord-control-bot/project-status.md`
+- `docs/discord-control-bot/setup-guide.md`
+- `docs/discord-control-bot/admin-guide.md`
+- `docs/discord-control-bot/user-guide.md`
+- `docs/discord-control-bot/roadmap.md`
+- `docs/discord-control-bot/soc2-control-matrix.md`
+
+## SOC 2 Readiness
+
+The Discord companion bot is designed with SOC 2-aligned readiness controls. This is not a SOC 2 certification or report; formal SOC 2 compliance requires an independent CPA examination.
+
+The branch includes a scheduled SOC 2 readiness workflow:
+
+```text
+.github/workflows/soc2-readiness-check.yml
+```
+
+It runs weekly, on manual dispatch, and on relevant PR/push changes. It checks required evidence documentation, read-only safety markers, adapter tests, bot tests, secret scanning, and scaffold validation.
+
+Local readiness check:
+
+```bash
+node scripts/soc2-readiness-check.mjs
+```
 
 ## Requirements
 
@@ -89,6 +133,7 @@ The template gives addon developers a ready-to-use structure, examples, validati
 - Funcom self-hosting behavior may change over time.
 - Keep secrets, generated runtime files, and backups out of git.
 - Do not expose the Web UI to untrusted users.
+- The Discord companion bot remains read-only unless a future threat model and approval process explicitly changes that scope.
 
 ## Credits
 
