@@ -4,19 +4,23 @@ Experimental read-only Discord companion for Dune Docker Console.
 
 ## Current Status
 
-This workspace now includes a dependency-free read-only command layer that calls the protected Console Discord adapter routes. The network Discord client is still deferred until the adapter contract is stable.
+This workspace now includes a dependency-free read-only Discord runtime, guild slash-command registration, and command handlers that call the protected Console Discord adapter routes.
 
-Live command behavior can be exercised with `scripts/command-smoke.mjs` before connecting to Discord.
+The runtime uses file-based secrets, Discord Gateway events, and Discord REST interaction callbacks. It does not add npm runtime dependencies and does not expose write, destructive, database mutation, Docker control, or addon mutation behavior.
+
+Live command behavior can still be exercised with `scripts/command-smoke.mjs` before connecting to Discord.
 
 ## Implemented Command Surface
 
 | Discord command | Console route | Minimum role | Visibility | Writes |
 |---|---|---:|---|---:|
-| `/dune health` | `GET /api/integrations/discord/health` | Public | Public or ephemeral by caller | No |
-| `/dune status` | `POST /api/integrations/discord/status` | Public | Public | No |
+| `/dune health` | `GET /api/integrations/discord/health` | Public | Ephemeral | No |
+| `/dune status public` | `POST /api/integrations/discord/status` | Public | Public | No |
 | `/dune status detail` | `POST /api/integrations/discord/status` with diagnostic mode | Admin | Ephemeral | No |
-| `/dune readiness` | `POST /api/integrations/discord/readiness` | Observer | Ephemeral-safe | No |
-| `/dune services` | `POST /api/integrations/discord/services` | Observer | Ephemeral-safe | No |
+| `/dune readiness` | `POST /api/integrations/discord/readiness` | Observer | Ephemeral | No |
+| `/dune services` | `POST /api/integrations/discord/services` | Observer | Ephemeral | No |
+| `/dune help` | Local bot help | Public | Ephemeral | No |
+| `/dune version` | Local bot version | Public | Ephemeral | No |
 
 ## Role Model
 
@@ -107,6 +111,27 @@ Expected behavior:
 - `smoke:status-detail` returns a more detailed redacted diagnostic payload and requires the admin role.
 - `smoke:readiness` and `smoke:services` require the observer role.
 - No smoke command performs a write action.
+
+## Discord Runtime Startup
+
+After the Console adapter is running and both token files exist:
+
+```bash
+cd discord-bot
+
+export DISCORD_BOT_TOKEN_FILE="$HOME/.config/dune-console/discord-bot-token.txt"
+export DUNE_BOT_API_TOKEN_FILE="$HOME/.config/dune-console/dune-bot-api-token.txt"
+export DUNE_CONSOLE_API_URL=http://127.0.0.1:8088
+export DISCORD_CLIENT_ID="your-discord-application-client-id"
+export DISCORD_GUILD_ID="your-discord-server-id"
+export DISCORD_OBSERVER_ROLE_IDS="role-observer"
+export DISCORD_ADMIN_ROLE_IDS="role-admin"
+export DISCORD_OWNER_ROLE_IDS="role-owner"
+
+npm start
+```
+
+At startup the bot registers guild-scoped `/dune` slash commands, connects to the Discord Gateway, and replies to interaction events through Discord REST callbacks.
 
 ## Local Checks
 
