@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const requiredFiles = [
   "src/index.ts",
@@ -9,6 +10,7 @@ const requiredFiles = [
   "src/security/redaction.ts",
   "src/security/authorization.ts",
   "scripts/command-smoke.mjs",
+  "scripts/discord-runtime.mjs",
   "test/redaction.test.mjs",
   "Dockerfile",
   "package-lock.json"
@@ -41,6 +43,23 @@ const capabilityLiterals = [...capabilityBlock[1].matchAll(/"([^"]+)"/g)].map((m
 for (const capability of capabilityLiterals) {
   if (/(^|:)write$|destructive|broadcast|admin/i.test(capability)) {
     console.error(`Forbidden bot capability detected: ${capability}`);
+    process.exit(1);
+  }
+}
+
+const runtimeCheck = spawnSync("node", ["--check", "scripts/discord-runtime.mjs"], { encoding: "utf8", timeout: 30000 });
+if (runtimeCheck.status !== 0) {
+  console.error("Discord runtime syntax validation failed.");
+  if (runtimeCheck.stdout) console.error(runtimeCheck.stdout);
+  if (runtimeCheck.stderr) console.error(runtimeCheck.stderr);
+  if (runtimeCheck.error?.message) console.error(runtimeCheck.error.message);
+  process.exit(runtimeCheck.status || 1);
+}
+
+const runtime = readFileSync("scripts/discord-runtime.mjs", "utf8");
+for (const forbidden of ["/var/run/docker.sock", "docker compose", "docker run", "postgres", "backup restore", "backup delete"] ) {
+  if (runtime.toLowerCase().includes(forbidden.toLowerCase())) {
+    console.error(`Forbidden runtime marker detected: ${forbidden}`);
     process.exit(1);
   }
 }
