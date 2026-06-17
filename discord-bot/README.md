@@ -1,21 +1,34 @@
-# Dune Discord Control Bot
+# Dune Discord Companion Bot
 
-Discord-native operator interface for Dune Docker Console.
+Experimental read-only Discord companion for Dune Docker Console.
 
 ## Current Status
 
 This workspace is intentionally in P0 security-foundation mode. It does not connect to Discord yet and does not execute WebUI actions yet.
 
-The first implementation priority is to establish security gates, config patterns, redaction, authorization modeling, and container hardening before privileged bot behavior is added.
+The first implementation target is a read-only companion bot for:
+
+- Server status.
+- Readiness.
+- Services.
+- Population.
+- Logs.
+- Map state.
+- Backup list/latest metadata.
+
+The bot is not a full WebUI replacement in the experimental phase.
 
 ## Design Constraints
 
 1. The bot is a Discord client, not the authority.
-2. Dune Docker Console remains the authority for backend authorization, confirmations, audit logging, and execution.
-3. The bot must not mount `/var/run/docker.sock`.
-4. The bot must not directly perform destructive database writes.
-5. The bot must not store secrets in static addon files, source control, logs, or container layers.
-6. Discord write/admin actions remain disabled by default.
+2. Dune Docker Console remains responsible for final authorization, safety checks, redaction, audit logging, and execution.
+3. The bot must call a protected Console API.
+4. The bot must not mount `/var/run/docker.sock`.
+5. The bot must not write directly to Postgres.
+6. The bot must not directly access Postgres for destructive actions.
+7. The bot must not store secrets in addon files, static files, source control, logs, or container layers.
+8. The bot must not execute destructive actions.
+9. Discord write/admin actions remain disabled and out of scope for the experimental release.
 
 ## Required Runtime Secrets
 
@@ -51,8 +64,9 @@ npm run build
 See:
 
 - `docs/discord-control-bot/security-gates.md`
+- `docs/discord-control-bot/api-adapter-contract.md`
 - `.github/workflows/discord-bot-security-gates.yml`
 
 ## Next Implementation Step
 
-Add the Dune Console Discord API adapter contract before wiring up Discord slash commands. Backend authorization must be server-side, not only in the bot process.
+Wire the protected Console API adapter behind an explicit disabled-by-default flag, then expose only read-only endpoints for health/status/readiness/services/population/logs/map-state/backups.
