@@ -19,6 +19,7 @@ const requiredFiles = [
   ".github/workflows/soc2-readiness-check.yml",
   ".github/workflows/semgrep-sast.yml",
   ".github/workflows/trivy-vulnerability-scan.yml",
+  ".github/workflows/stride-threat-scan.yml",
   ".github/ISSUE_TEMPLATE/config.yml",
   ".github/ISSUE_TEMPLATE/bug-report.yml",
   ".github/ISSUE_TEMPLATE/soc2-evidence-gap.yml",
@@ -27,6 +28,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/access-review.yml",
   ".github/ISSUE_TEMPLATE/feature-request.yml",
   "scripts/generate-vulnerability-report.mjs",
+  "scripts/generate-stride-report.mjs",
   "scripts/sync-vulnerability-issues.mjs",
   "scripts/validate-security-automation.mjs",
   "scripts/ensure-security-runtimes.sh"
@@ -112,9 +114,19 @@ if (existsSync("console/api/src/integrations/discord/adapter.js")) {
 
 if (existsSync("scripts/generate-vulnerability-report.mjs")) {
   const reporter = readFileSync("scripts/generate-vulnerability-report.mjs", "utf8");
-  for (const required of ["cvssScore", "nvd.nist.gov/vuln/detail", "vulnerability-report.md", "vulnerability-report.json"]) {
+  for (const required of ["cvssScore", "nvd.nist.gov/vuln/detail", "vulnerability-report.md", "vulnerability-report.json", "semgrep"]) {
     if (!reporter.includes(required)) {
       console.error(`[soc2-readiness] Vulnerability reporter missing required marker: ${required}`);
+      failed = true;
+    }
+  }
+}
+
+if (existsSync("scripts/generate-stride-report.mjs")) {
+  const stride = readFileSync("scripts/generate-stride-report.mjs", "utf8");
+  for (const required of ["STRIDE", "Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege", "stride-report.md", "stride-report.json"]) {
+    if (!stride.includes(required)) {
+      console.error(`[soc2-readiness] STRIDE scanner missing required marker: ${required}`);
       failed = true;
     }
   }
@@ -140,12 +152,22 @@ if (!failed && existsSync("scripts/validate-security-automation.mjs")) {
   }
 }
 
+if (!failed && existsSync("scripts/generate-stride-report.mjs")) {
+  const stride = spawnSync("node", ["scripts/generate-stride-report.mjs"], { encoding: "utf8" });
+  if (stride.status !== 0) {
+    console.error("[soc2-readiness] STRIDE report generation failed.");
+    if (stride.stdout) console.error(stride.stdout);
+    if (stride.stderr) console.error(stride.stderr);
+    failed = true;
+  }
+}
+
 if (failed) {
   console.error("SOC 2 readiness check failed. This is a readiness/evidence gate, not a SOC 2 certification assertion.");
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, automation validation, and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, STRIDE output, automation validation, and read-only safety markers are present.");
 
 function commandExists(command) {
   const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
