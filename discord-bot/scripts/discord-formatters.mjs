@@ -205,7 +205,7 @@ function pathLabel(path) {
   const parts = path
     .filter((part) => !/^\d+$/.test(part))
     .filter((part) => !/^(result|payload|services|maps|instances|checks|listeners|state|status|overall)$/i.test(part));
-  return titleCase(parts.slice(-2).join(" ") || "Status");
+  return labelCase(parts.slice(-2).join(" ") || "Status");
 }
 
 function namedStatusList(rows) {
@@ -288,10 +288,15 @@ function safeValue(value) {
   return escapeMarkdown(String(value ?? "Unknown"));
 }
 
-function titleCase(value) {
+function labelCase(value) {
   return String(value || "")
     .replace(/[_-]+/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .replace(/\bS2s\b/g, "S2S")
+    .replace(/\bApi\b/g, "API")
+    .replace(/\bDb\b/g, "DB")
+    .replace(/\bCpu\b/g, "CPU")
+    .replace(/\bRam\b/g, "RAM");
 }
 
 function dedupe(values) {
