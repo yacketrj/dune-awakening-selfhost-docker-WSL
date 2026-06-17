@@ -30,6 +30,7 @@ const requiredFiles = [
   "scripts/generate-vulnerability-report.mjs",
   "scripts/generate-stride-report.mjs",
   "scripts/sync-vulnerability-issues.mjs",
+  "scripts/sync-stride-issues.mjs",
   "scripts/validate-security-automation.mjs",
   "scripts/ensure-security-runtimes.sh"
 ];
@@ -47,7 +48,7 @@ const requiredDocTerms = new Map([
   ["docs/discord-control-bot/admin-guide.md", ["role mapping", "no write actions", "detailed status"]],
   ["docs/discord-control-bot/user-guide.md", ["commands", "public status", "detailed status"]],
   ["docs/discord-control-bot/setup-guide.md", ["dune_bot_api_token_file", "start:discord-adapter", "smoke test"]],
-  ["docs/discord-control-bot/security-gates.md", ["semgrep", "trivy", "vulnerability report", "cvss"]],
+  ["docs/discord-control-bot/security-gates.md", ["semgrep", "trivy", "vulnerability report", "cvss", "stride"]],
   ["docs/discord-control-bot/issue-tracking-policy.md", ["issue tracking", "soc 2 readiness", "vulnerability remediation", "access review", "security exception"]]
 ]);
 
@@ -142,6 +143,16 @@ if (existsSync("scripts/sync-vulnerability-issues.mjs")) {
   }
 }
 
+if (existsSync("scripts/sync-stride-issues.mjs")) {
+  const syncer = readFileSync("scripts/sync-stride-issues.mjs", "utf8");
+  for (const required of ["dune-stride-key", "type:threat", "status:active", "status:resolved", "closeResolvedAutoTrackedIssues", "severity:medium"]) {
+    if (!syncer.includes(required)) {
+      console.error(`[soc2-readiness] STRIDE issue sync missing required marker: ${required}`);
+      failed = true;
+    }
+  }
+}
+
 if (!failed && existsSync("scripts/validate-security-automation.mjs")) {
   const validation = spawnSync("node", ["scripts/validate-security-automation.mjs"], { encoding: "utf8" });
   if (validation.status !== 0) {
@@ -167,7 +178,7 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, STRIDE output, automation validation, and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, STRIDE output, STRIDE issue tracking, automation validation, and read-only safety markers are present.");
 
 function commandExists(command) {
   const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
