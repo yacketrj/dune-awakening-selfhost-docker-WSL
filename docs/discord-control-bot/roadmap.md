@@ -326,6 +326,114 @@ No write, destructive, credential, database mutation, addon mutation, player mut
 6. Audit policy.
 7. Rollback plan.
 
+Future moderator commands and two-way chat are explicitly post-read-only roadmap candidates. They are not part of the experimental read-only release and require their own design review before implementation.
+
+## Milestone P4 - Guarded Game Moderator Commands
+
+### Goal
+
+Evaluate whether trusted game moderators should receive a controlled command surface for in-game moderation actions through Discord and/or an approved in-game command bridge.
+
+Example moderator use cases under consideration:
+
+```text
+/kick playerid
+/spawn vehicle
+```
+
+This milestone is exploratory. It must not be implemented as raw command passthrough from Discord to the game server. Console API must remain the execution authority, and every action must be authorized, validated, audited, rate-limited, and reversible where practical.
+
+### Candidate Deliverables
+
+- Moderator role/capability model separate from observer/admin/owner visibility roles.
+- Dedicated capability names for each moderator action, for example `player:kick` or `vehicle:spawn`.
+- Strict target validation by immutable player ID or backend-resolved player identity.
+- Command allowlist; no arbitrary console command passthrough.
+- Reason codes and optional moderator notes for player-impacting actions.
+- Confirmation flow for disruptive actions.
+- Cooldowns and abuse-rate controls per moderator, command, and target.
+- Full audit events with actor, Discord user, mapped game moderator identity, command, target, reason, timestamp, and result.
+- Emergency kill switch for all moderator command execution.
+- Dry-run/test mode for validation before live enablement.
+
+### Acceptance Criteria
+
+- Moderator commands are disabled by default.
+- Every command has a server-side capability requirement.
+- Discord role checks are not trusted as the only authorization layer.
+- Raw command strings cannot be supplied by users.
+- Player IDs, vehicle IDs, and enum arguments are validated against backend-safe sources.
+- All moderator actions produce tamper-evident audit records.
+- Failed authorization and failed validation attempts are logged safely.
+- Abuse controls prevent command spam or repeated targeting.
+- Security review confirms no path to Docker, database, addon, credential, or host-level mutation.
+
+### Evidence
+
+- Threat model for moderator actions.
+- Updated SOC 2 control matrix.
+- Authorization matrix tests.
+- Audit event tests.
+- DAST authorization and misuse tests.
+- Operator runbook.
+- Approved security exception for any high-risk action that cannot be made reversible.
+
+## Milestone P5 - Two-Way Discord and In-Game Chat Bridge
+
+### Goal
+
+Design an opt-in chat bridge that lets in-game players and Discord users communicate across a mapped channel without requiring everyone to be in the same client.
+
+Target behavior:
+
+```text
+Discord -> Game Chat
+A message sent in an approved Discord channel appears in the mapped in-game chat channel.
+
+Game Chat -> Discord
+A message sent in an approved in-game chat channel appears in the mapped Discord channel.
+```
+
+This bridge is for chat only. It must not become a command injection path, moderation bypass, or raw console command relay.
+
+### Candidate Deliverables
+
+- Discord channel to in-game chat channel mapping.
+- Direction controls: Discord-to-game, game-to-Discord, or bidirectional.
+- Message identity format, for example `[Discord] Name:` and `[Game] Player:`.
+- Abuse controls: rate limits, message length caps, attachment policy, mention suppression, and flood protection.
+- Mention and markdown sanitization before sending Discord content in-game.
+- In-game formatting sanitization before sending game chat to Discord.
+- Optional allowlist for Discord roles and in-game channels.
+- Optional profanity/spam/moderation filter hook.
+- Loop prevention so bridged messages are not echoed back repeatedly.
+- Audit/logging for bridged messages without storing secrets or unnecessary personal data.
+- Admin-visible health/status for the bridge.
+- Emergency disable flag for chat bridge only.
+
+### Acceptance Criteria
+
+- Chat bridge is disabled by default.
+- Channel mappings are explicit and auditable.
+- Bot never forwards Discord bot tokens, environment values, internal URLs, or host paths.
+- Discord mentions are suppressed or safely escaped before in-game delivery.
+- In-game chat cannot trigger Discord slash commands or bot admin actions.
+- Discord messages cannot trigger in-game admin/moderator commands.
+- Bridge respects configured directionality.
+- Message loops are prevented.
+- Rate limits and caps protect both Discord and the game server.
+- Operators can disable the bridge without disabling the WebUI.
+
+### Evidence
+
+- Chat bridge architecture decision record.
+- Updated STRIDE model covering spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege.
+- Channel mapping tests.
+- Sanitization tests.
+- Loop-prevention tests.
+- Abuse-rate tests.
+- Operator runbook.
+
 ## Roadmap Exit Criteria for Experimental Release
 
 The experimental read-only release is complete when:
