@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
       - "docs/discord-control-bot/**"
       - ".github/workflows/discord-bot-security-gates.yml"
       - ".github/PULL_REQUEST_TEMPLATE.md"
@@ -12,6 +14,8 @@ on:
       - feature/discord-control-bot
     paths:
       - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
       - "docs/discord-control-bot/**"
       - ".github/workflows/discord-bot-security-gates.yml"
       - ".github/PULL_REQUEST_TEMPLATE.md"
@@ -40,7 +44,19 @@ jobs:
           test -f docs/discord-control-bot/templates/adr-template.md
           test -f docs/discord-control-bot/templates/threat-model-template.md
           test -f docs/discord-control-bot/templates/release-checklist.md
+          test -f docs/discord-control-bot/api-adapter-contract.md
           test -f .github/PULL_REQUEST_TEMPLATE.md
+
+      - name: Ensure adapter scaffold exists
+        run: |
+          test -f console/api/src/integrations/discord/policy.js
+          test -f console/api/src/integrations/discord/sanitize.js
+          test -f console/api/src/integrations/discord/audit.js
+          test -f console/api/src/integrations/discord/adapter.js
+          test -f console/api/test/discordPolicy.test.js
+          test -f console/api/test/discordSanitize.test.js
+          test -f console/api/test/discordAudit.test.js
+          test -f console/api/test/discordAdapter.test.js
 
       - name: Block Docker socket mounts in bot assets
         run: |
@@ -75,6 +91,8 @@ jobs:
           grep -q "DC-SOC2-SEC-001" docs/discord-control-bot/soc2-control-matrix.md
           grep -q "Definition of Done" docs/discord-control-bot/development-standards.md
           grep -q "Milestone P0.1" docs/discord-control-bot/roadmap.md
+          grep -q "Authorization" docs/discord-control-bot/api-adapter-contract.md
+          grep -q "DAST Requirements" docs/discord-control-bot/api-adapter-contract.md
 
   npm-gates:
     name: NPM / SCA Gates
@@ -101,6 +119,29 @@ jobs:
 
       - name: Run npm audit
         run: npm audit --audit-level=high
+
+  console-api-adapter-tests:
+    name: Console API Discord Adapter Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: console/api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Discord adapter tests
+        run: node --test test/discord*.test.js
 
   codeql:
     name: CodeQL SAST
