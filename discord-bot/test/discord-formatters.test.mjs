@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { formatCommandResponse } from "../scripts/discord-formatters.mjs";
 
-test("health formatter emits a Discord embed and no raw JSON-first content", () => {
+test("health formatter emits a Discord embed with table content", () => {
   const response = formatCommandResponse("health", {
     ok: true,
     service: "dune-console-discord-adapter",
@@ -21,7 +21,8 @@ test("health formatter emits a Discord embed and no raw JSON-first content", () 
     }
   });
 
-  assert.equal(response.content, "");
+  assert.match(response.content, /```text/);
+  assert.match(response.content, /Read-only/);
   assert.equal(response.embeds.length, 1);
   assert.equal(response.embeds[0].title, "Arrakis Control Plane — Adapter Health");
   assert.match(response.embeds[0].fields.find((field) => field.name === "Safety").value, /Read-only/);
@@ -50,7 +51,7 @@ test("public status formatter summarizes maps and issues", () => {
   assert.match(embed.fields.find((field) => field.name === "Issues").value, /Overmap status/);
 });
 
-test("formatter redacts secret-shaped values inside embeds and diagnostic JSON", () => {
+test("formatter redacts secret-shaped values inside embeds and diagnostic table", () => {
   const response = formatCommandResponse("statusDetail", {
     ok: true,
     result: {
@@ -61,6 +62,8 @@ test("formatter redacts secret-shaped values inside embeds and diagnostic JSON",
   });
 
   const combined = `${response.content}\n${JSON.stringify(response.embeds)}`;
+  assert.match(response.content, /```text/);
+  assert.doesNotMatch(response.content, /```json/);
   assert.match(combined, /\[REDACTED\]/);
   assert.doesNotMatch(combined, /abc\.def\.ghi/);
 });
