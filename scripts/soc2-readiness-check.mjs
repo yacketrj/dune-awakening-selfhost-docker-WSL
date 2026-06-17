@@ -30,6 +30,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/feature-request.yml",
   "scripts/generate-vulnerability-report.mjs",
   "scripts/generate-stride-report.mjs",
+  "scripts/generate-security-evidence-bundle.mjs",
   "scripts/sync-vulnerability-issues.mjs",
   "scripts/sync-stride-issues.mjs",
   "scripts/validate-security-automation.mjs",
@@ -134,6 +135,16 @@ if (existsSync("scripts/generate-stride-report.mjs")) {
   }
 }
 
+if (existsSync("scripts/generate-security-evidence-bundle.mjs")) {
+  const bundle = readFileSync("scripts/generate-security-evidence-bundle.mjs", "utf8");
+  for (const required of ["security-evidence-bundle.md", "security-evidence-bundle.json", "SOC 2 readiness evidence bundle", "Control Evidence Mapping"]) {
+    if (!bundle.includes(required)) {
+      console.error(`[soc2-readiness] Security evidence bundle missing required marker: ${required}`);
+      failed = true;
+    }
+  }
+}
+
 if (existsSync("scripts/sync-vulnerability-issues.mjs")) {
   const syncer = readFileSync("scripts/sync-vulnerability-issues.mjs", "utf8");
   for (const required of ["CRITICAL", "HIGH", "MEDIUM", "dune-vuln-key", "type:vulnerability", "severity:medium"]) {
@@ -179,7 +190,7 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, STRIDE output, STRIDE issue tracking, automation validation, and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, STRIDE output, STRIDE issue tracking, evidence bundle, automation validation, and read-only safety markers are present.");
 
 function commandExists(command) {
   const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
