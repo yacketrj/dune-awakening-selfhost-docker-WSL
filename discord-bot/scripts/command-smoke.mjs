@@ -40,19 +40,33 @@ if (!commandMap[command]) {
   process.exit(2);
 }
 
+const health = await call({ method: "GET", path: "/api/integrations/discord/health" });
 const request = commandMap[command];
-const response = await fetch(`${apiUrl}${request.path}`, {
-  method: request.method,
-  headers: {
-    authorization: `Bearer ${apiToken}`,
-    ...(request.body ? { "content-type": "application/json" } : {})
-  },
-  body: request.body ? JSON.stringify(request.body) : undefined
-});
+const result = await call(request);
 
-const body = await response.json().catch(() => ({ ok: false, code: "invalid_response", error: "Console returned non-JSON output." }));
-console.log(JSON.stringify({ command, role, status: response.status, body }, null, 2));
-process.exitCode = response.ok ? 0 : 1;
+console.log(JSON.stringify({
+  command,
+  role,
+  actorRoleIdsSent: roleIds,
+  consoleRolePolicy: health.body?.rolePolicy || null,
+  status: result.status,
+  body: result.body
+}, null, 2));
+
+process.exitCode = result.ok ? 0 : 1;
+
+async function call(request) {
+  const response = await fetch(`${apiUrl}${request.path}`, {
+    method: request.method,
+    headers: {
+      authorization: `Bearer ${apiToken}`,
+      ...(request.body ? { "content-type": "application/json" } : {})
+    },
+    body: request.body ? JSON.stringify(request.body) : undefined
+  });
+  const body = await response.json().catch(() => ({ ok: false, code: "invalid_response", error: "Console returned non-JSON output." }));
+  return { ok: response.ok, status: response.status, body };
+}
 
 function requiredEnv(name) {
   const value = process.env[name]?.trim();
