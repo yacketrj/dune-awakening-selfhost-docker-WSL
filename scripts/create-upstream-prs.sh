@@ -172,11 +172,13 @@ checkout_paths_from_source() {
 
 commit_if_changed() {
   local message="$1"
-  if git diff --quiet && git diff --cached --quiet; then
+  shift
+  local paths=("$@")
+  if git diff --quiet -- "${paths[@]}" && git diff --cached --quiet -- "${paths[@]}"; then
     echo "No changes to commit."
     return 1
   fi
-  run git add -A
+  run git add -- "${paths[@]}"
   run git commit -m "$message"
 }
 
@@ -246,7 +248,6 @@ open_pr() {
     --head "${FORK_OWNER}:${branch}" \
     --title "$title" \
     --body-file "$body_file" \
-    --maintainer-edit \
     $draft_arg
 
   rm -f "$body_file"
@@ -271,7 +272,7 @@ create_branch_from_paths() {
 
   checkout_paths_from_source "${paths[@]}"
 
-  if commit_if_changed "$commit_message"; then
+  if commit_if_changed "$commit_message" "${paths[@]}"; then
     push_branch "$branch"
     open_pr "$branch" "$pr_title" "$pr_summary" "$pr_validation"
   else
