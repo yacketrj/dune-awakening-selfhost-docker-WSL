@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const CHILD_PROCESS_TIMEOUT_MS = Number(process.env.SECURITY_AUTOMATION_TIMEOUT_MS || 120000);
+const REQUIRE_LOCAL_SCAN_RUNTIMES = process.env.SECURITY_REQUIRE_LOCAL_SCAN_RUNTIMES !== "false";
 
 const requiredFiles = [
   "docs/discord-control-bot/soc2-control-matrix.md",
@@ -65,12 +66,16 @@ for (const runtime of ["node", "npm"]) {
   }
 }
 
-for (const optionalRuntime of ["semgrep", "trivy"]) {
-  if (!commandExists(optionalRuntime)) {
-    console.error(`[soc2-readiness] Optional local scan runtime not found: ${optionalRuntime}`);
-    console.error(`[soc2-readiness] Run: bash scripts/ensure-security-runtimes.sh`);
-    failed = true;
+if (REQUIRE_LOCAL_SCAN_RUNTIMES) {
+  for (const optionalRuntime of ["semgrep", "trivy"]) {
+    if (!commandExists(optionalRuntime)) {
+      console.error(`[soc2-readiness] Optional local scan runtime not found: ${optionalRuntime}`);
+      console.error(`[soc2-readiness] Run: bash scripts/ensure-security-runtimes.sh`);
+      failed = true;
+    }
   }
+} else {
+  console.log("[soc2-readiness] Local scan runtime check skipped; CI relies on dedicated Semgrep and Trivy workflows.");
 }
 
 for (const file of requiredFiles) {
