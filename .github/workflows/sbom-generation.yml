@@ -1,0 +1,61 @@
+name: SBOM Generation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/package-lock.json"
+      - "scripts/generate-sbom.mjs"
+      - ".github/workflows/sbom-generation.yml"
+  push:
+    branches:
+      - main
+      - feature/discord-control-bot
+    paths:
+      - "**/package-lock.json"
+      - "scripts/generate-sbom.mjs"
+      - ".github/workflows/sbom-generation.yml"
+  schedule:
+    - cron: "27 11 * * 2"
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sbom:
+    name: Generate software bill of materials
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate SBOM
+        run: node scripts/generate-sbom.mjs
+
+      - name: Append SBOM summary
+        if: always()
+        run: |
+          if [ -f artifacts/security/sbom.md ]; then
+            cat artifacts/security/sbom.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload SBOM artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            artifacts/security/sbom.cyclonedx.json
+            artifacts/security/sbom.md
+          if-no-files-found: error
