@@ -21,6 +21,9 @@ The current implementation validates the protected Console adapter path and the 
 | Bot command smoke runner | Complete | `discord-bot/scripts/command-smoke.mjs` |
 | No-write bot capability model | Complete | `discord-bot/src/security/authorization.ts` |
 | Secret scanning | Complete | `discord-bot/scripts/check-secrets.mjs` |
+| Semgrep SAST workflow | Complete | `.github/workflows/semgrep-sast.yml` |
+| Trivy vulnerability workflow | Complete | `.github/workflows/trivy-vulnerability-scan.yml` |
+| CVSS vulnerability report generator | Complete | `scripts/generate-vulnerability-report.mjs` |
 | SOC 2 readiness matrix | Complete | `docs/discord-control-bot/soc2-control-matrix.md` |
 | Scheduled SOC 2 readiness check | Complete | `.github/workflows/soc2-readiness-check.yml` |
 
@@ -53,13 +56,19 @@ Latest local validation reported:
 - Bot scaffold validation: passing after narrowing validation to capability literals.
 - Live HTTP checks: status, readiness, services, and detailed status returned `200 OK` with matching role policy.
 
+New CI evidence added:
+
+- Semgrep CE SAST workflow on pull request, push, manual dispatch, and weekly schedule.
+- Trivy filesystem and Discord bot image scan workflow on pull request, push, manual dispatch, and weekly schedule.
+- CVSS-ranked vulnerability report with CVE/NVD URLs when CVE IDs are present.
+
 ## Roadmap
 
 ### P0 - Foundation and Governance
 
 Status: mostly complete.
 
-Completed items include the isolated bot workspace, security gates, redaction tests, authorization tests, protected adapter docs, SOC 2 readiness matrix, scheduled readiness workflow, and setup/admin/user documentation.
+Completed items include the isolated bot workspace, security gates, redaction tests, authorization tests, protected adapter docs, Semgrep workflow, Trivy workflow, vulnerability reporting, SOC 2 readiness matrix, scheduled readiness workflow, and setup/admin/user documentation.
 
 ### P1 - Read-Only Operational Visibility
 
@@ -93,6 +102,7 @@ Planned:
 - Public/admin channel mapping.
 - Emergency disable flag.
 - Evidence retention policy.
+- SBOM generation and image signing for release candidates.
 
 ### P3 - Future Review Gate
 
@@ -104,4 +114,4 @@ No write, destructive, credential, database mutation, addon mutation, player mut
 
 This project maintains SOC 2-aligned readiness evidence. It does not claim SOC 2 certification or produce a SOC 2 report. A formal SOC 2 report requires an independent CPA examination.
 
-The recurring readiness workflow checks documentation, safety markers, tests, secret scanning, and scaffold validation on a weekly cadence and on relevant repository changes.
+The recurring readiness workflow checks documentation, safety markers, tests, secret scanning, Semgrep/Trivy workflow presence, vulnerability report generation logic, and scaffold validation on a weekly cadence and on relevant repository changes.
