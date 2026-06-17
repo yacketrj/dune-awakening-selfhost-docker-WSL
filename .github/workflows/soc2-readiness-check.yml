@@ -12,6 +12,7 @@ on:
       - "console/api/src/integrations/discord/**"
       - "console/api/test/discord*.test.js"
       - "scripts/soc2-readiness-check.mjs"
+      - "scripts/generate-security-evidence-bundle.mjs"
       - ".github/workflows/soc2-readiness-check.yml"
   push:
     branches:
@@ -23,11 +24,13 @@ on:
       - "console/api/src/integrations/discord/**"
       - "console/api/test/discord*.test.js"
       - "scripts/soc2-readiness-check.mjs"
+      - "scripts/generate-security-evidence-bundle.mjs"
       - ".github/workflows/soc2-readiness-check.yml"
 
 permissions:
   contents: read
   security-events: read
+  actions: read
 
 defaults:
   run:
@@ -63,3 +66,26 @@ jobs:
           npm test
           npm run security:secrets
           npm run build
+
+      - name: Generate consolidated security evidence bundle
+        if: always()
+        run: node scripts/generate-security-evidence-bundle.mjs
+
+      - name: Append evidence bundle summary
+        if: always()
+        run: |
+          if [ -f artifacts/security/security-evidence-bundle.md ]; then
+            cat artifacts/security/security-evidence-bundle.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload security evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-evidence-bundle
+          path: |
+            artifacts/security/security-evidence-bundle.json
+            artifacts/security/security-evidence-bundle.md
+            artifacts/security/stride-report.json
+            artifacts/security/stride-report.md
+          if-no-files-found: error
