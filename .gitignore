@@ -14,6 +14,7 @@ runtime/postgres/
 runtime/director/
 runtime/server-gateway/
 runtime/fake-k8s-serviceaccount/
+console/api/runtime/
 
 # Security scan artifacts generated locally or in CI
 artifacts/security/*
