@@ -1,93 +1,107 @@
-# Dune Discord Control Bot - Feature Priority Plan
+# Dune Discord Companion Bot - Feature Priority Plan
 
 ## Product Goal
 
-Build a Discord-native operator interface that reaches functional parity with the official Dune Docker Console WebUI while preserving the WebUI safety model: authentication, authorization, confirmations, redaction, audit logging, backup-before-destructive-action behavior, and release-blocking security gates.
+Build an experimental Discord companion bot for Dune Docker Console that starts read-only and provides safe operational visibility for server operators.
 
-The Discord bot must be a client over a server-side Dune Console API adapter. It must not directly control Docker, Postgres, RabbitMQ, or host files except through narrowly scoped backend APIs.
+The initial bot is **not** a full WebUI replacement. It is a companion interface for status, readiness, services, population, logs, map state, and backup visibility. Dune Docker Console remains the authority for backend authorization, safety checks, redaction, audit logging, and execution.
+
+The bot must not mount the Docker socket, write directly to Postgres, store secrets in addon/static files, or execute destructive actions.
+
+## Initial Scope
+
+| Domain | Initial Commands / Functions | Risk |
+| --- | --- | --- |
+| Status | `/dune status`, `/dune health`, `/dune version` | Low |
+| Readiness | `/dune readiness` | Low |
+| Services | `/dune services`, `/dune service status` | Low/Medium |
+| Population | `/dune population`, `/dune players online` | Medium due player visibility |
+| Logs | `/dune logs service:<service>` with capped, redacted output | Medium due sensitive output risk |
+| Map State | `/dune map status`, `/dune sietches status`, `/dune deepdesert status` | Low/Medium |
+| Backups | `/dune backups list`, `/dune backups latest` | Medium due operational metadata |
+
+## Out of Scope for the Experimental Bot
+
+The following are explicitly out of scope until the read-only bot is stable, reviewed, and separately approved:
+
+1. Docker socket mounting.
+2. Direct Postgres writes.
+3. Direct Postgres access from the bot process.
+4. Backup create, restore, delete, or delete-all.
+5. Player grants, teleport, kick, refill, reset progression, or inventory mutation.
+6. Database write SQL.
+7. Broadcasts and shutdown broadcasts.
+8. Map, sietch, or deep desert mutation.
+9. Addon install, enable, disable, or remove.
+10. Credential, token, password, or secret-setting workflows.
+11. Any destructive action.
 
 ## Priority Model
 
 | Priority | Meaning |
 | --- | --- |
-| P0 | Foundational security and platform controls required before privileged bot work. |
-| P1 | Read-only WebUI parity features and low-risk operational visibility. |
-| P2 | Admin actions that change state but are reversible or low/moderate risk. |
-| P3 | High-risk destructive, credential, database write, backup restore/delete, and service lifecycle actions. |
-| P4 | Platform maturity, self-service install, first-class service addon support, and advanced governance. |
+| P0 | Foundational security, coding standards, SOC 2 readiness evidence, and protected Console API contract. |
+| P1 | Experimental read-only companion bot: status, readiness, services, population, logs, map state, backups. |
+| P2 | Operational hardening: pagination, redaction tuning, rate limits, audit review, role mapping UI, alerting. |
+| P3 | Separately approved non-destructive admin conveniences, if any, after a security review. |
+| P4 | Future platform evolution. Full WebUI parity remains a long-term option, not the current delivery target. |
 
 ## P0 - Security Foundation and Delivery Gates
 
-These must be implemented before connecting the bot to privileged WebUI actions.
+These must be implemented before connecting the bot to Discord or exposing adapter routes.
 
 1. Dedicated branch and isolated bot workspace.
 2. Security gates for SCA, SAST, DCA, DAST, secret scanning, and container hardening checks.
 3. Secure configuration contract for Discord bot token and Dune bot API token.
-4. Redaction library for tokens, passwords, connection strings, and sensitive headers.
+4. Redaction library for tokens, passwords, connection strings, host paths, and sensitive headers.
 5. Discord actor context model: guild ID, channel ID, user ID, username, roles, command, interaction ID.
 6. Role-to-capability authorization model.
-7. Confirmation model for destructive commands.
-8. Audit event schema for all Discord-originated actions.
-9. Rate-limit and idempotency design for slash commands, buttons, and modals.
-10. Architecture documentation that prohibits direct Docker socket and direct destructive DB access from the bot.
+7. Read-only capability enforcement for experimental routes.
+8. Audit event schema for all Discord-originated requests.
+9. Rate-limit and idempotency design for slash commands.
+10. Architecture documentation that prohibits Docker socket access and direct database writes from the bot.
 
-## P1 - Read-Only WebUI Parity
+## P1 - Experimental Read-Only Bot
 
-Initial bot functionality should be read-only unless a command is explicitly part of security validation.
-
-| Domain | Commands / Functions |
-| --- | --- |
-| Health | `/dune status`, `/dune health`, `/dune version` |
-| Server | `/dune server status`, `/dune server performance`, `/dune services` |
-| Players | `/dune players list`, `/dune players online`, `/dune players search`, `/dune player profile` |
-| Catalog | `/dune item search`, `/dune vehicle search`, `/dune skill-modules search` |
-| Backups | `/dune backup list`, `/dune backup latest`, `/dune backup auto status` |
-| Database | `/dune db status`, `/dune db schemas`, `/dune db tables`, `/dune db preview`, `/dune db query` for read-only SQL only |
-| Maps | `/dune maps status`, `/dune sietches list`, `/dune deepdesert status` |
-| Addons | `/dune addons community`, `/dune addons installed`, `/dune addon info` |
-| Settings | `/dune settings show` sanitized summary only |
-
-## P2 - Controlled Admin Actions
-
-These commands change state and require Discord Admin or Owner authorization, confirmation, audit logging, and rate limiting.
-
-| Domain | Commands / Functions | Minimum Role |
-| --- | --- | --- |
-| Broadcast | `/dune broadcast`, `/dune shutdown-broadcast` | Admin / Owner |
-| Backups | `/dune backup create` | Admin |
-| Players | `/dune player kick`, `/dune player teleport`, `/dune player refill-water` | Admin |
-| Player grants | `/dune player give-item`, `/dune player give-items`, `/dune player add-xp`, `/dune player set-skill-points` | Admin |
-| Maintenance | `/dune maintenance notice`, `/dune restart info` | Admin |
-
-## P3 - High-Risk WebUI Parity
-
-These must remain disabled until P0/P1/P2 are proven and reviewed.
+The first working bot release should expose only read-only commands.
 
 | Domain | Commands / Functions | Required Control |
 | --- | --- | --- |
-| Database writes | `/dune db execute` | Owner-only, typed confirmation, backup first, audit |
-| Backups | restore, delete, delete-all | Owner-only, typed confirmation, audit |
-| Player destructive | clean inventory, reset progression, kick all | Owner-only, typed confirmation, audit |
-| Maps/Sietches/Deep Desert | mutation workflows | Owner-only, typed confirmation, audit |
-| Addons | install, enable, disable, remove | Owner-only, permission preview, audit |
-| Settings/secrets | admin password, DB password, Funcom token | WebUI-first or ephemeral modal with strict redaction |
+| Health | `/dune status`, `/dune health`, `/dune version` | Public-safe sanitized output |
+| Readiness | `/dune readiness` | Public/admin response split |
+| Services | `/dune services`, `/dune service status` | Service allowlist, no raw Docker access |
+| Population | `/dune population`, `/dune players online` | Role-gated if player details are shown |
+| Logs | `/dune logs service:<service>` | Admin/moderator only, capped lines, redacted output |
+| Map State | `/dune map status`, `/dune sietches status`, `/dune deepdesert status` | Read-only only |
+| Backups | `/dune backups list`, `/dune backups latest` | Read-only metadata only, no restore/delete |
 
-## P4 - Platform Maturity
+## P2 - Operational Hardening
 
-1. WebUI management page for Discord role/channel mapping.
-2. Bot health and last-heartbeat dashboard.
-3. Per-command enable/disable toggles.
-4. Emergency kill switch for all Discord-originated write actions.
-5. Multi-admin approval for critical commands.
-6. Signed releases, SBOM publication, and image provenance.
-7. First-class service addon manifest support if upstream accepts service-type addons.
+1. Public/admin channel classification.
+2. Response pagination and message-size enforcement.
+3. Per-command rate limits.
+4. Audit review command or export.
+5. Bot heartbeat and health dashboard.
+6. Role/channel mapping management in WebUI.
+7. Alerting for status changes, backup failures, and readiness degradation.
+8. Emergency disable flag for all Discord-originated calls.
+
+## P3 - Separately Approved Non-Destructive Enhancements
+
+These require explicit approval and updated threat modeling:
+
+1. Scheduled status posts.
+2. Backup-create request that only queues an existing safe backend workflow.
+3. Maintenance notice posts to Discord only, not in-game broadcast.
+4. Owner-only diagnostic bundles with strict redaction.
 
 ## Non-Negotiable Security Requirements
 
 1. The bot container must not mount `/var/run/docker.sock`.
-2. The bot must not directly execute shell commands for admin actions.
-3. The bot must not directly perform destructive database writes.
-4. Backend authorization must be enforced server-side, not only in the Discord client.
-5. Every destructive command must require confirmation and audit logging.
-6. No secrets may be stored in static addon files, browser-delivered files, source control, logs, or container layers.
-7. Public Discord responses must not expose internal IPs, SSH targets, tokens, database URLs, or raw environment data.
+2. The bot must not execute destructive actions.
+3. The bot must not directly write to Postgres.
+4. The bot must not store secrets in addon files, browser-delivered files, source control, logs, or container layers.
+5. Backend authorization must be enforced server-side, not only in the Discord client.
+6. The Console API must remain responsible for final authorization and safety checks.
+7. Public Discord responses must not expose internal IPs, SSH targets, tokens, database URLs, raw `.env`, stack traces, or host paths.
+8. Logs must be capped, redacted, and role-gated.
