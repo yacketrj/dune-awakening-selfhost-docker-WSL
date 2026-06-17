@@ -1,0 +1,81 @@
+name: STRIDE threat remediation
+description: Track open medium, high, or critical STRIDE threat-model findings.
+title: "threat: "
+labels: ["type:threat", "stride", "security", "soc2", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for STRIDE threat-model findings. Do not include secrets, private topology, exploit details, or sensitive runtime data.
+  - type: input
+    id: finding_id
+    attributes:
+      label: STRIDE finding ID
+      placeholder: STRIDE-S-001
+    validations:
+      required: true
+  - type: dropdown
+    id: stride_category
+    attributes:
+      label: STRIDE category
+      options:
+        - Spoofing
+        - Tampering
+        - Repudiation
+        - Information Disclosure
+        - Denial of Service
+        - Elevation of Privilege
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - critical
+        - high
+        - medium
+        - low
+    validations:
+      required: true
+  - type: input
+    id: asset
+    attributes:
+      label: Affected asset
+      placeholder: console-adapter / discord-bot / bot-api-token
+    validations:
+      required: true
+  - type: input
+    id: trust_boundary
+    attributes:
+      label: Trust boundary
+      placeholder: tb-bot-console
+    validations:
+      required: true
+  - type: textarea
+    id: threat
+    attributes:
+      label: Threat description
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link STRIDE report, workflow run, commit, PR, test, or documentation evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Mitigation / acceptance plan
+      description: Planned control, owner, target date, or security exception link.
+    validations:
+      required: true
+  - type: textarea
+    id: closure
+    attributes:
+      label: Closure criteria
+      description: What evidence proves this threat is mitigated, accepted, or not applicable?
+    validations:
+      required: true
