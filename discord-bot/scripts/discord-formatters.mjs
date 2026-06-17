@@ -102,25 +102,41 @@ function formatStatusCard(title, payload, _options = {}) {
   const services = serviceRows(data);
   const listeners = listenerRows(data, services);
   const checks = checkRows(data);
-  const issues = issueLines(data, overall);
+  const issues = issueLines(data, overall).filter((issue) => !/^Overall status is /i.test(issue) || issueLines(data, overall).length === 1);
+  const serviceSummary = services.length ? serviceHealthSummary(services) : null;
 
   return {
     content: "",
     embeds: [baseEmbed({
       title: data.title || title,
-      description: `Overall\n**${escapeMarkdown(statusText(overall))}**`,
+      description: cardDescription(overall, issues, services),
       color: colorForStatus(overall),
       fields: compactFields([
         field("Overall", statusText(overall), true),
         optionalField("Region", data.region || data.shardRegion, true),
         optionalField("Population", data.population ?? data.playerCount, true),
-        field("Issues", bulletList(issues, "No issues reported."), false),
+        serviceSummary ? field("Summary", serviceSummary, false) : null,
+        issues.length ? field("Issues", bulletList(issues, "No issues reported."), false) : null,
         services.length ? field("Services", namedStatusList(services), false) : null,
         listeners.length ? field("Listeners", namedStatusList(listeners), false) : null,
         checks.length ? field("Checks", namedStatusList(checks), false) : null
       ])
     })]
   };
+}
+
+function cardDescription(overall, issues, services) {
+  if (issues.length) return `${issues.length} issue${issues.length === 1 ? "" : "s"} detected.`;
+  if (services.length && services.every((service) => /^(UP|READY|OK|ONLINE|HEALTHY)$/i.test(service.status))) {
+    return "All monitored services are online.";
+  }
+  if (/^(OK|READY|UP|ONLINE|HEALTHY)$/i.test(statusText(overall))) return "No issues reported.";
+  return "Status requires review.";
+}
+
+function serviceHealthSummary(services) {
+  const up = services.filter((service) => /^(UP|READY|OK|ONLINE|HEALTHY)$/i.test(service.status)).length;
+  return `${up} / ${services.length} services reporting UP`;
 }
 
 function formatErrorResponse(title, payload) {

@@ -64,7 +64,7 @@ test("formatter derives missing client and S2S issues from structured status", (
 
   const issues = response.embeds[0].fields.find((field) => field.name === "Issues").value;
   const services = response.embeds[0].fields.find((field) => field.name === "Services").value;
-  assert.match(issues, /Overall status is ISSUE/);
+  assert.doesNotMatch(issues, /Overall status is ISSUE/);
   assert.match(issues, /Overmap Clients is MISSING/);
   assert.match(issues, /Survival 1 S2S is MISSING/);
   assert.match(services, /Overmap/);
