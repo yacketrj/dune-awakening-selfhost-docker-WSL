@@ -24,6 +24,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/bug-report.yml",
   ".github/ISSUE_TEMPLATE/soc2-evidence-gap.yml",
   ".github/ISSUE_TEMPLATE/vulnerability-remediation.yml",
+  ".github/ISSUE_TEMPLATE/threat-remediation.yml",
   ".github/ISSUE_TEMPLATE/security-exception.yml",
   ".github/ISSUE_TEMPLATE/access-review.yml",
   ".github/ISSUE_TEMPLATE/feature-request.yml",
@@ -49,7 +50,7 @@ const requiredDocTerms = new Map([
   ["docs/discord-control-bot/user-guide.md", ["commands", "public status", "detailed status"]],
   ["docs/discord-control-bot/setup-guide.md", ["dune_bot_api_token_file", "start:discord-adapter", "smoke test"]],
   ["docs/discord-control-bot/security-gates.md", ["semgrep", "trivy", "vulnerability report", "cvss", "stride"]],
-  ["docs/discord-control-bot/issue-tracking-policy.md", ["issue tracking", "soc 2 readiness", "vulnerability remediation", "access review", "security exception"]]
+  ["docs/discord-control-bot/issue-tracking-policy.md", ["issue tracking", "soc 2 readiness", "vulnerability remediation", "stride threat remediation", "access review", "security exception"]]
 ]);
 
 let failed = false;
