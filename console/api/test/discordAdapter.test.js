@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discordAdapterErrorResponse, discordAdapterHealth, discordAdapterStatus } from "../src/integrations/discord/adapter.js";
+import { DISCORD_ADAPTER_ROUTES, discordAdapterErrorResponse, discordAdapterHealth, discordAdapterStatus, discordWritesEnabled } from "../src/integrations/discord/adapter.js";
 
 const OLD_ENV = { ...process.env };
 
@@ -35,11 +35,35 @@ test.after(() => {
   process.env = OLD_ENV;
 });
 
-test("reports adapter health with writes disabled by default", async () => {
+test("reports adapter health as experimental read-only", async () => {
   const result = await discordAdapterHealth({});
   assert.equal(result.ok, true);
   assert.equal(result.enabled, true);
+  assert.equal(result.experimental, true);
+  assert.equal(result.readOnly, true);
   assert.equal(result.writesEnabled, false);
+});
+
+test("forces writes disabled even if environment attempts to enable them", () => {
+  process.env.DUNE_DISCORD_WRITES_ENABLED = "true";
+  assert.equal(discordWritesEnabled({ discordWritesEnabled: true }), false);
+});
+
+test("exposes only experimental read-only route names", () => {
+  const routes = Object.values(DISCORD_ADAPTER_ROUTES);
+  assert.deepEqual(routes.sort(), [
+    "/api/integrations/discord/backups/list",
+    "/api/integrations/discord/health",
+    "/api/integrations/discord/logs",
+    "/api/integrations/discord/map-state",
+    "/api/integrations/discord/population",
+    "/api/integrations/discord/readiness",
+    "/api/integrations/discord/services",
+    "/api/integrations/discord/status"
+  ].sort());
+  for (const route of routes) {
+    assert.doesNotMatch(route, /write|execute|delete|restore|create|broadcast|restart|kick|grant|teleport|reset|admin/i);
+  }
 });
 
 test("returns sanitized public status", async () => {
