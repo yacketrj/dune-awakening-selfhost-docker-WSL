@@ -1,4 +1,4 @@
-import { redactValue } from "../../redact.js";
+import { redact, redactValue } from "../../redact.js";
 
 const INTERNAL_IP_PATTERN = /\b(?:10|127|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)\.\d{1,3}\.\d{1,3}\b/g;
 const HOST_PORT_PATTERN = /\b(?:10|127|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)\.\d{1,3}\.\d{1,3}:\d+\b/g;
@@ -36,7 +36,7 @@ export function sanitizeDiscordValue(value) {
       .map(([key, item]) => [key, sanitizeDiscordValue(item)]));
   }
   if (typeof value !== "string") return value;
-  return value
+  return redact(value)
     .replace(HOST_PORT_PATTERN, "<internal-address>")
     .replace(INTERNAL_IP_PATTERN, "<internal-address>")
     .replace(ENV_PATH_PATTERN, " <internal-path>")
