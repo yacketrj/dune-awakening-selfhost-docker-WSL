@@ -1,7 +1,8 @@
 import { redact, redactValue } from "../../redact.js";
 
-const INTERNAL_IP_PATTERN = /\b(?:10|127|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)\.\d{1,3}\.\d{1,3}\b/g;
-const HOST_PORT_PATTERN = /\b(?:10|127|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)\.\d{1,3}\.\d{1,3}:\d+\b/g;
+const INTERNAL_IPV4_PATTERN = /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g;
+const INTERNAL_HOST_PORT_PATTERN = /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}):\d+\b/g;
+const CONNECTION_STRING_PATTERN = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb|redis|amqp|amqps):\/\/[^\s"']+/gi;
 const ENV_PATH_PATTERN = /(?:^|\s)(?:\/repo|\/app|\/run\/secrets|runtime\/secrets|\.env)(?:[^\s,"']*)?/g;
 
 const PUBLIC_BLOCKED_KEYS = new Set([
@@ -37,8 +38,9 @@ export function sanitizeDiscordValue(value) {
   }
   if (typeof value !== "string") return value;
   return redact(value)
-    .replace(HOST_PORT_PATTERN, "<internal-address>")
-    .replace(INTERNAL_IP_PATTERN, "<internal-address>")
+    .replace(CONNECTION_STRING_PATTERN, "<redacted-connection-string>")
+    .replace(INTERNAL_HOST_PORT_PATTERN, "<internal-address>")
+    .replace(INTERNAL_IPV4_PATTERN, "<internal-address>")
     .replace(ENV_PATH_PATTERN, " <internal-path>")
     .trim();
 }
