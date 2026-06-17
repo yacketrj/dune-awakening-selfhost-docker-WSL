@@ -24,11 +24,19 @@ if (options.out) {
 
 function usage() {
   console.error(`Usage:
-  node scripts/export-github-actions-findings.mjs <actions-url-or-run-id> [more URLs...] [--repo owner/repo] [--out file] [--limit 10] [--include-logs]
+  node scripts/export-github-actions-findings.mjs <url|run-id|pr-number> [more sources...] [--repo owner/repo] [--out file] [--limit 10] [--include-logs]
+
+Supported sources:
+  - Pull request URL: https://github.com/OWNER/REPO/pull/3
+  - Pull request number with --repo: pr:3 or #3
+  - Workflow URL: https://github.com/OWNER/REPO/actions/workflows/soc2-readiness-check.yml
+  - Run URL: https://github.com/OWNER/REPO/actions/runs/123
+  - Job URL: https://github.com/OWNER/REPO/actions/runs/123/job/456
+  - Run ID with --repo: 123
 
 Examples:
-  node scripts/export-github-actions-findings.mjs https://github.com/OWNER/REPO/actions/runs/123 --out artifacts/security/actions-findings.json
-  node scripts/export-github-actions-findings.mjs https://github.com/OWNER/REPO/actions/runs/123/job/456 --include-logs
+  node scripts/export-github-actions-findings.mjs https://github.com/OWNER/REPO/pull/3 --out artifacts/security/actions-findings.json
+  node scripts/export-github-actions-findings.mjs pr:3 --repo OWNER/REPO --include-logs --out artifacts/security/pr-3-actions-findings.json
   node scripts/export-github-actions-findings.mjs https://github.com/OWNER/REPO/actions/workflows/soc2-readiness-check.yml --limit 5
 
 Authentication:
@@ -68,7 +76,13 @@ async function exportFindings(opts) {
       const parsed = parseSource(source, opts.repo);
       if (!parsed.repo) throw new Error(`Repository could not be resolved for source: ${source}`);
 
-      if (parsed.type === "workflow") {
+      if (parsed.type === "pr") {
+        const pr = await getPullRequest(parsed.repo, parsed.prNumber);
+        const prRuns = await listRunsForHeadSha(parsed.repo, pr.head?.sha, opts.limit);
+        for (const run of prRuns.workflow_runs || []) {
+          await addRun(parsed.repo, run.id, null, opts, runsById, findings);
+        }
+      } else if (parsed.type === "workflow") {
         const workflowRuns = await listWorkflowRuns(parsed.repo, parsed.workflow, opts.limit);
         for (const run of workflowRuns.workflow_runs || []) {
           await addRun(parsed.repo, run.id, null, opts, runsById, findings);
@@ -180,6 +194,8 @@ async function addRun(repo, runId, onlyJobId, opts, runsById, findings) {
 }
 
 function parseSource(source, fallbackRepo) {
+  if (/^#\d+$/.test(source)) return { type: "pr", repo: fallbackRepo, prNumber: Number(source.slice(1)) };
+  if (/^pr:\d+$/i.test(source)) return { type: "pr", repo: fallbackRepo, prNumber: Number(source.split(":")[1]) };
   if (/^\d+$/.test(source)) return { type: "run", repo: fallbackRepo, runId: Number(source) };
 
   const url = new URL(source);
@@ -187,9 +203,11 @@ function parseSource(source, fallbackRepo) {
   const owner = parts[0];
   const name = parts[1];
   const repo = owner && name ? `${owner}/${name}` : fallbackRepo;
+  const pullIndex = parts.indexOf("pull");
   const actionsIndex = parts.indexOf("actions");
 
-  if (actionsIndex === -1) throw new Error(`Not a GitHub Actions URL: ${source}`);
+  if (pullIndex !== -1) return { type: "pr", repo, prNumber: Number(parts[pullIndex + 1]) };
+  if (actionsIndex === -1) throw new Error(`Not a GitHub Actions or pull request URL: ${source}`);
 
   const kind = parts[actionsIndex + 1];
   if (kind === "runs") {
@@ -206,6 +224,10 @@ function parseSource(source, fallbackRepo) {
   throw new Error(`Unsupported GitHub Actions URL: ${source}`);
 }
 
+async function getPullRequest(repo, prNumber) {
+  return apiGet(`/repos/${repo}/pulls/${prNumber}`);
+}
+
 async function getRun(repo, runId) {
   return apiGet(`/repos/${repo}/actions/runs/${runId}`);
 }
@@ -220,6 +242,11 @@ async function listRunArtifacts(repo, runId) {
 
 async function listWorkflowRuns(repo, workflow, limit) {
   return apiGet(`/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs?per_page=${limit}`);
+}
+
+async function listRunsForHeadSha(repo, headSha, limit) {
+  if (!headSha) throw new Error("Pull request head SHA was not returned by GitHub.");
+  return apiGet(`/repos/${repo}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=${limit}`);
 }
 
 async function fetchLogExcerpt(repo, jobId) {
