@@ -2,47 +2,32 @@ export const DISCORD_ROLE_TIERS = ["public", "observer", "moderator", "admin", "
 
 export const DISCORD_CAPABILITIES = Object.freeze({
   STATUS_READ: "status:read",
-  PLAYERS_READ: "players:read",
+  READINESS_READ: "readiness:read",
+  SERVICES_READ: "services:read",
+  POPULATION_READ: "population:read",
   LOGS_READ: "logs:read",
-  BACKUPS_READ: "backups:read",
-  BACKUPS_WRITE: "backups:write",
-  BACKUPS_DESTRUCTIVE: "backups:destructive",
-  DATABASE_READ: "database:read",
-  DATABASE_WRITE: "database:write",
-  BROADCAST_SEND: "broadcast:send",
-  PLAYERS_ADMIN: "players:admin",
-  PLAYERS_DESTRUCTIVE: "players:destructive",
   MAPS_READ: "maps:read",
-  MAPS_WRITE: "maps:write",
-  ADDONS_READ: "addons:read",
-  ADDONS_ADMIN: "addons:admin",
-  SETTINGS_READ: "settings:read",
-  SETTINGS_ADMIN: "settings:admin"
+  BACKUPS_READ: "backups:read"
 });
+
+export const EXPERIMENTAL_READ_ONLY_CAPABILITIES = Object.freeze(new Set(Object.values(DISCORD_CAPABILITIES)));
 
 const CAPABILITY_BY_TIER = Object.freeze({
   public: new Set([DISCORD_CAPABILITIES.STATUS_READ]),
-  observer: new Set([DISCORD_CAPABILITIES.STATUS_READ]),
+  observer: new Set([
+    DISCORD_CAPABILITIES.STATUS_READ,
+    DISCORD_CAPABILITIES.READINESS_READ,
+    DISCORD_CAPABILITIES.SERVICES_READ
+  ]),
   moderator: new Set([
     DISCORD_CAPABILITIES.STATUS_READ,
-    DISCORD_CAPABILITIES.PLAYERS_READ,
-    DISCORD_CAPABILITIES.BACKUPS_READ,
+    DISCORD_CAPABILITIES.READINESS_READ,
+    DISCORD_CAPABILITIES.SERVICES_READ,
+    DISCORD_CAPABILITIES.POPULATION_READ,
     DISCORD_CAPABILITIES.MAPS_READ,
-    DISCORD_CAPABILITIES.ADDONS_READ
+    DISCORD_CAPABILITIES.BACKUPS_READ
   ]),
-  admin: new Set([
-    DISCORD_CAPABILITIES.STATUS_READ,
-    DISCORD_CAPABILITIES.PLAYERS_READ,
-    DISCORD_CAPABILITIES.LOGS_READ,
-    DISCORD_CAPABILITIES.BACKUPS_READ,
-    DISCORD_CAPABILITIES.BACKUPS_WRITE,
-    DISCORD_CAPABILITIES.DATABASE_READ,
-    DISCORD_CAPABILITIES.BROADCAST_SEND,
-    DISCORD_CAPABILITIES.PLAYERS_ADMIN,
-    DISCORD_CAPABILITIES.MAPS_READ,
-    DISCORD_CAPABILITIES.ADDONS_READ,
-    DISCORD_CAPABILITIES.SETTINGS_READ
-  ]),
+  admin: new Set(Object.values(DISCORD_CAPABILITIES)),
   owner: new Set(Object.values(DISCORD_CAPABILITIES))
 });
 
@@ -86,8 +71,16 @@ export function discordActorCan(actor, mapping, capability) {
 }
 
 export function requireDiscordCapability(actor, mapping, capability) {
+  requireExperimentalReadOnlyCapability(capability);
   if (!discordActorCan(actor, mapping, capability)) {
     throw policyError("not_authorized", `Discord actor is not authorized for ${capability}.`, 403);
+  }
+}
+
+export function requireExperimentalReadOnlyCapability(capability) {
+  const normalizedCapability = requiredString(capability, "capability");
+  if (!EXPERIMENTAL_READ_ONLY_CAPABILITIES.has(normalizedCapability)) {
+    throw policyError("not_read_only", `Capability is not allowed in experimental read-only mode: ${normalizedCapability}`, 403);
   }
 }
 
