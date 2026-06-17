@@ -286,7 +286,7 @@ function duneCommandDefinition() {
 
 function formatJsonBlock(title, value) {
   const body = JSON.stringify(redact(value), null, 2).slice(0, 1800);
-  return `**${title}**\n~~~json\n${body}\n~~~`;
+  return `**${title}**\n` + "```json\n" + body + "\n```";
 }
 
 function redact(value) {
