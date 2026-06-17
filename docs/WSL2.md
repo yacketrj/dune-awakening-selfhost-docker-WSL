@@ -115,6 +115,8 @@ If AVX/AVX2 is missing, check BIOS virtualization settings, CPU support, Windows
 
 ## Recommended local `.env`
 
+Keep `.env.example` general for all install targets. For WSL local testing, make the Admin UI localhost-only in the generated or local `.env` instead of changing the repository-wide sample default.
+
 For native Docker Engine inside WSL:
 
 ```env
