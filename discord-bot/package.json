@@ -10,7 +10,7 @@
   "scripts": {
     "test": "node --test",
     "security:secrets": "node scripts/check-secrets.mjs",
-    "start": "node dist/index.js",
+    "start": "node scripts/discord-runtime.mjs",
     "build": "node scripts/validate-scaffold.mjs",
     "smoke:health": "node scripts/command-smoke.mjs health public",
     "smoke:status": "node scripts/command-smoke.mjs status public",
