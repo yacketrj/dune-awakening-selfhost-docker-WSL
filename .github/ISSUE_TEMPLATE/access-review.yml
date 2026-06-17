@@ -1,0 +1,62 @@
+name: Access review
+description: Track a recurring Discord role/API access review for SOC 2 readiness.
+title: "access-review: "
+labels: ["type:access-review", "soc2", "recurring"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this monthly and before release candidates to document Discord role mappings and adapter access review evidence.
+  - type: input
+    id: review_period
+    attributes:
+      label: Review period
+      placeholder: YYYY-MM / release candidate name
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Roles, tokens, channels, environments, and adapter routes reviewed.
+    validations:
+      required: true
+  - type: textarea
+    id: role_policy
+    attributes:
+      label: Role-policy health output
+      description: Paste sanitized health rolePolicy booleans only. Do not paste real role IDs if the issue is public.
+      placeholder: |
+        observerConfigured: true
+        moderatorConfigured: false
+        adminConfigured: true
+        ownerConfigured: true
+    validations:
+      required: true
+  - type: textarea
+    id: findings
+    attributes:
+      label: Findings
+      description: Stale roles, unexpected access, missing mapping, or no findings.
+    validations:
+      required: true
+  - type: textarea
+    id: actions
+    attributes:
+      label: Follow-up actions
+      description: Link remediation issues where applicable.
+    validations:
+      required: false
+  - type: input
+    id: reviewer
+    attributes:
+      label: Reviewer
+    validations:
+      required: true
+  - type: input
+    id: completed_on
+    attributes:
+      label: Completed on
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
