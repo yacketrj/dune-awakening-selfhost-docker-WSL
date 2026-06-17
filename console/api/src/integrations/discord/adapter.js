@@ -5,15 +5,22 @@ import { discordSafeError, sanitizeDiscordPublicStatus } from "./sanitize.js";
 
 export const DISCORD_ADAPTER_ROUTES = Object.freeze({
   HEALTH: "/api/integrations/discord/health",
-  STATUS: "/api/integrations/discord/status"
+  STATUS: "/api/integrations/discord/status",
+  READINESS: "/api/integrations/discord/readiness",
+  SERVICES: "/api/integrations/discord/services",
+  POPULATION: "/api/integrations/discord/population",
+  LOGS: "/api/integrations/discord/logs",
+  MAP_STATE: "/api/integrations/discord/map-state",
+  BACKUPS_LIST: "/api/integrations/discord/backups/list"
 });
 
 export function discordAdapterEnabled(config) {
   return process.env.DUNE_DISCORD_ADAPTER_ENABLED === "true" || config?.discordAdapterEnabled === true;
 }
 
-export function discordWritesEnabled(config) {
-  return process.env.DUNE_DISCORD_WRITES_ENABLED === "true" || config?.discordWritesEnabled === true;
+export function discordWritesEnabled(_config) {
+  // Experimental companion bot is intentionally read-only.
+  return false;
 }
 
 export function discordRoleMappingFromEnv(env = process.env) {
@@ -30,7 +37,10 @@ export async function discordAdapterHealth(config) {
     ok: true,
     service: "dune-console-discord-adapter",
     enabled: discordAdapterEnabled(config),
-    writesEnabled: discordWritesEnabled(config)
+    experimental: true,
+    readOnly: true,
+    writesEnabled: false,
+    routes: Object.values(DISCORD_ADAPTER_ROUTES)
   };
 }
 
@@ -50,6 +60,7 @@ export async function discordAdapterStatus({ config, actorPayload, diagnostic = 
       action: "discord.status",
       capability: diagnostic ? DISCORD_CAPABILITIES.LOGS_READ : DISCORD_CAPABILITIES.STATUS_READ,
       risk: diagnostic ? "medium" : "low",
+      targetType: "server",
       result: "success"
     }));
     return { ok: true, result };
