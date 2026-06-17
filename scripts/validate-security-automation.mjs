@@ -31,7 +31,16 @@ try {
   assertIncludes(dryRun.stdout, "vuln: CRITICAL CVE-2099-0001 in critical-package");
   assertIncludes(dryRun.stdout, "vuln: HIGH CVE-2099-0002 in high-package");
   assertIncludes(dryRun.stdout, "vuln: MEDIUM CVE-2099-0003 in medium-package");
+  assertIncludes(dryRun.stdout, "Would check previously auto-tracked issues and close resolved ones.");
   assertNotIncludes(dryRun.stdout, "low-package");
+
+  const syncScript = run("node", ["-e", "console.log(require('fs').readFileSync('scripts/sync-vulnerability-issues.mjs','utf8'))"], {
+    label: "read vulnerability issue sync script"
+  }).stdout;
+  assertIncludes(syncScript, "status:active");
+  assertIncludes(syncScript, "status:resolved");
+  assertIncludes(syncScript, "closeResolvedAutoTrackedIssues");
+  assertIncludes(syncScript, "state_reason");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }
