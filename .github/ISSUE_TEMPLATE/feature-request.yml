@@ -1,0 +1,46 @@
+name: Feature request
+description: Track proposed enhancements with security impact and read-only scope review.
+title: "feature: "
+labels: ["type:feature", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Experimental Discord companion scope is read-only. Any write, destructive, database, player, map, addon, credential, or Docker/service lifecycle behavior requires separate approval and threat modeling.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / need
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope classification
+      options:
+        - read-only
+        - documentation
+        - security/evidence
+        - operational hardening
+        - potential future write behavior - requires separate review
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact
+      description: Data exposure, authorization, audit, redaction, and abuse considerations.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
