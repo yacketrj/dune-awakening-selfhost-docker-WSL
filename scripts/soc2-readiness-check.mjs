@@ -13,7 +13,8 @@ const requiredFiles = [
   "discord-bot/README.md",
   "discord-bot/src/security/authorization.ts",
   "console/api/src/integrations/discord/adapter.js",
-  ".github/workflows/discord-bot-security-gates.yml"
+  ".github/workflows/discord-bot-security-gates.yml",
+  ".github/workflows/soc2-readiness-check.yml"
 ];
 
 const forbiddenBotCapabilityPatterns = [
@@ -24,11 +25,11 @@ const forbiddenBotCapabilityPatterns = [
 ];
 
 const requiredDocTerms = new Map([
-  ["docs/discord-control-bot/soc2-control-matrix.md", ["SOC 2 readiness", "Evidence Register", "Open SOC 2 Gaps"]],
-  ["docs/discord-control-bot/project-status.md", ["Current Status", "Roadmap", "Read-only"]],
-  ["docs/discord-control-bot/admin-guide.md", ["Role Mapping", "No Write Actions", "Detailed Status"]],
-  ["docs/discord-control-bot/user-guide.md", ["Commands", "Public Status", "Detailed Status"]],
-  ["docs/discord-control-bot/setup-guide.md", ["DUNE_BOT_API_TOKEN_FILE", "start:discord-adapter", "Smoke Test"]]
+  ["docs/discord-control-bot/soc2-control-matrix.md", ["soc 2 readiness", "evidence register", "open soc 2 gaps"]],
+  ["docs/discord-control-bot/project-status.md", ["current status", "roadmap", "read-only"]],
+  ["docs/discord-control-bot/admin-guide.md", ["role mapping", "no write actions", "detailed status"]],
+  ["docs/discord-control-bot/user-guide.md", ["commands", "public status", "detailed status"]],
+  ["docs/discord-control-bot/setup-guide.md", ["dune_bot_api_token_file", "start:discord-adapter", "smoke test"]]
 ]);
 
 let failed = false;
@@ -42,7 +43,7 @@ for (const file of requiredFiles) {
 
 for (const [file, terms] of requiredDocTerms.entries()) {
   if (!existsSync(file)) continue;
-  const text = readFileSync(file, "utf8");
+  const text = readFileSync(file, "utf8").toLowerCase();
   for (const term of terms) {
     if (!text.includes(term)) {
       console.error(`[soc2-readiness] ${file} missing required term: ${term}`);
