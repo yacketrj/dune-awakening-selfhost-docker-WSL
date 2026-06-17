@@ -12,6 +12,8 @@ on:
       - "**/*.yml"
       - "**/*.yaml"
       - ".github/workflows/semgrep-sast.yml"
+      - "scripts/generate-vulnerability-report.mjs"
+      - "scripts/sync-vulnerability-issues.mjs"
   push:
     branches:
       - main
@@ -25,6 +27,8 @@ on:
       - "**/*.yml"
       - "**/*.yaml"
       - ".github/workflows/semgrep-sast.yml"
+      - "scripts/generate-vulnerability-report.mjs"
+      - "scripts/sync-vulnerability-issues.mjs"
   schedule:
     - cron: "17 10 * * 2"
 
@@ -32,6 +36,7 @@ permissions:
   contents: read
   security-events: write
   actions: read
+  issues: write
 
 defaults:
   run:
@@ -55,6 +60,23 @@ jobs:
       - name: Run Semgrep JSON scan
         run: semgrep scan --config auto --json --output artifacts/security/semgrep.json .
 
+      - name: Generate Semgrep vulnerability report
+        if: always()
+        run: node scripts/generate-vulnerability-report.mjs artifacts/security/semgrep.json
+
+      - name: Track Semgrep CRITICAL/HIGH/MEDIUM equivalent findings as GitHub issues
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/sync-vulnerability-issues.mjs artifacts/security/vulnerability-report.json --no-close-resolved
+
+      - name: Preview Semgrep issue sync for pull requests
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/sync-vulnerability-issues.mjs artifacts/security/vulnerability-report.json --dry-run --no-close-resolved
+
       - name: Run Semgrep SARIF scan
         if: always()
         run: semgrep scan --config auto --sarif --output artifacts/security/semgrep.sarif .
@@ -74,4 +96,6 @@ jobs:
           path: |
             artifacts/security/semgrep.json
             artifacts/security/semgrep.sarif
+            artifacts/security/vulnerability-report.json
+            artifacts/security/vulnerability-report.md
           if-no-files-found: warn
