@@ -1,0 +1,18 @@
+{
+  "name": "dune-discord-control-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord-native operator interface for Dune Docker Console with security gates first.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "security:secrets": "node scripts/check-secrets.mjs",
+    "start": "node dist/index.js",
+    "build": "node scripts/validate-scaffold.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
