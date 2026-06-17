@@ -1,0 +1,65 @@
+name: SOC 2 Readiness Check
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly Monday 09:00 UTC evidence/readiness check.
+    - cron: "0 9 * * 1"
+  pull_request:
+    paths:
+      - "docs/discord-control-bot/**"
+      - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
+      - "scripts/soc2-readiness-check.mjs"
+      - ".github/workflows/soc2-readiness-check.yml"
+  push:
+    branches:
+      - main
+      - feature/discord-control-bot
+    paths:
+      - "docs/discord-control-bot/**"
+      - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
+      - "scripts/soc2-readiness-check.mjs"
+      - ".github/workflows/soc2-readiness-check.yml"
+
+permissions:
+  contents: read
+  security-events: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  soc2-readiness:
+    name: SOC 2 readiness evidence gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run SOC 2 readiness evidence check
+        run: node scripts/soc2-readiness-check.mjs
+
+      - name: Run Console Discord adapter tests
+        working-directory: console/api
+        run: |
+          npm ci --ignore-scripts
+          node --test test/discord*.test.js
+
+      - name: Run bot tests and evidence gates
+        working-directory: discord-bot
+        run: |
+          npm ci --ignore-scripts
+          npm test
+          npm run security:secrets
+          npm run build
