@@ -43,6 +43,15 @@ export function discordRoleMappingFromEnv(env = process.env) {
   };
 }
 
+export function discordRolePolicyHealth(mapping = discordRoleMappingFromEnv()) {
+  return {
+    observerConfigured: mapping.observerRoleIds.length > 0,
+    moderatorConfigured: mapping.moderatorRoleIds.length > 0,
+    adminConfigured: mapping.adminRoleIds.length > 0,
+    ownerConfigured: mapping.ownerRoleIds.length > 0
+  };
+}
+
 export async function discordAdapterHealth(config) {
   return {
     ok: true,
@@ -53,7 +62,8 @@ export async function discordAdapterHealth(config) {
     writesEnabled: false,
     routes: DISCORD_LIVE_ADAPTER_ROUTES,
     liveRoutes: DISCORD_LIVE_ADAPTER_ROUTES,
-    plannedRoutes: DISCORD_PLANNED_ADAPTER_ROUTES
+    plannedRoutes: DISCORD_PLANNED_ADAPTER_ROUTES,
+    rolePolicy: discordRolePolicyHealth()
   };
 }
 
