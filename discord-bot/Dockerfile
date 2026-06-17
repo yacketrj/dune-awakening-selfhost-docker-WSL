@@ -1,11 +1,14 @@
-FROM node:22-alpine3.21 AS runtime
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+RUN apk upgrade --no-cache \
+  && npm ci --omit=dev --ignore-scripts \
+  && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /root/.npm
 
 COPY src ./src
 COPY scripts ./scripts
