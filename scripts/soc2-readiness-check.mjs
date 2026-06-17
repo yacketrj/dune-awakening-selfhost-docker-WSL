@@ -27,6 +27,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/access-review.yml",
   ".github/ISSUE_TEMPLATE/feature-request.yml",
   "scripts/generate-vulnerability-report.mjs",
+  "scripts/sync-vulnerability-issues.mjs",
   "scripts/ensure-security-runtimes.sh"
 ];
 
@@ -118,12 +119,22 @@ if (existsSync("scripts/generate-vulnerability-report.mjs")) {
   }
 }
 
+if (existsSync("scripts/sync-vulnerability-issues.mjs")) {
+  const syncer = readFileSync("scripts/sync-vulnerability-issues.mjs", "utf8");
+  for (const required of ["CRITICAL", "HIGH", "MEDIUM", "dune-vuln-key", "type:vulnerability", "severity:medium"]) {
+    if (!syncer.includes(required)) {
+      console.error(`[soc2-readiness] Vulnerability issue sync missing required marker: ${required}`);
+      failed = true;
+    }
+  }
+}
+
 if (failed) {
   console.error("SOC 2 readiness check failed. This is a readiness/evidence gate, not a SOC 2 certification assertion.");
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, and read-only safety markers are present.");
 
 function commandExists(command) {
   const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
