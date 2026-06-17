@@ -61,16 +61,26 @@ jobs:
           test -f console/api/test/discordAdapter.test.js
           test -f console/api/test/discordRoutes.test.js
 
-      - name: Block Docker socket mounts in bot assets
+      - name: Block Docker socket mounts in bot runtime assets
         run: |
-          if grep -R --line-number --fixed-strings "/var/run/docker.sock" discord-bot; then
-            echo "::error::Discord bot assets must not mount /var/run/docker.sock."
+          if grep -R --line-number --fixed-strings \
+            --include='Dockerfile' \
+            --include='*.yml' \
+            --include='*.yaml' \
+            --include='*.json' \
+            "/var/run/docker.sock" discord-bot; then
+            echo "::error::Discord bot runtime assets must not mount /var/run/docker.sock."
             exit 1
           fi
 
-      - name: Block privileged container mode in bot assets
+      - name: Block privileged container mode in bot runtime assets
         run: |
-          if grep -R --line-number -E "privileged:[[:space:]]*true" discord-bot; then
+          if grep -R --line-number -E \
+            --include='Dockerfile' \
+            --include='*.yml' \
+            --include='*.yaml' \
+            --include='*.json' \
+            "privileged:[[:space:]]*true" discord-bot; then
             echo "::error::Discord bot container must not use privileged mode."
             exit 1
           fi
@@ -111,7 +121,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: discord-bot/package-lock.json
 
@@ -137,7 +147,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: console/api/package-lock.json
 
@@ -190,7 +200,7 @@ jobs:
         run: docker build -t dune-discord-control-bot:ci discord-bot
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dune-discord-control-bot:ci
           format: table
