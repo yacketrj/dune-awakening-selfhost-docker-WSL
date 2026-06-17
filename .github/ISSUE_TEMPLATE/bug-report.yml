@@ -1,0 +1,71 @@
+name: Bug report
+description: Track a defect with reproduction evidence and remediation status.
+title: "bug: "
+labels: ["type:bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for functional defects. Do not include secrets, tokens, private IPs, raw logs with credentials, or player personal data.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who or what is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide deterministic steps if possible.
+      placeholder: |
+        1. Start Console adapter...
+        2. Run command...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link workflow runs, sanitized logs, screenshots, or test output.
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - low
+        - medium
+        - high
+        - critical
+    validations:
+      required: true
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Remediation plan
+      description: Proposed fix, owner, and target date.
+    validations:
+      required: false
