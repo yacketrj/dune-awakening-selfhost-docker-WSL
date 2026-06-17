@@ -983,14 +983,6 @@ PY
   done < "$DEEPDESERT_TRAVEL_FILE"
 }
 
-companion_map_for() {
-  case "$1" in
-    SH_Arrakeen) echo "SH_HarkoVillage" ;;
-    SH_HarkoVillage) echo "SH_Arrakeen" ;;
-    *) return 1 ;;
-  esac
-}
-
 named_destination_target_map() {
   case "$1" in
     Travel_To_HaggaBasin_*|Travel_To_Hagga_Basin_*)
@@ -1297,13 +1289,6 @@ handle_idle_row() {
     return 0
   fi
 
-  local companion_map
-  companion_map="$(companion_map_for "$map" 2>/dev/null || true)"
-  if [ -n "$companion_map" ] && map_has_active_presence "$companion_map"; then
-    clear_idle_since "$key"
-    return 0
-  fi
-
   if map_is_overmap_active "$map" && map_has_active_presence "Overmap"; then
     clear_idle_since "$key"
     return 0
@@ -1326,33 +1311,6 @@ handle_idle_row() {
     runtime/scripts/despawn-server.sh "$map" || true
     clear_idle_since "$key"
   fi
-}
-
-ensure_social_hub_companions() {
-  local map companion assigned running
-
-  for map in SH_Arrakeen SH_HarkoVillage; do
-    map_is_disabled "$map" && continue
-    if ! map_has_active_presence "$map"; then
-      continue
-    fi
-
-    companion="$(companion_map_for "$map" 2>/dev/null || true)"
-    [ -n "$companion" ] || continue
-    map_is_disabled "$companion" && continue
-
-    assigned="$(map_assigned_count "$companion")"
-    running="$(container_count_for_map "$companion")"
-
-    if [ "$assigned" != "0" ] || [ "$running" != "0" ]; then
-      continue
-    fi
-
-    echo "SPAWN companion map=$companion source=$map"
-    runtime/scripts/spawn-server.sh "$companion" || {
-      echo "ERROR failed to spawn companion map=$companion source=$map"
-    }
-  done
 }
 
 ensure_overmap_travel_maps_prewarmed() {
@@ -1414,112 +1372,6 @@ ensure_overmap_travel_maps_prewarmed() {
       current_active="$running"
     fi
     needed=$((desired_active - current_active))
-  done
-}
-
-scan_social_hub_travel_handoffs() {
-  local source_map destination_map container log_file handoff_rows
-
-  for source_map in SH_Arrakeen SH_HarkoVillage; do
-    destination_map="$(companion_map_for "$source_map" 2>/dev/null || true)"
-    [ -n "$destination_map" ] || continue
-    container="$(hub_container_for_map "$source_map" 2>/dev/null || true)"
-    [ -n "$container" ] || continue
-    docker ps --format '{{.Names}}' | grep -qx "$container" || continue
-
-    log_file="$(mktemp)"
-    docker logs --since "$SINCE" "$container" > "$log_file" 2>&1 || true
-    handoff_rows="$(SOURCE_MAP="$source_map" DESTINATION_MAP="$destination_map" LOG_FILE="$log_file" python3 - <<'PY'
-import os
-import re
-
-source_map = os.environ.get("SOURCE_MAP", "")
-destination_map = os.environ.get("DESTINATION_MAP", "")
-log_file = os.environ.get("LOG_FILE", "")
-warning_re = re.compile(r'Travel was initiated without specifying Destination\.Location or Destination\.Dimension.*FlowId:"?([A-F0-9]+)"?')
-request_re = re.compile(r'FlowType:"Travel", Stage:"(?:Request|Update)", PlayerId:"([^"]+)", FlowId:"([A-F0-9]+)"')
-
-flows = {}
-
-with open(log_file, encoding="utf-8", errors="replace") as f:
-  lines = list(f)
-
-for line in lines:
-    req = request_re.search(line)
-    if req:
-        funcom_id = req.group(1)
-        flow_id = req.group(2)
-        flows.setdefault(flow_id, {"funcom_id": funcom_id, "warning": False})
-        flows[flow_id]["funcom_id"] = funcom_id
-        continue
-    warn = warning_re.search(line)
-    if warn:
-        flow_id = warn.group(1)
-        flows.setdefault(flow_id, {"funcom_id": "", "warning": False})
-        flows[flow_id]["warning"] = True
-
-for flow_id, payload in flows.items():
-    if payload.get("warning") and payload.get("funcom_id"):
-        print("{}|{}|{}|{}".format(flow_id, payload["funcom_id"], source_map, destination_map))
-PY
-    )"
-    rm -f "$log_file"
-
-    while IFS='|' read -r flow_id funcom_id source_map destination_map; do
-      [ -n "${flow_id:-}" ] || continue
-      hub_travel_seen "$flow_id" && continue
-
-      local account_id destination_row target_partition_id target_map target_dimension target_server_id current_map
-      account_id="$(psql_value "select id from dune.accounts where \"user\" = '${funcom_id//\'/\'\'}' limit 1;")"
-      [ -n "$account_id" ] || continue
-
-      current_map="$(psql_value "
-        select coalesce(fs.map, '')
-        from dune.player_state ps
-        left join dune.farm_state fs on fs.server_id = ps.server_id
-        where ps.account_id = $account_id
-        limit 1;
-      ")"
-
-      [ "$current_map" = "$source_map" ] || continue
-
-      destination_row="$(psql_value "
-        select
-          wp.partition_id || '|' ||
-          wp.map || '|' ||
-          coalesce(wp.dimension_index::text, '0') || '|' ||
-          coalesce(wp.server_id, '')
-        from dune.world_partition wp
-        join dune.farm_state fs on fs.server_id = wp.server_id
-        where wp.map = '$destination_map'
-          and fs.ready = true
-          and fs.alive = true
-        order by wp.partition_id
-        limit 1;
-      ")"
-      [ -n "$destination_row" ] || continue
-      IFS='|' read -r target_partition_id target_map target_dimension target_server_id <<< "$destination_row"
-      [ -n "$target_server_id" ] || continue
-
-      psql_value "
-        update dune.player_state
-        set
-          server_id = '$target_server_id',
-          previous_server_partition_id = $target_partition_id,
-          return_dimension_index = $target_dimension
-        where account_id = $account_id;
-
-        update dune.encrypted_player_state
-        set
-          server_id = '$target_server_id',
-          previous_server_partition_id = $target_partition_id,
-          return_dimension_index = $target_dimension
-        where account_id = $account_id;
-      " >/dev/null
-
-      remember_hub_travel "$flow_id" "$account_id" "$source_map" "$destination_map" "$(date +%s)"
-      echo "HUB-TRAVEL account=$account_id flow=$flow_id from=$source_map to=$destination_map server=$target_server_id"
-    done <<< "$handoff_rows"
   done
 }
 
@@ -1985,9 +1837,7 @@ while true; do
   ensure_overmap_travel_maps_prewarmed
   scan_travel_demand
   progress_deepdesert_travel_handoffs
-  ensure_social_hub_companions
   scan_proactive_hagga_handoffs
-  scan_social_hub_travel_handoffs
   scan_named_destination_failures
   scan_idle_servers
   scan_reconnect_demand
