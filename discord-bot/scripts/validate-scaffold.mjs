@@ -15,6 +15,7 @@ const requiredFiles = [
   "scripts/run-discord-runtime.sh",
   "scripts/run-local-discord-stack.sh",
   "test/redaction.test.mjs",
+  "test/discord-formatters.test.mjs",
   "Dockerfile",
   "package-lock.json"
 ];
