@@ -330,13 +330,13 @@ export function App() {
   if (!auth) {
     return (
       <main className="login-screen">
-        <section className="login-panel">
+        <form className="login-panel" onSubmit={(event) => { event.preventDefault(); void safe(login); }}>
           <h1>Dune Docker Console</h1>
           <p>Spice Clearance Required</p>
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Admin Password" />
-          <button onClick={() => safe(login)}>Sign In</button>
+          <button type="submit">Sign In</button>
           {error && <p className="error">{error}</p>}
-        </section>
+        </form>
       </main>
     );
   }
