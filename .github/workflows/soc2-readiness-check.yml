@@ -69,6 +69,8 @@ jobs:
 
       - name: Generate consolidated security evidence bundle
         if: always()
+        env:
+          SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS: "true"
         run: node scripts/generate-security-evidence-bundle.mjs
 
       - name: Append evidence bundle summary
