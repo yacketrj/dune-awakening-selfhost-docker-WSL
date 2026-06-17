@@ -28,6 +28,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/feature-request.yml",
   "scripts/generate-vulnerability-report.mjs",
   "scripts/sync-vulnerability-issues.mjs",
+  "scripts/validate-security-automation.mjs",
   "scripts/ensure-security-runtimes.sh"
 ];
 
@@ -129,12 +130,22 @@ if (existsSync("scripts/sync-vulnerability-issues.mjs")) {
   }
 }
 
+if (!failed && existsSync("scripts/validate-security-automation.mjs")) {
+  const validation = spawnSync("node", ["scripts/validate-security-automation.mjs"], { encoding: "utf8" });
+  if (validation.status !== 0) {
+    console.error("[soc2-readiness] Security automation validation failed.");
+    if (validation.stdout) console.error(validation.stdout);
+    if (validation.stderr) console.error(validation.stderr);
+    failed = true;
+  }
+}
+
 if (failed) {
   console.error("SOC 2 readiness check failed. This is a readiness/evidence gate, not a SOC 2 certification assertion.");
   process.exit(1);
 }
 
-console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, and read-only safety markers are present.");
+console.log("SOC 2 readiness check passed. Evidence files, runtimes, issue tracking, vulnerability tracking, automation validation, and read-only safety markers are present.");
 
 function commandExists(command) {
   const result = spawnSync("bash", ["-lc", `command -v ${shellQuote(command)} >/dev/null 2>&1`], { stdio: "ignore" });
