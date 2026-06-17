@@ -2,7 +2,7 @@
   "name": "dune-discord-control-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Discord-native operator interface for Dune Docker Console with security gates first.",
+  "description": "Read-only Discord companion for Dune Docker Console.",
   "type": "module",
   "engines": {
     "node": ">=20.11.0"
@@ -11,7 +11,12 @@
     "test": "node --test",
     "security:secrets": "node scripts/check-secrets.mjs",
     "start": "node dist/index.js",
-    "build": "node scripts/validate-scaffold.mjs"
+    "build": "node scripts/validate-scaffold.mjs",
+    "smoke:health": "node scripts/command-smoke.mjs health public",
+    "smoke:status": "node scripts/command-smoke.mjs status public",
+    "smoke:status-detail": "node scripts/command-smoke.mjs statusDetail admin",
+    "smoke:readiness": "node scripts/command-smoke.mjs readiness observer",
+    "smoke:services": "node scripts/command-smoke.mjs services observer"
   },
   "dependencies": {},
   "devDependencies": {}
