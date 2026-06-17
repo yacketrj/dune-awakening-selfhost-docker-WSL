@@ -1,5 +1,7 @@
 import { redactValue } from "../../redact.js";
 
+export const DISCORD_AUDIT_EVIDENCE_MARKER = "audit event";
+
 export function discordAuditEvent({ actor, action, capability, risk = "low", targetType = "none", targetId = "", confirmationRequired = false, confirmationPassed = false, result = "unknown", detail = {} } = {}) {
   return redactValue({
     source: "discord",
