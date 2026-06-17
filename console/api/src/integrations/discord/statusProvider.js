@@ -17,7 +17,7 @@ export async function discordStatusProvider(config, { diagnostic = false } = {})
     allowedExitCodes: [0]
   });
   const parsed = parseStatusOutput(result.stdout);
-  if (diagnostic) return sanitizeDiagnosticStatus(parsed);
+  if (diagnostic) return detailedStatusSummary(parsed, result.stdout);
   return sanitizeDiscordPublicStatus(publicStatusSummary(parsed));
 }
 
@@ -52,7 +52,7 @@ export function parseStatusJson(stdout = "") {
 }
 
 export function parseTextStatus(stdout = "") {
-  const status = { maps: [], issues: [] };
+  const status = { maps: [], services: [], listeners: [], issues: [] };
   let section = "";
 
   for (const rawLine of String(stdout || "").split(/\r?\n/)) {
@@ -70,6 +70,28 @@ export function parseTextStatus(stdout = "") {
       const key = normalizeStatusKey(keyValue[1]);
       if (["overall", "title", "region", "mode", "population"].includes(key)) {
         status[key] = keyValue[2].trim();
+      }
+      continue;
+    }
+
+    if (section === "containers") {
+      if (/^SERVICE\s+STATUS$/i.test(line)) continue;
+      const serviceMatch = line.match(/^(dune-[a-z0-9-]+)\s+(.+)$/i);
+      if (serviceMatch) {
+        const entry = { name: serviceMatch[1], status: normalizeRuntimeStatus(serviceMatch[2]) };
+        status.services.push(entry);
+        if (entry.status !== "up") status.issues.push(`${entry.name} is ${entry.status}`);
+      }
+      continue;
+    }
+
+    if (section === "listeners") {
+      if (/^CHECK\s+PORT\s+STATUS$/i.test(line)) continue;
+      const listenerMatch = line.match(/^(.+?)\s+\d{1,5}\/(tcp|udp)\s+([A-Z]+)$/i);
+      if (listenerMatch) {
+        const entry = { check: listenerMatch[1].trim(), status: listenerMatch[3].toUpperCase() };
+        status.listeners.push(entry);
+        if (entry.status !== "OK") status.issues.push(`${entry.check} is ${entry.status}`);
       }
       continue;
     }
@@ -103,11 +125,22 @@ export function publicStatusSummary(status = {}) {
   return summary;
 }
 
+export function detailedStatusSummary(status = {}, rawOutput = "") {
+  return sanitizeDiscordValue({
+    ...status,
+    redactedOutput: sanitizeDiscordValue(String(rawOutput || "")).slice(0, 3000)
+  });
+}
+
 function normalizeStatusKey(value = "") {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
 
-function sanitizeDiagnosticStatus(value = {}) {
-  // Diagnostic output may retain operational fields, but still never returns secrets or raw connection strings.
-  return sanitizeDiscordValue(value);
+function normalizeRuntimeStatus(value = "") {
+  const text = String(value || "").trim();
+  if (/^up\b/i.test(text)) return "up";
+  if (/missing/i.test(text)) return "missing";
+  if (/exited|stopped|down/i.test(text)) return "down";
+  if (/starting|created|restarting/i.test(text)) return "starting";
+  return text ? "unknown" : "unknown";
 }
