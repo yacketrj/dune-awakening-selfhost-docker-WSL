@@ -15,6 +15,10 @@ runtime/director/
 runtime/server-gateway/
 runtime/fake-k8s-serviceaccount/
 
+# Security scan artifacts generated locally or in CI
+artifacts/security/*
+!artifacts/security/.gitkeep
+
 # Work/output
 work/
 *.log
