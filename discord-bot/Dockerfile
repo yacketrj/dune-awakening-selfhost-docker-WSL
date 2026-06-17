@@ -17,4 +17,4 @@ USER dune
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "process.exit(0)"
 
-CMD ["node", "scripts/validate-scaffold.mjs"]
+CMD ["node", "scripts/runtime-smoke.mjs"]
