@@ -6,22 +6,53 @@ This project can implement SOC 2-aligned controls and collect audit-ready eviden
 
 For this project, the practical target is **SOC 2 readiness** for the Discord Control Bot and Dune Console Discord API Adapter.
 
+## Recurring SOC 2 Readiness Check
+
+The repository includes a recurring SOC 2 readiness workflow:
+
+```text
+.github/workflows/soc2-readiness-check.yml
+```
+
+The workflow runs:
+
+- Weekly on Monday at 09:00 UTC.
+- On manual `workflow_dispatch`.
+- On relevant pull requests and pushes that touch Discord bot, Console adapter, SOC 2 evidence, or documentation files.
+
+The workflow validates:
+
+- Required SOC 2 evidence documentation exists.
+- Admin, user, setup, roadmap, and project-status documentation exists.
+- The bot authorization model contains only read-only capabilities.
+- The Console adapter still reports `readOnly: true` and `writesEnabled: false`.
+- Console Discord adapter tests pass.
+- Bot tests pass.
+- Bot secret scanning passes.
+- Bot scaffold validation passes.
+
+Local readiness check:
+
+```bash
+node scripts/soc2-readiness-check.mjs
+```
+
 ## Trust Services Categories in Scope
 
 | Category | Applicability |
 | --- | --- |
-| Security | Primary category. Required because the bot becomes an administrative control plane. |
+| Security | Primary category. Required because the bot becomes a Discord-originated operational visibility plane. |
 | Availability | Applicable because bot commands and status functions depend on reliable service operation. |
-| Confidentiality | Applicable because the bot may access player/admin/server data and secrets-adjacent workflows. |
-| Processing Integrity | Applicable because admin actions must execute accurately, completely, and only when authorized. |
+| Confidentiality | Applicable because the bot may access server operational data and secrets-adjacent workflows. |
+| Processing Integrity | Applicable because command responses must be accurate, complete, authorized, and redacted. |
 | Privacy | Limited unless personally identifiable player/user data is processed beyond operational IDs. |
 
 ## Control Objectives
 
-1. Prevent unauthorized Discord-originated administrative actions.
+1. Prevent unauthorized Discord-originated access to operational diagnostics.
 2. Protect secrets and sensitive operational data.
 3. Ensure changes are reviewed, tested, and traceable.
-4. Ensure high-risk actions are confirmed, audited, and reversible where possible.
+4. Ensure any future high-risk action is separately approved, confirmed, audited, and reversible where possible.
 5. Generate repeatable evidence through CI, release, and runtime logs.
 6. Maintain secure development and vulnerability management practices.
 7. Preserve availability through health checks, safe rollbacks, and controlled releases.
@@ -30,32 +61,31 @@ For this project, the practical target is **SOC 2 readiness** for the Discord Co
 
 | Control ID | Trust Category | Control Objective | Implementation Requirement | Evidence |
 | --- | --- | --- | --- | --- |
-| DC-SOC2-SEC-001 | Security | Only authorized Discord users can perform privileged actions. | Server-side role-to-capability authorization in Dune Console API adapter. | Authorization matrix tests, API adapter tests, audit logs. |
-| DC-SOC2-SEC-002 | Security | Bot cannot bypass backend authority. | Bot acts only as client; backend enforces final authorization, confirmation, and audit. | Architecture docs, code review, route tests. |
-| DC-SOC2-SEC-003 | Security | Destructive actions require explicit confirmation. | Typed confirmation or short-lived interaction confirmation based on risk. | Confirmation matrix, DAST tests, audit logs. |
+| DC-SOC2-SEC-001 | Security | Only authorized Discord users can access role-gated diagnostics. | Server-side role-to-capability authorization in Dune Console API adapter. | Authorization matrix tests, API adapter tests, audit logs. |
+| DC-SOC2-SEC-002 | Security | Bot cannot bypass backend authority. | Bot acts only as client; backend enforces final authorization, safety, redaction, and audit. | Architecture docs, code review, route tests. |
+| DC-SOC2-SEC-003 | Security | No destructive actions exist in experimental bot scope. | Bot and adapter expose read-only routes only. | Route inventory, capability tests, scaffold validation. |
 | DC-SOC2-SEC-004 | Security | Secrets are protected from disclosure. | File-based secrets, no secrets in source/logs/static files/images. | Secret scan reports, redaction tests, image scan results. |
 | DC-SOC2-SEC-005 | Security | Containers run with least privilege. | Non-root bot container, no Docker socket, no privileged mode, dropped capabilities. | Dockerfile, Compose review, DCA scan output. |
-| DC-SOC2-SEC-006 | Security | Vulnerabilities are identified before release. | SCA, SAST, DCA, DAST gates block critical/high issues. | CI results, scan reports, exception register. |
+| DC-SOC2-SEC-006 | Security | Vulnerabilities are identified before release. | SCA, SAST, DCA, DAST, and secret gates block critical/high issues. | CI results, scan reports, exception register. |
 | DC-SOC2-SEC-007 | Security | Sensitive outputs are redacted. | Central redaction library for logs, errors, Discord responses. | Redaction tests, code review, DAST tests. |
-| DC-SOC2-SEC-008 | Security | Admin actions are traceable. | Structured audit events for all privileged and state-changing actions. | Audit logs, audit schema, test fixtures. |
+| DC-SOC2-SEC-008 | Security | Discord-originated access is traceable. | Structured audit events for adapter operations. | Audit logs, audit schema, test fixtures. |
 | DC-SOC2-SEC-009 | Security | Production changes are reviewed. | Pull requests require review, tests, security impact, and rollback plan. | PR records, branch protection evidence. |
 | DC-SOC2-SEC-010 | Security | Dependency risk is managed. | Lockfile, dependency review, automated dependency scanning. | package-lock, SCA report, Dependabot/Renovate PRs. |
 | DC-SOC2-SEC-011 | Security | Command injection is prevented. | No shell execution in bot; backend uses safe wrappers and fixed arguments. | SAST results, code review, injection tests. |
-| DC-SOC2-SEC-012 | Security | SQL misuse is controlled. | Read-only SQL route rejects writes; write SQL owner-only, confirmed, backed up, audited. | SQL validation tests, DAST tests, audit records. |
-| DC-SOC2-SEC-013 | Security | Discord replay/double-submit is controlled. | Idempotency keys for state-changing interactions. | Idempotency tests, audit records. |
-| DC-SOC2-SEC-014 | Security | Abuse is rate-limited. | Per-command and per-actor rate limits for bot and backend adapter. | Rate-limit tests, config evidence. |
-| DC-SOC2-AV-001 | Availability | Bot process health is monitored. | Docker healthcheck and bot heartbeat. | Container health output, heartbeat logs. |
+| DC-SOC2-SEC-012 | Security | SQL misuse is controlled. | Experimental bot has no SQL route; future SQL access requires separate threat model. | Capability inventory, route tests. |
+| DC-SOC2-SEC-013 | Security | Abuse is controlled. | Future rate limits required before production Discord deployment. | Roadmap, rate-limit tests when implemented. |
+| DC-SOC2-SEC-014 | Security | Role mapping is regularly reviewed. | Role-policy health reports configured tiers without exposing role IDs. | Health output, access review record. |
+| DC-SOC2-AV-001 | Availability | Bot process health is monitored. | Docker healthcheck and bot heartbeat before production Discord deployment. | Container health output, heartbeat logs. |
 | DC-SOC2-AV-002 | Availability | Bot can fail without breaking WebUI. | Bot isolated from WebUI execution path. | Architecture docs, integration tests. |
 | DC-SOC2-AV-003 | Availability | Releases are reversible. | Rollback plan and pinned image releases. | Release checklist, versioned image tags. |
 | DC-SOC2-AV-004 | Availability | Failures are safely handled. | Error redaction and graceful Discord/API error handling. | Error handling tests, logs. |
 | DC-SOC2-C-001 | Confidentiality | Internal topology is not exposed publicly. | Public responses hide internal IPs, SSH hosts, DB URLs, service internals. | Response tests, DAST output. |
-| DC-SOC2-C-002 | Confidentiality | Admin diagnostics require elevated role. | Diagnostic commands require admin or owner role. | Authorization tests. |
+| DC-SOC2-C-002 | Confidentiality | Detailed Status requires elevated role. | Diagnostic commands require admin or owner role. | Authorization tests. |
 | DC-SOC2-C-003 | Confidentiality | Logs avoid sensitive payloads. | No raw request body logging for secret-bearing or admin commands. | Code review, SAST, log samples. |
-| DC-SOC2-PI-001 | Processing Integrity | Commands execute against intended targets. | Preview target before confirmation; include player/service/backup identifiers. | Confirmation tests, audit logs. |
-| DC-SOC2-PI-002 | Processing Integrity | Database writes are accurate and backed up. | Backup-before-write where supported; owner-only confirmation. | Backup task records, audit records. |
-| DC-SOC2-PI-003 | Processing Integrity | Addon changes are permission-reviewed. | Addon install/enable flows show requested permissions. | Addon workflow tests, audit records. |
-| DC-SOC2-P-001 | Privacy | Player/user data exposure is minimized. | Public channel responses avoid sensitive player details; admin-only for detailed lookups. | Data classification matrix, response tests. |
-| DC-SOC2-P-002 | Privacy | Discord actor data is used only for admin audit and authorization. | Audit schema limits Discord data to operational metadata. | Audit schema, privacy review. |
+| DC-SOC2-PI-001 | Processing Integrity | Responses reflect intended command scope. | Each command maps to one read-only adapter route and capability. | Command route tests, smoke tests. |
+| DC-SOC2-PI-002 | Processing Integrity | Future write behavior is gated. | No write route until separate approval, threat model, confirmation policy, DAST, audit policy, and rollback plan exist. | Roadmap P3 gate, ADR. |
+| DC-SOC2-P-001 | Privacy | Player/user data exposure is minimized. | Public channel responses avoid sensitive player details; detailed lookups remain future role-gated scope. | Data classification matrix, response tests. |
+| DC-SOC2-P-002 | Privacy | Discord actor data is used only for audit and authorization. | Audit schema limits Discord data to operational metadata. | Audit schema, privacy review. |
 
 ## Evidence Register
 
@@ -75,6 +105,7 @@ For this project, the practical target is **SOC 2 readiness** for the Discord Co
 | E-012 | Exception register | Security owner | As needed, reviewed monthly | SEC-006 |
 | E-013 | Threat model | Security owner | Major design change | SEC-001, SEC-002, C-001 |
 | E-014 | Access/role mapping review | System owner | Monthly / before release | SEC-001, C-002 |
+| E-015 | Scheduled SOC 2 readiness workflow result | Engineering/Security | Weekly / manual / PR | SEC-004, SEC-006, SEC-009, C-001, PI-001 |
 
 ## Required SOC 2 Readiness Workflows
 
@@ -89,7 +120,7 @@ For this project, the practical target is **SOC 2 readiness** for the Discord Co
 ### Access Control
 
 1. Discord roles must map to least-privilege capabilities.
-2. Owner role must be required for destructive actions.
+2. Experimental scope is read-only.
 3. Server-side authorization must be enforced by the Dune Console API adapter.
 4. Bot API token must be separate from WebUI admin password.
 5. Role mapping must be reviewed regularly.
@@ -104,13 +135,13 @@ For this project, the practical target is **SOC 2 readiness** for the Discord Co
 ### Incident Response
 
 1. Suspected token exposure requires immediate token rotation.
-2. Bot write actions can be disabled by emergency kill switch.
-3. Audit logs must identify Discord actor, action, target, result, and timestamp.
+2. Bot adapter can be disabled by removing `DUNE_DISCORD_ADAPTER_ENABLED=true`.
+3. Audit logs must identify Discord actor, action, target, result, and timestamp where available.
 4. Security incidents produce post-incident review and regression tests.
 
 ### Availability and Resilience
 
-1. Bot healthcheck required.
+1. Bot healthcheck required before production Discord deployment.
 2. Bot failure must not impact WebUI.
 3. Release rollback path must be documented.
 4. Runtime errors must be redacted and handled gracefully.
@@ -127,6 +158,8 @@ These are not satisfied by code alone and require operational ownership:
 6. Vendor/dependency management policy.
 7. Independent audit readiness review.
 8. CPA examination if a SOC 2 report is required.
+9. Rate limits before production Discord deployment.
+10. Runtime Discord client monitoring and alerting.
 
 ## Compliance Statement Template
 
