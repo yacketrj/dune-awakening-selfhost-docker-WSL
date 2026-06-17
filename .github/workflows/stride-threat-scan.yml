@@ -1,0 +1,67 @@
+name: STRIDE Threat Scan
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
+      - "docs/discord-control-bot/**"
+      - "scripts/generate-stride-report.mjs"
+      - ".github/workflows/stride-threat-scan.yml"
+  push:
+    branches:
+      - main
+      - feature/discord-control-bot
+    paths:
+      - "discord-bot/**"
+      - "console/api/src/integrations/discord/**"
+      - "console/api/test/discord*.test.js"
+      - "docs/discord-control-bot/**"
+      - "scripts/generate-stride-report.mjs"
+      - ".github/workflows/stride-threat-scan.yml"
+  schedule:
+    - cron: "7 11 * * 2"
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  stride:
+    name: Generate STRIDE threat model report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate STRIDE report
+        run: node scripts/generate-stride-report.mjs
+
+      - name: Append STRIDE summary
+        if: always()
+        run: |
+          if [ -f artifacts/security/stride-report.md ]; then
+            cat artifacts/security/stride-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload STRIDE artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stride-threat-model-report
+          path: |
+            artifacts/security/stride-report.json
+            artifacts/security/stride-report.md
+          if-no-files-found: error
