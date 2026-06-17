@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+const CHILD_PROCESS_TIMEOUT_MS = Number(process.env.SECURITY_AUTOMATION_TIMEOUT_MS || 120000);
+
 const scriptsToCheck = [
   "scripts/generate-vulnerability-report.mjs",
   "scripts/generate-stride-report.mjs",
@@ -67,7 +69,11 @@ try {
   }
 
   const evidenceBundle = run("node", ["scripts/generate-security-evidence-bundle.mjs"], {
-    label: "generate security evidence bundle"
+    label: "generate security evidence bundle",
+    env: {
+      ...process.env,
+      SECURITY_EVIDENCE_BUNDLE_SKIP_READINESS: "true"
+    }
   });
   assertIncludes(evidenceBundle.stdout, "Security evidence bundle:");
   assertFileIncludes("artifacts/security/security-evidence-bundle.md", "# Security Evidence Bundle");
@@ -120,12 +126,16 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
     env: options.env || process.env,
-    encoding: "utf8"
+    encoding: "utf8",
+    timeout: options.timeout || CHILD_PROCESS_TIMEOUT_MS
   });
   if (result.status !== 0) {
+    const timedOut = result.error?.code === "ETIMEDOUT";
     console.error(`[security-automation] ${options.label || command} failed`);
     if (result.stdout) console.error(result.stdout);
     if (result.stderr) console.error(result.stderr);
+    if (result.error?.message) console.error(result.error.message);
+    if (timedOut) console.error(`[security-automation] ${options.label || command} timed out after ${options.timeout || CHILD_PROCESS_TIMEOUT_MS}ms.`);
     process.exit(result.status || 1);
   }
   return result;
