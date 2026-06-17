@@ -30,11 +30,20 @@ The workflow validates:
 - Bot tests pass.
 - Bot secret scanning passes.
 - Bot scaffold validation passes.
+- Semgrep SAST workflow evidence exists.
+- Trivy vulnerability workflow evidence exists.
+- CVSS vulnerability report generation logic exists.
 
 Local readiness check:
 
 ```bash
 node scripts/soc2-readiness-check.mjs
+```
+
+If local Semgrep or Trivy runtimes are missing, run:
+
+```bash
+bash scripts/ensure-security-runtimes.sh
 ```
 
 ## Trust Services Categories in Scope
@@ -66,12 +75,12 @@ node scripts/soc2-readiness-check.mjs
 | DC-SOC2-SEC-003 | Security | No destructive actions exist in experimental bot scope. | Bot and adapter expose read-only routes only. | Route inventory, capability tests, scaffold validation. |
 | DC-SOC2-SEC-004 | Security | Secrets are protected from disclosure. | File-based secrets, no secrets in source/logs/static files/images. | Secret scan reports, redaction tests, image scan results. |
 | DC-SOC2-SEC-005 | Security | Containers run with least privilege. | Non-root bot container, no Docker socket, no privileged mode, dropped capabilities. | Dockerfile, Compose review, DCA scan output. |
-| DC-SOC2-SEC-006 | Security | Vulnerabilities are identified before release. | SCA, SAST, DCA, DAST, and secret gates block critical/high issues. | CI results, scan reports, exception register. |
+| DC-SOC2-SEC-006 | Security | Vulnerabilities are identified before release. | SCA, SAST, DCA, DAST, Semgrep, Trivy, and secret gates block critical/high issues. | CI results, Semgrep report, Trivy report, CVSS vulnerability report, exception register. |
 | DC-SOC2-SEC-007 | Security | Sensitive outputs are redacted. | Central redaction library for logs, errors, Discord responses. | Redaction tests, code review, DAST tests. |
 | DC-SOC2-SEC-008 | Security | Discord-originated access is traceable. | Structured audit events for adapter operations. | Audit logs, audit schema, test fixtures. |
 | DC-SOC2-SEC-009 | Security | Production changes are reviewed. | Pull requests require review, tests, security impact, and rollback plan. | PR records, branch protection evidence. |
-| DC-SOC2-SEC-010 | Security | Dependency risk is managed. | Lockfile, dependency review, automated dependency scanning. | package-lock, SCA report, Dependabot/Renovate PRs. |
-| DC-SOC2-SEC-011 | Security | Command injection is prevented. | No shell execution in bot; backend uses safe wrappers and fixed arguments. | SAST results, code review, injection tests. |
+| DC-SOC2-SEC-010 | Security | Dependency risk is managed. | Lockfile, dependency review, automated dependency scanning, Trivy filesystem scans. | package-lock, SCA report, Trivy report, Dependabot/Renovate PRs. |
+| DC-SOC2-SEC-011 | Security | Command injection is prevented. | No shell execution in bot; backend uses safe wrappers and fixed arguments; Semgrep checks high-risk code patterns. | Semgrep SAST results, code review, injection tests. |
 | DC-SOC2-SEC-012 | Security | SQL misuse is controlled. | Experimental bot has no SQL route; future SQL access requires separate threat model. | Capability inventory, route tests. |
 | DC-SOC2-SEC-013 | Security | Abuse is controlled. | Future rate limits required before production Discord deployment. | Roadmap, rate-limit tests when implemented. |
 | DC-SOC2-SEC-014 | Security | Role mapping is regularly reviewed. | Role-policy health reports configured tiers without exposing role IDs. | Health output, access review record. |
@@ -81,7 +90,7 @@ node scripts/soc2-readiness-check.mjs
 | DC-SOC2-AV-004 | Availability | Failures are safely handled. | Error redaction and graceful Discord/API error handling. | Error handling tests, logs. |
 | DC-SOC2-C-001 | Confidentiality | Internal topology is not exposed publicly. | Public responses hide internal IPs, SSH hosts, DB URLs, service internals. | Response tests, DAST output. |
 | DC-SOC2-C-002 | Confidentiality | Detailed Status requires elevated role. | Diagnostic commands require admin or owner role. | Authorization tests. |
-| DC-SOC2-C-003 | Confidentiality | Logs avoid sensitive payloads. | No raw request body logging for secret-bearing or admin commands. | Code review, SAST, log samples. |
+| DC-SOC2-C-003 | Confidentiality | Logs avoid sensitive payloads. | No raw request body logging for secret-bearing or admin commands. | Code review, Semgrep results, log samples. |
 | DC-SOC2-PI-001 | Processing Integrity | Responses reflect intended command scope. | Each command maps to one read-only adapter route and capability. | Command route tests, smoke tests. |
 | DC-SOC2-PI-002 | Processing Integrity | Future write behavior is gated. | No write route until separate approval, threat model, confirmation policy, DAST, audit policy, and rollback plan exist. | Roadmap P3 gate, ADR. |
 | DC-SOC2-P-001 | Privacy | Player/user data exposure is minimized. | Public channel responses avoid sensitive player details; detailed lookups remain future role-gated scope. | Data classification matrix, response tests. |
@@ -94,8 +103,8 @@ node scripts/soc2-readiness-check.mjs
 | E-001 | GitHub Actions security gate result | Engineering | Every PR/push | SEC-006, SEC-009 |
 | E-002 | Secret scan output | Engineering | Every PR/push | SEC-004, SEC-007 |
 | E-003 | SCA dependency report | Engineering | Every PR/push/release | SEC-006, SEC-010 |
-| E-004 | SAST report | Engineering | Every PR/push | SEC-006, SEC-011 |
-| E-005 | DCA/container scan report | Engineering | Every image build/release | SEC-005, SEC-006 |
+| E-004 | Semgrep SAST report | Engineering | Every PR/push/weekly/manual | SEC-006, SEC-011, C-003 |
+| E-005 | Trivy filesystem and image scan report | Engineering | Every PR/push/weekly/manual | SEC-005, SEC-006, SEC-010 |
 | E-006 | DAST report | Engineering/Security | Release candidate | SEC-001, SEC-003, SEC-012, C-001 |
 | E-007 | Unit and authorization test results | Engineering | Every PR/push | SEC-001, SEC-003 |
 | E-008 | Release checklist | Release owner | Every release | SEC-009, AV-003 |
@@ -106,6 +115,7 @@ node scripts/soc2-readiness-check.mjs
 | E-013 | Threat model | Security owner | Major design change | SEC-001, SEC-002, C-001 |
 | E-014 | Access/role mapping review | System owner | Monthly / before release | SEC-001, C-002 |
 | E-015 | Scheduled SOC 2 readiness workflow result | Engineering/Security | Weekly / manual / PR | SEC-004, SEC-006, SEC-009, C-001, PI-001 |
+| E-016 | CVSS-ranked vulnerability report with CVE/NVD URLs | Engineering/Security | Every Trivy workflow run / release candidate | SEC-006, SEC-010 |
 
 ## Required SOC 2 Readiness Workflows
 
@@ -127,10 +137,11 @@ node scripts/soc2-readiness-check.mjs
 
 ### Vulnerability Management
 
-1. SCA, SAST, DCA, DAST, and secret scanning run in CI/CD.
+1. SCA, SAST, DCA, DAST, Semgrep, Trivy, and secret scanning run in CI/CD.
 2. Critical/high findings block release unless formally excepted.
 3. Exceptions require owner, expiration, mitigation, and compensating controls.
 4. Dependency updates are tracked and reviewed.
+5. Vulnerability reports must include CVSS ranking and relevant CVE/NVD URLs when scanner data provides CVE IDs.
 
 ### Incident Response
 
