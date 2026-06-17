@@ -11,6 +11,7 @@ const requiredFiles = [
   "src/security/authorization.ts",
   "scripts/command-smoke.mjs",
   "scripts/discord-runtime.mjs",
+  "scripts/run-discord-runtime.sh",
   "test/redaction.test.mjs",
   "Dockerfile",
   "package-lock.json"
@@ -60,6 +61,14 @@ const runtime = readFileSync("scripts/discord-runtime.mjs", "utf8");
 for (const forbidden of ["/var/run/docker.sock", "docker compose", "docker run", "postgres", "backup restore", "backup delete"] ) {
   if (runtime.toLowerCase().includes(forbidden.toLowerCase())) {
     console.error(`Forbidden runtime marker detected: ${forbidden}`);
+    process.exit(1);
+  }
+}
+
+const launcher = readFileSync("scripts/run-discord-runtime.sh", "utf8");
+for (const required of ["DUNE_DISCORD_ENV_FILE", "discord-bot.env", "DISCORD_BOT_TOKEN_FILE", "exec node scripts/discord-runtime.mjs"]) {
+  if (!launcher.includes(required)) {
+    console.error(`Discord runtime launcher missing required marker: ${required}`);
     process.exit(1);
   }
 }
