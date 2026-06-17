@@ -2,19 +2,42 @@
 
 ## Purpose
 
-The Discord API Adapter is the server-side boundary between the Discord bot client and Dune Docker Console. It exists to provide Discord-native WebUI parity without allowing the bot to bypass backend authorization, confirmation, redaction, audit logging, or existing WebUI execution paths.
+The Discord API Adapter is the protected server-side boundary between the experimental Discord companion bot and Dune Docker Console.
 
-The Discord bot must not call broad WebUI routes directly for privileged actions. It must call adapter routes that understand Discord actor context and enforce capability policy server-side.
+The initial adapter scope is read-only:
+
+- Server status.
+- Readiness.
+- Services.
+- Population.
+- Logs.
+- Map state.
+- Backup list/latest metadata.
+
+The bot must not call broad WebUI routes directly. It must call adapter routes that understand Discord actor context and enforce capability policy server-side.
 
 ## Design Requirements
 
 1. The bot authenticates with a dedicated Dune bot API token, not the WebUI admin password.
 2. Every request includes Discord actor context.
 3. Every route enforces server-side capability authorization.
-4. Public-safe responses must not expose internal IPs, SSH hosts, DB URLs, tokens, raw `.env`, stack traces, or host paths.
-5. Destructive routes require confirmation and audit events.
-6. Write/admin routes are disabled unless Discord-originated writes are explicitly enabled.
+4. Public-safe responses must not expose internal IPs, SSH hosts, DB URLs, tokens, raw `.env`, stack traces, host paths, or backup filesystem paths.
+5. The initial adapter exposes read-only routes only.
+6. No destructive, write, credential, Docker lifecycle, database mutation, backup mutation, player mutation, addon mutation, or map mutation routes are in scope.
 7. The adapter reuses existing Dune Console backend functions rather than duplicating privileged logic inside the bot.
+
+## Explicitly Forbidden in Experimental Scope
+
+1. Docker socket access from the bot.
+2. Direct Postgres access from the bot.
+3. Direct Postgres writes from any bot flow.
+4. Backup create, restore, delete, import, or delete-all.
+5. Player grants, kicks, teleport, refills, resets, or inventory mutation.
+6. Broadcasts and shutdown broadcasts.
+7. Map, sietch, or deep desert mutations.
+8. Addon install, enable, disable, or remove.
+9. Secret-setting workflows.
+10. Any destructive action.
 
 ## Authentication
 
@@ -56,40 +79,30 @@ Every bot request must include a Discord actor context object.
 | Tier | Intended Use |
 | --- | --- |
 | public | Basic non-sensitive status only. |
-| observer | Low-risk status visibility. |
-| moderator | Player and operational read-only visibility. |
-| admin | Controlled write/admin operations. |
-| owner | Destructive, credential-adjacent, database write, backup restore/delete, addon admin, map/sietch/deep desert mutation. |
+| observer | Low-risk status/readiness visibility. |
+| moderator | Population, map state, backup metadata, and limited operational visibility. |
+| admin | Logs and diagnostic read-only visibility. |
+| owner | Reserved for future review; no owner-only write routes in experimental scope. |
 
-## Capability Model
+## Experimental Capability Model
 
 | Capability | Description | Minimum Tier |
 | --- | --- | --- |
 | `status:read` | Basic health/status visibility | public |
-| `players:read` | Player list/search/profile | moderator |
-| `logs:read` | Service logs and diagnostics | admin |
-| `backups:read` | Backup list/latest/status | moderator |
-| `backups:write` | Backup create | admin |
-| `backups:destructive` | Backup restore/delete/delete-all | owner |
-| `database:read` | DB status/schema/table/read-only SQL | admin |
-| `database:write` | DB write SQL | owner |
-| `broadcast:send` | Broadcast and shutdown broadcast | admin/owner |
-| `players:admin` | Kick, teleport, grant, refill, moderate-risk player actions | admin |
-| `players:destructive` | Clean inventory, reset progression, kick all | owner |
-| `maps:read` | Map/sietch/deep desert read-only status | moderator |
-| `maps:write` | Map/sietch/deep desert mutations | owner |
-| `addons:read` | Addon list/info | moderator |
-| `addons:admin` | Install/enable/disable/remove addon | owner |
-| `settings:read` | Sanitized settings summary | admin |
-| `settings:admin` | Password/token/settings mutation workflows | owner |
+| `readiness:read` | Readiness checks | observer |
+| `services:read` | Service list/status | observer |
+| `population:read` | Population summary and online count | moderator |
+| `logs:read` | Capped, redacted service logs | admin |
+| `maps:read` | Map, sietch, and deep desert read-only status | moderator |
+| `backups:read` | Backup list/latest metadata | moderator |
 
 ## Response Classification
 
 | Class | Description | Allowed Fields |
 | --- | --- | --- |
 | public | Safe in public Discord channels. | High-level status, no internal topology. |
-| admin | Safe only in admin channels or ephemeral admin responses. | Diagnostics, service names, summarized errors. |
-| owner | Owner-only diagnostics or high-risk previews. | Sensitive operational metadata, never raw secrets. |
+| moderator | Safe for moderator/admin channels. | Population and operational metadata with sensitive values removed. |
+| admin | Safe only in admin channels or ephemeral admin responses. | Capped logs and diagnostics, always redacted. |
 
 ## Initial Adapter Routes
 
@@ -105,7 +118,8 @@ Response:
 {
   "ok": true,
   "service": "dune-console-discord-adapter",
-  "writesEnabled": false
+  "experimental": true,
+  "readOnly": true
 }
 ```
 
@@ -115,52 +129,63 @@ Purpose: sanitized stack status for Discord.
 
 Capability: `status:read`.
 
-Request:
+### `POST /api/integrations/discord/readiness`
 
-```json
-{
-  "actor": { "guildId": "...", "channelId": "...", "userId": "...", "username": "...", "roleIds": [] },
-  "diagnostic": false
-}
-```
+Purpose: readiness checks.
 
-Public response must not include internal SSH host, Docker network IPs, DB URL, environment paths, or secrets.
+Capability: `readiness:read`.
 
-### `POST /api/integrations/discord/players/search`
+### `POST /api/integrations/discord/services`
 
-Purpose: player lookup.
+Purpose: service list and service status summary.
 
-Capability: `players:read`.
+Capability: `services:read`.
+
+Requirement: service names must come from an allowlist or backend-safe source.
+
+### `POST /api/integrations/discord/population`
+
+Purpose: population summary and online player count.
+
+Capability: `population:read`.
+
+Requirement: public output should be count-only unless detailed output is explicitly role-gated.
+
+### `POST /api/integrations/discord/logs`
+
+Purpose: capped, redacted service logs.
+
+Capability: `logs:read`.
+
+Requirements:
+
+1. Service name validation.
+2. Line limit.
+3. Redaction.
+4. Admin-channel or ephemeral response recommended.
+5. No raw `.env`, tokens, DB URLs, host paths, or stack traces.
+
+### `POST /api/integrations/discord/map-state`
+
+Purpose: map, sietch, and deep desert read-only state.
+
+Capability: `maps:read`.
 
 ### `POST /api/integrations/discord/backups/list`
 
-Purpose: backup visibility.
+Purpose: backup list/latest metadata.
 
 Capability: `backups:read`.
 
-### `POST /api/integrations/discord/database/query`
+Requirements:
 
-Purpose: read-only SQL through Discord.
-
-Capability: `database:read`.
-
-Requirement: reject write SQL.
-
-### `POST /api/integrations/discord/actions/preview`
-
-Purpose: create a preview and confirmation challenge for state-changing commands.
-
-Capability: depends on requested action.
-
-### `POST /api/integrations/discord/actions/confirm`
-
-Purpose: execute a previously previewed action if confirmation, idempotency, authorization, and write-enable policy all pass.
-
-Capability: depends on requested action.
+1. No backup create/restore/delete/import/delete-all.
+2. No raw filesystem paths in public responses.
+3. Output capped and paginated.
 
 ## Audit Event Requirements
 
-Every adapter request should be auditable. Every state-changing request must be audited.
+Every adapter request should be auditable. Read-only requests may use lower-risk audit records, but logs and detailed diagnostics should always be audited.
 
 Required fields:
 
@@ -171,26 +196,15 @@ Required fields:
   "discordChannelId": "...",
   "discordUserId": "...",
   "discordUsername": "...",
-  "command": "/dune player give-item",
-  "action": "players.give-item",
-  "capability": "players:admin",
-  "risk": "medium|high|critical",
-  "targetType": "player|backup|database|service|addon|map|settings",
+  "command": "/dune logs",
+  "action": "logs.read",
+  "capability": "logs:read",
+  "risk": "low|medium",
+  "targetType": "service|server|map|backup|population",
   "targetId": "...",
-  "confirmationRequired": true,
-  "confirmationPassed": true,
   "result": "success|failed|blocked"
 }
 ```
-
-## Confirmation Requirements
-
-| Risk | Confirmation |
-| --- | --- |
-| low | None. |
-| medium | Button confirmation with short expiry. |
-| high | Typed confirmation phrase or exact target confirmation. |
-| critical | Typed phrase, owner role, idempotency key, and optional multi-admin approval in future. |
 
 ## Error Contract
 
@@ -199,7 +213,7 @@ Errors must be redacted and safe to display.
 ```json
 {
   "ok": false,
-  "error": "Not authorized for backups:destructive.",
+  "error": "Not authorized for logs:read.",
   "code": "not_authorized"
 }
 ```
@@ -212,6 +226,8 @@ Forbidden in errors:
 - Discord or Dune tokens.
 - Internal DB URLs.
 - Funcom token values.
+- Internal IPs or SSH hosts.
+- Raw host paths.
 
 ## DAST Requirements
 
@@ -222,8 +238,8 @@ The adapter must have runtime tests for:
 3. Missing actor rejected.
 4. Unauthorized role rejected.
 5. Public status sanitizes internal topology.
-6. Diagnostic status requires admin/owner.
-7. Write action blocked when writes disabled.
-8. Destructive action blocked without confirmation.
-9. Read-only SQL blocks write statements.
-10. Secret-like values redacted from errors and audit details.
+6. Diagnostic/log output requires admin capability.
+7. Logs are capped and redacted.
+8. Backup routes are metadata-only.
+9. No write/destructive adapter routes are exposed.
+10. Secret-like values are redacted from errors and audit details.
