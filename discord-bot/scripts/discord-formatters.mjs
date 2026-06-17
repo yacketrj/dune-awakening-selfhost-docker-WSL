@@ -28,6 +28,15 @@ export function formatDiagnosticJson(title, payload) {
   return `**${escapeMarkdown(title)}**\n` + "```json\n" + body + "\n```";
 }
 
+function commandTitle(command) {
+  if (command === "health") return "Arrakis Control Plane — Adapter Health";
+  if (command === "status") return "Arrakis Control Plane — Server Status";
+  if (command === "statusDetail") return "Arrakis Control Plane — Detailed Status";
+  if (command === "readiness") return "Arrakis Control Plane — Readiness";
+  if (command === "services") return "Arrakis Control Plane — Services";
+  return "Arrakis Control Plane";
+}
+
 function formatHealthResponse(payload) {
   const liveRoutes = Array.isArray(payload.liveRoutes) ? payload.liveRoutes.length : 0;
   const plannedRoutes = Array.isArray(payload.plannedRoutes) ? payload.plannedRoutes.length : 0;
@@ -77,7 +86,7 @@ function formatPublicStatusResponse(payload) {
       fields: compactFields([
         field("Overall", statusText(overall), true),
         field("Region", safeValue(data.region || data.shardRegion || "Unknown"), true),
-        field("Population", safeValue(data.population || data.playerCount || "Unknown"), true),
+        field("Population", safeValue(data.population ?? data.playerCount ?? "Unknown"), true),
         field("Maps", formatMapList(maps), false),
         field("Issues", formatIssueList(issues), false)
       ])
