@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security-sensitive disclosure
+    url: https://github.com/yacketrj/dune-awakening-selfhost-docker-WSL/security/advisories/new
+    about: Report sensitive security issues through a private GitHub Security Advisory instead of a public issue.
+  - name: Discord companion bot documentation
+    url: https://github.com/yacketrj/dune-awakening-selfhost-docker-WSL/tree/feature/discord-control-bot/docs/discord-control-bot
+    about: Review setup, admin, user, roadmap, and SOC 2 readiness documentation.
