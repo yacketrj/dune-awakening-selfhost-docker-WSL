@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DISCORD_ADAPTER_ROUTES, discordAdapterErrorResponse, discordAdapterHealth, discordAdapterReadiness, discordAdapterServices, discordAdapterStatus, discordWritesEnabled } from "../src/integrations/discord/adapter.js";
+import { DISCORD_ADAPTER_ROUTES, discordAdapterErrorResponse, discordAdapterHealth, discordAdapterPopulation, discordAdapterReadiness, discordAdapterServices, discordAdapterStatus, discordWritesEnabled } from "../src/integrations/discord/adapter.js";
 
 const OLD_ENV = { ...process.env };
 
@@ -44,6 +44,7 @@ test("reports adapter health as experimental read-only", async () => {
   assert.equal(result.writesEnabled, false);
   assert.deepEqual([...result.liveRoutes].sort(), [
     "/api/integrations/discord/health",
+    "/api/integrations/discord/population",
     "/api/integrations/discord/readiness",
     "/api/integrations/discord/services",
     "/api/integrations/discord/status"
@@ -133,7 +134,18 @@ test("allows observer readiness and services", async () => {
   assert.equal(services.result.services[0].name, "Database");
 });
 
-test("blocks public readiness and services", async () => {
+test("allows moderator population summary", async () => {
+  const response = await discordAdapterPopulation({
+    config,
+    actorPayload: actor(["role-moderator"]),
+    populationProvider: async () => ({ overall: "OK", onlinePlayers: 2, totalPlayers: 3, detailsSuppressed: true })
+  });
+  assert.equal(response.ok, true);
+  assert.equal(response.result.onlinePlayers, 2);
+  assert.equal(response.result.detailsSuppressed, true);
+});
+
+test("blocks public readiness services and population", async () => {
   await assert.rejects(() => discordAdapterReadiness({
     config,
     actorPayload: actor([]),
@@ -144,6 +156,12 @@ test("blocks public readiness and services", async () => {
     config,
     actorPayload: actor([]),
     servicesProvider: async () => ({ services: [] })
+  }), /not authorized/);
+
+  await assert.rejects(() => discordAdapterPopulation({
+    config,
+    actorPayload: actor([]),
+    populationProvider: async () => ({ onlinePlayers: 1 })
   }), /not authorized/);
 });
 
