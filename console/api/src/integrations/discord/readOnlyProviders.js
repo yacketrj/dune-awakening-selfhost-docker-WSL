@@ -30,6 +30,14 @@ export async function discordServicesProvider(config) {
   return parseServicesOutput(result.stdout || result.stderr || "");
 }
 
+export async function discordPopulationProvider(config) {
+  const result = await runDune(config, buildDuneArgs("players"), {
+    timeoutMs: 30000,
+    allowedExitCodes: [0]
+  });
+  return parsePopulationOutput(result.stdout || result.stderr || "");
+}
+
 export function parseReadinessOutput(stdout = "", exitCode = 0) {
   const json = parseJsonObject(stdout);
   if (Object.keys(json).length > 0) return publicReadinessSummary(json, exitCode);
@@ -79,6 +87,19 @@ export function parseServicesOutput(stdout = "") {
   };
 }
 
+export function parsePopulationOutput(stdout = "") {
+  const json = parseJsonValue(stdout);
+  const summary = summarizePopulationValue(json ?? stdout);
+  return {
+    overall: "OK",
+    population: summary.onlinePlayers ?? summary.totalPlayers ?? "unknown",
+    onlinePlayers: summary.onlinePlayers ?? null,
+    totalPlayers: summary.totalPlayers ?? null,
+    detailsSuppressed: true,
+    note: "Player names and IDs are intentionally suppressed in Discord output."
+  };
+}
+
 export function publicReadinessSummary(value = {}, exitCode = 0) {
   const readyValue = value.ready ?? value.ok ?? value.readiness ?? value.status;
   const ready = typeof readyValue === "boolean"
@@ -93,21 +114,91 @@ export function publicReadinessSummary(value = {}, exitCode = 0) {
   };
 }
 
+function summarizePopulationValue(value) {
+  if (Array.isArray(value)) return summarizePopulationRows(value);
+  if (value && typeof value === "object") {
+    const rows = firstArray(value, ["players", "rows", "items", "data", "onlinePlayers"]);
+    if (rows) return summarizePopulationRows(rows, value);
+    return {
+      onlinePlayers: numericValue(value.onlinePlayers ?? value.online ?? value.connected ?? value.activePlayers ?? value.population),
+      totalPlayers: numericValue(value.totalPlayers ?? value.total ?? value.count ?? value.playersTotal)
+    };
+  }
+  return summarizePopulationText(String(value || ""));
+}
+
+function summarizePopulationRows(rows, container = {}) {
+  const totalPlayers = numericValue(container.totalPlayers ?? container.total ?? container.count) ?? rows.length;
+  const onlinePlayers = rows.filter((row) => playerLooksOnline(row)).length;
+  return { onlinePlayers, totalPlayers };
+}
+
+function summarizePopulationText(text = "") {
+  const clean = sanitizeDiscordValue(String(text || ""));
+  const onlinePlayers = firstNumber(clean, [/\bonline\s*(players)?\s*[:=]\s*(\d+)/i, /\bconnected\s*(players)?\s*[:=]\s*(\d+)/i]);
+  const totalPlayers = firstNumber(clean, [/\btotal\s*(players)?\s*[:=]\s*(\d+)/i, /\bplayers\s*[:=]\s*(\d+)/i]);
+  if (onlinePlayers !== null || totalPlayers !== null) return { onlinePlayers, totalPlayers };
+
+  const dataLines = clean.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^===/.test(line))
+    .filter((line) => !/^(player|name|id|steam|funcom|online|total|server)\b/i.test(line));
+  const guessedOnline = dataLines.filter((line) => /\b(online|connected|active)\b/i.test(line)).length;
+  return {
+    onlinePlayers: guessedOnline || null,
+    totalPlayers: dataLines.length || null
+  };
+}
+
+function playerLooksOnline(row) {
+  if (row === null || row === undefined) return false;
+  if (typeof row !== "object") return /\b(online|connected|active)\b/i.test(String(row));
+  if (typeof row.online === "boolean") return row.online;
+  if (typeof row.connected === "boolean") return row.connected;
+  return /\b(online|connected|active)\b/i.test(String(row.status || row.state || row.presence || ""));
+}
+
+function numericValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstArray(value, keys) {
+  for (const key of keys) {
+    if (Array.isArray(value?.[key])) return value[key];
+  }
+  return null;
+}
+
+function firstNumber(text, patterns) {
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (match) return Number(match.at(-1));
+  }
+  return null;
+}
+
 function parseJsonObject(stdout = "") {
+  const value = parseJsonValue(stdout);
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function parseJsonValue(stdout = "") {
   const text = String(stdout || "").trim();
   const candidates = [];
   for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === "{") candidates.push(text.slice(i));
+    if (text[i] === "{" || text[i] === "[") candidates.push(text.slice(i));
   }
   for (const candidate of candidates.reverse()) {
     try {
-      const value = JSON.parse(candidate);
-      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      return JSON.parse(candidate);
     } catch {
-      // Try the next opening brace.
+      // Try the next opening JSON marker.
     }
   }
-  return {};
+  return null;
 }
 
 function normalizeServiceStatus(value = "") {
