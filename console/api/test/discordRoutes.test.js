@@ -67,6 +67,7 @@ test("identifies experimental Discord adapter routes", () => {
   assert.equal(isDiscordAdapterRoute(DISCORD_ADAPTER_ROUTES.STATUS), true);
   assert.equal(isDiscordAdapterRoute(DISCORD_ADAPTER_ROUTES.READINESS), true);
   assert.equal(isDiscordAdapterRoute(DISCORD_ADAPTER_ROUTES.SERVICES), true);
+  assert.equal(isDiscordAdapterRoute(DISCORD_ADAPTER_ROUTES.POPULATION), true);
   assert.equal(isDiscordAdapterRoute("/api/integrations/discord/backups/delete"), false);
   assert.equal(isDiscordAdapterRoute("/api/admin/broadcast"), false);
 });
@@ -119,6 +120,7 @@ test("allows health with valid bot API credential", async () => {
   assert.equal(out.calls[0].body.readOnly, true);
   assert.equal(out.calls[0].body.writesEnabled, false);
   assert.ok(out.calls[0].body.liveRoutes.includes(DISCORD_ADAPTER_ROUTES.STATUS));
+  assert.ok(out.calls[0].body.liveRoutes.includes(DISCORD_ADAPTER_ROUTES.POPULATION));
   assert.ok(out.calls[0].body.plannedRoutes.includes(DISCORD_ADAPTER_ROUTES.LOGS));
 });
 
@@ -167,4 +169,20 @@ test("allows services with observer role", async () => {
   });
   assert.equal(out.calls[0].status, 200);
   assert.equal(out.calls[0].body.result.services[0].name, "Database");
+});
+
+test("allows population with moderator role", async () => {
+  const out = captureJson();
+  await handleDiscordAdapterRoute({
+    req: req({ method: "POST" }),
+    res: {},
+    path: DISCORD_ADAPTER_ROUTES.POPULATION,
+    config,
+    readJson: async () => ({ actor: actor(["role-moderator"]) }),
+    json: out.json,
+    populationProvider: async () => ({ overall: "OK", onlinePlayers: 4, totalPlayers: 6, detailsSuppressed: true })
+  });
+  assert.equal(out.calls[0].status, 200);
+  assert.equal(out.calls[0].body.result.onlinePlayers, 4);
+  assert.equal(out.calls[0].body.result.detailsSuppressed, true);
 });
