@@ -25,9 +25,17 @@ EOF
 set_env_value() {
   local key="$1"
   local value="$2"
+  set_env_file_value ".env" "$key" "$value" "644"
+}
+
+set_env_file_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local mode="${4:-644}"
   local tmp
 
-  touch .env
+  touch "$file"
   tmp="$(mktemp)"
   awk -F= -v key="$key" -v value="$value" '
     BEGIN { found = 0 }
@@ -40,9 +48,9 @@ set_env_value() {
     END {
       if (!found) print key "=" value
     }
-  ' .env > "$tmp"
-  mv "$tmp" .env
-  chmod 644 .env
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+  chmod "$mode" "$file" 2>/dev/null || true
 }
 
 now_stamp() {
@@ -151,6 +159,7 @@ EOF
 Description=Check Dune Awakening public IP for changes
 
 [Timer]
+OnActiveSec=30s
 OnBootSec=2min
 OnUnitActiveSec=${interval_minutes}min
 AccuracySec=30s
@@ -193,6 +202,7 @@ EOF
 Description=Check Dune Awakening public IP for changes
 
 [Timer]
+OnActiveSec=30s
 OnBootSec=2min
 OnUnitActiveSec=${DUNE_IP_CHANGE_RESTART_INTERVAL_MINUTES}min
 AccuracySec=30s
@@ -203,7 +213,8 @@ Unit=dune-awakening-ip-change-restart.service
 WantedBy=timers.target
 EOF
       chroot /host /bin/systemctl daemon-reload
-      chroot /host /bin/systemctl enable --now dune-awakening-ip-change-restart.timer
+      chroot /host /bin/systemctl enable dune-awakening-ip-change-restart.timer
+      chroot /host /bin/systemctl restart dune-awakening-ip-change-restart.timer
     '
 }
 
@@ -225,6 +236,10 @@ disable_units_via_docker_host() {
 timer_status() {
   if command -v systemctl >/dev/null 2>&1; then
     if systemctl list-unit-files "$TIMER_NAME" --no-legend --no-pager 2>/dev/null | grep -q "^$TIMER_NAME"; then
+      systemctl is-active "$TIMER_NAME" 2>/dev/null || true
+      return 0
+    fi
+    if systemctl status "$TIMER_NAME" --no-pager >/dev/null 2>&1; then
       systemctl is-active "$TIMER_NAME" 2>/dev/null || true
       return 0
     fi
@@ -252,9 +267,9 @@ show_host_timer_status_via_docker() {
 
 baseline_ip() {
   first_known_value \
-    "${DUNE_IP_CHANGE_RESTART_LAST_IP:-}" \
     "$(config_value .env SERVER_IP 2>/dev/null || true)" \
     "$(config_value runtime/generated/battlegroup.env SERVER_IP 2>/dev/null || true)" \
+    "${DUNE_IP_CHANGE_RESTART_LAST_IP:-}" \
     || true
 }
 
@@ -265,6 +280,10 @@ restart_stack_after_ip_change() {
 
   set_env_value SERVER_IP "$new_ip"
   set_env_value SERVER_IP_MODE "public"
+  if [ -f runtime/generated/battlegroup.env ]; then
+    set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$new_ip" "600"
+    set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "600"
+  fi
   echo "Updated SERVER_IP from ${old_ip:-unknown} to $new_ip."
 
   if [ "$notify_minutes" -gt 0 ]; then
@@ -306,6 +325,10 @@ check_now() {
   fi
 
   if [ "$current" = "$previous" ]; then
+    if [ "$(config_value .env SERVER_IP 2>/dev/null || true)" = "$current" ] && [ -f runtime/generated/battlegroup.env ]; then
+      set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$current" "600"
+      set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "600"
+    fi
     write_state "${DUNE_IP_CHANGE_RESTART_ENABLED:-0}" "$interval_minutes" "$notify_minutes" "$current" "$checked_at" "${DUNE_IP_CHANGE_RESTART_LAST_RESTART:-}" "${DUNE_IP_CHANGE_RESTART_TIMER_INSTALLED:-0}"
     echo "Public IP unchanged: $current"
     return 0
@@ -338,7 +361,8 @@ enable_monitor() {
   if command -v systemctl >/dev/null 2>&1 && can_manage_systemd_units; then
     write_units_to "$interval_minutes" "/etc/systemd/system" "$HOST_ROOT_DIR"
     systemctl daemon-reload
-    systemctl enable --now "$TIMER_NAME"
+    systemctl enable "$TIMER_NAME"
+    systemctl restart "$TIMER_NAME"
     write_state 1 "$interval_minutes" "$notify_minutes" "$baseline" "$(now_stamp)" "${DUNE_IP_CHANGE_RESTART_LAST_RESTART:-}" 1
   elif install_units_via_docker_host "$interval_minutes"; then
     write_state 1 "$interval_minutes" "$notify_minutes" "$baseline" "$(now_stamp)" "${DUNE_IP_CHANGE_RESTART_LAST_RESTART:-}" 1
