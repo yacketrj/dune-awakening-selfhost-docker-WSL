@@ -113,7 +113,7 @@ async function handleInteraction(interaction) {
   if (parsed.command === "help") {
     await editDeferredInteraction(interaction, {
       ephemeral: true,
-      content: "**Dune bot help**\n`/dune health` - adapter health\n`/dune status public` - public redacted status\n`/dune status detail` - admin-only diagnostics\n`/dune readiness` - readiness summary\n`/dune services` - service summary\n`/dune version` - bot/runtime version"
+      content: "**Dune bot help**\n`/dune health` - adapter health\n`/dune status public` - public redacted status\n`/dune status detail` - admin-only diagnostics\n`/dune readiness` - readiness summary\n`/dune services` - service summary\n`/dune population` - moderator-only population summary\n`/dune version` - bot/runtime version"
     });
     return;
   }
@@ -141,6 +141,7 @@ function parseDuneInteraction(interaction) {
   if (first.name === "health") return { command: "health", commandLabel: "/dune health" };
   if (first.name === "readiness") return { command: "readiness", commandLabel: "/dune readiness" };
   if (first.name === "services") return { command: "services", commandLabel: "/dune services" };
+  if (first.name === "population") return { command: "population", commandLabel: "/dune population" };
   if (first.name === "help") return { command: "help", commandLabel: "/dune help" };
   if (first.name === "version") return { command: "version", commandLabel: "/dune version" };
 
@@ -187,6 +188,10 @@ async function callDuneCommand(command, actor) {
   if (command === "services") {
     const response = await callConsole("POST", "/api/integrations/discord/services", { actor });
     return { ephemeral: true, ...formatCommandResponse("services", response) };
+  }
+  if (command === "population") {
+    const response = await callConsole("POST", "/api/integrations/discord/population", { actor });
+    return { ephemeral: true, ...formatCommandResponse("population", response) };
   }
   throw new Error(`Unsupported Dune command: ${command}`);
 }
@@ -306,6 +311,7 @@ function duneCommandDefinition() {
       },
       { type: 1, name: "readiness", description: "Show server readiness summary." },
       { type: 1, name: "services", description: "Show service summary." },
+      { type: 1, name: "population", description: "Show moderator-only player population summary." },
       { type: 1, name: "help", description: "Show safe command help." },
       { type: 1, name: "version", description: "Show bot version." }
     ]
