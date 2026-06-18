@@ -7,13 +7,18 @@ const serverPath = resolve("src/server.js");
 let source = readFileSync(serverPath, "utf8");
 
 const importAnchor = 'import { funcomAuthMismatchDetected, matchingFuncomAuthLines, saveFuncomTokenValue as writeFuncomToken, validDockerSince } from "./services/funcomAuth.js";\n';
+const legacyReadOnlyImport = 'import { discordReadinessProvider, discordServicesProvider } from "./integrations/discord/readOnlyProviders.js";\n';
+const readOnlyImport = 'import { discordPopulationProvider, discordReadinessProvider, discordServicesProvider } from "./integrations/discord/readOnlyProviders.js";\n';
 const imports = [
   'import { handleDiscordAdapterRoute, isDiscordAdapterRoute } from "./integrations/discord/routes.js";\n',
   'import { discordStatusProvider } from "./integrations/discord/statusProvider.js";\n',
-  'import { discordPopulationProvider, discordReadinessProvider, discordServicesProvider } from "./integrations/discord/readOnlyProviders.js";\n'
+  readOnlyImport
 ];
 
 if (!source.includes(importAnchor)) throw new Error("Server import anchor not found.");
+if (source.includes(legacyReadOnlyImport) && !source.includes(readOnlyImport)) {
+  source = source.replace(legacyReadOnlyImport, readOnlyImport);
+}
 for (const line of imports) {
   if (!source.includes(line)) source = source.replace(importAnchor, `${importAnchor}${line}`);
 }
