@@ -31,7 +31,8 @@ const commandMap = {
   status: { method: "POST", path: "/api/integrations/discord/status", body: { actor, diagnostic: false } },
   statusDetail: { method: "POST", path: "/api/integrations/discord/status", body: { actor, diagnostic: true } },
   readiness: { method: "POST", path: "/api/integrations/discord/readiness", body: { actor } },
-  services: { method: "POST", path: "/api/integrations/discord/services", body: { actor } }
+  services: { method: "POST", path: "/api/integrations/discord/services", body: { actor } },
+  population: { method: "POST", path: "/api/integrations/discord/population", body: { actor } }
 };
 
 if (!commandMap[command]) {
