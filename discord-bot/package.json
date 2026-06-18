@@ -19,7 +19,8 @@
     "smoke:status": "node scripts/command-smoke.mjs status public",
     "smoke:status-detail": "node scripts/command-smoke.mjs statusDetail admin",
     "smoke:readiness": "node scripts/command-smoke.mjs readiness observer",
-    "smoke:services": "node scripts/command-smoke.mjs services observer"
+    "smoke:services": "node scripts/command-smoke.mjs services observer",
+    "smoke:population": "node scripts/command-smoke.mjs population moderator"
   },
   "dependencies": {},
   "devDependencies": {}
