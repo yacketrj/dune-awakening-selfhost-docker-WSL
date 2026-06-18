@@ -166,20 +166,24 @@ export function AdminToolsPanel({ onError, confirmAction }: AdminToolsPanelProps
     }
   }
 
-  async function loadIpChangeRestart() {
-    setIpChangeLoading(true);
+  async function loadIpChangeRestart(options: { showLoading?: boolean; syncControls?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    const syncControls = options.syncControls ?? true;
+    if (showLoading) setIpChangeLoading(true);
     try {
       const result = await serverApi.ipChangeRestart();
       setIpChangeRestart(result);
       const values = parseKeyValueText(result.stdout || "");
       const timerActive = /^active$/i.test(values.systemd_timer || "");
       setIpChangeEnabled(/^true$/i.test(values.public_ip_change_restart_enabled || "") && timerActive);
-      const intervalMatch = String(values.check_interval || "").match(/\d+/);
-      if (intervalMatch) setIpChangeIntervalMinutes(intervalMatch[0]);
-      const notifyMatch = String(values.in_game_notice || "").match(/\d+/);
-      if (notifyMatch) setIpChangeNotifyMinutes(notifyMatch[0]);
+      if (syncControls) {
+        const intervalMatch = String(values.check_interval || "").match(/\d+/);
+        if (intervalMatch) setIpChangeIntervalMinutes(intervalMatch[0]);
+        const notifyMatch = String(values.in_game_notice || "").match(/\d+/);
+        if (notifyMatch) setIpChangeNotifyMinutes(notifyMatch[0]);
+      }
     } finally {
-      setIpChangeLoading(false);
+      if (showLoading) setIpChangeLoading(false);
     }
   }
 
@@ -248,6 +252,14 @@ export function AdminToolsPanel({ onError, confirmAction }: AdminToolsPanelProps
       if (resultTimer.current) window.clearTimeout(resultTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.hidden || ipChangeResult?.status === "running") return;
+      loadIpChangeRestart({ showLoading: false, syncControls: false }).catch(() => undefined);
+    }, 30000);
+    return () => window.clearInterval(id);
+  }, [ipChangeResult?.status]);
 
   useEffect(() => {
     if (!scheduleResult || scheduleResult.status === "running") return;

@@ -241,6 +241,20 @@ export function HomePanel({ status, readiness, taskResult, setTaskResult, funcom
   }, [runningAction, status, readiness, onLoad]);
 
   useEffect(() => {
+    if (runningAction || homeNeedsWarmRefresh(status, readiness)) return;
+    let active = true;
+    const id = window.setInterval(async () => {
+      if (document.hidden) return;
+      const result = await onLoad().catch(() => null);
+      if (active && result) applyHomeLoadResult(result);
+    }, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [runningAction, status, readiness, onLoad]);
+
+  useEffect(() => {
     if (runningAction !== "start" && runningAction !== "restart") return;
     if (!isHomeActionComplete(status, readiness)) return;
     const minimumTransitionMs = runningAction === "restart" ? 8000 : 0;
