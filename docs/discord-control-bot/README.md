@@ -19,6 +19,7 @@ Implemented commands:
 | `/dune status detail` | Ephemeral | Shows admin-only diagnostic status. |
 | `/dune readiness` | Ephemeral | Shows readiness summary. |
 | `/dune services` | Ephemeral | Shows service health summary. |
+| `/dune population` | Ephemeral | Shows moderator-only population counts with player details suppressed. |
 
 Out of scope for this release:
 
@@ -86,7 +87,7 @@ export DISCORD_CLIENT_ID="123456789012345678"
 export DISCORD_GUILD_ID="123456789012345678"
 
 export DISCORD_OBSERVER_ROLE_IDS="123456789012345678"
-export DISCORD_MODERATOR_ROLE_IDS=""
+export DISCORD_MODERATOR_ROLE_IDS="123456789012345678"
 export DISCORD_ADMIN_ROLE_IDS="123456789012345678"
 export DISCORD_OWNER_ROLE_IDS=""
 ```
@@ -213,9 +214,10 @@ Operational summaries:
 ```text
 /dune readiness
 /dune services
+/dune population
 ```
 
-Most responses are ephemeral to reduce channel noise and avoid leaking operational details. `/dune status public` is the public channel-safe command.
+Most responses are ephemeral to reduce channel noise and avoid leaking operational details. `/dune status public` is the public channel-safe command. `/dune population` suppresses player names and IDs and only returns counts.
 
 ## Role matrix
 
@@ -225,7 +227,7 @@ The backend adapter enforces capabilities. Discord role names are not trusted au
 | --- | --- | --- | --- |
 | Public / no mapped role | none | `status:read` public-safe only | `/dune health`, `/dune status public`, `/dune help`, `/dune version` |
 | Observer | `DISCORD_OBSERVER_ROLE_IDS` | `status:read`, `readiness:read`, `services:read` | Public commands plus `/dune readiness`, `/dune services` |
-| Moderator | `DISCORD_MODERATOR_ROLE_IDS` | Observer capabilities plus future read-only population/map/backup visibility | Same as Observer in current release unless future read-only routes are enabled |
+| Moderator | `DISCORD_MODERATOR_ROLE_IDS` | Observer capabilities plus `population:read` | Observer commands plus `/dune population` |
 | Admin | `DISCORD_ADMIN_ROLE_IDS` | Moderator capabilities plus `logs:read` / diagnostic visibility | `/dune status detail` plus lower-tier commands |
 | Owner | `DISCORD_OWNER_ROLE_IDS` | Admin-equivalent for current read-only release | `/dune status detail` plus lower-tier commands |
 
@@ -264,7 +266,7 @@ curl -i -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/integrations
 
 Guild slash commands usually update quickly, but stale Discord clients can cache command menus. Restart the Discord client and confirm the runtime logs show `slash_commands_registered`.
 
-### Permission denied for `/dune readiness` or `/dune services`
+### Permission denied for `/dune readiness`, `/dune services`, or `/dune population`
 
 Run discovery and confirm the mapped role IDs match the user roles Discord sends:
 
@@ -284,6 +286,7 @@ From `discord-bot/`:
 npm test
 npm run security:secrets
 npm run build
+npm run smoke:population
 ```
 
 From `console/api/`:
