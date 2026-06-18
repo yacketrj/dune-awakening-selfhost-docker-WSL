@@ -2,7 +2,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFi
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildDuneArgs, runDune } from "./runner.js";
-import { resolveCatalogItem } from "./adminCatalog.js";
+import { itemRequiresDatabaseGrant, resolveCatalogItem } from "./adminCatalog.js";
 import { publishCarePackageWhisper } from "./rmq.js";
 import { giveItemToPlayer } from "./duneDb.js";
 
@@ -283,7 +283,8 @@ export async function grantCarePackage(config, playerId, body = {}, context = {}
         quality: item.quality,
         durability: 1
       };
-      if (Number(item.quality || 0) > 0 && context.db && body.actorId) {
+      const needsDatabaseGrant = Number(item.quality || 0) > 0 || itemRequiresDatabaseGrant(resolved);
+      if (needsDatabaseGrant && context.db && body.actorId) {
         const result = config.mockMode
           ? { ok: true, inserted: { template_id: resolved.itemId, stack_size: item.quantity, quality_level: item.quality } }
           : await (context.dbGiveItemToPlayer || ((actorId, itemPayload) => giveItemToPlayer(context.db, actorId, itemPayload)))(body.actorId, { templateId: resolved.itemId, quantity: item.quantity, quality: item.quality });

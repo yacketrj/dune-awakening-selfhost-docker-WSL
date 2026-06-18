@@ -13,7 +13,7 @@ import { createDb } from "./db.js";
 import * as duneDb from "./duneDb.js";
 import { audit, recordAdminHistory } from "./audit.js";
 import { redact } from "./redact.js";
-import { listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
+import { itemRequiresDatabaseGrant, listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
 import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishMapChat, publishServerCommand } from "./rmq.js";
 import { clearCarePackageHistory, enableCarePackage, ensureCarePackageServerPersona, grantEligibleCarePackages, grantCarePackage, retryCarePackageGrant, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory } from "./carePackage.js";
 import { readJsonBody, readMultipartForm } from "./httpSafety.js";
@@ -1341,7 +1341,12 @@ async function giveSingleItemRoute(req, res, path, operation) {
   const body = await readJson(req);
   const playerId = decodeURIComponent(path.split("/")[3]);
   if (body.quality === undefined && body.grade === undefined) {
-    return task(req, res, "admin", operation, { ...body, playerId });
+    const resolved = operation === "adminGiveItemId"
+      ? resolveCatalogItem(config.repoRoot, { itemId: body.itemId })
+      : resolveCatalogItem(config.repoRoot, { itemName: body.itemName });
+    if (!itemRequiresDatabaseGrant(resolved)) {
+      return task(req, res, "admin", operation, { ...body, playerId });
+    }
   }
   const item = operation === "adminGiveItemId"
     ? { itemId: body.itemId, quantity: body.quantity, quality: body.quality, grade: body.grade, durability: body.durability }
@@ -1362,7 +1367,8 @@ async function grantPlayerItem(playerId, item, target) {
   const operation = resolved.itemId ? "adminGiveItemId" : "adminGiveItem";
   const hasExplicitGrade = item.quality !== undefined || item.grade !== undefined;
   const selectedGrade = hasExplicitGrade ? validateGrantGrade(item.quality ?? item.grade) : undefined;
-  const usesDatabaseGrade = selectedGrade !== undefined && selectedGrade > 0;
+  const usesDatabaseGrant = (selectedGrade !== undefined && selectedGrade > 0) || itemRequiresDatabaseGrant(resolved);
+  const databaseGrade = hasExplicitGrade ? selectedGrade : 0;
   const payload = {
     playerId: target.actionId || playerId,
     itemId: resolved.itemId,
@@ -1371,17 +1377,17 @@ async function grantPlayerItem(playerId, item, target) {
     quality: hasExplicitGrade ? selectedGrade : undefined,
     durability: 1
   };
-  if (usesDatabaseGrade) {
-    if (!config.mockMode && !target.actorId) throw new Error("A database actor ID is required to grant graded items");
+  if (usesDatabaseGrant) {
+    if (!config.mockMode && !target.actorId) throw new Error("A database actor ID is required to grant graded items, schematics, and augments");
     const result = config.mockMode
-      ? { ok: true, inserted: { template_id: resolved.itemId || payload.itemName, stack_size: payload.quantity, quality_level: payload.quality } }
+      ? { ok: true, inserted: { template_id: resolved.itemId || payload.itemName, stack_size: payload.quantity, quality_level: databaseGrade } }
       : await duneDb.giveItemToPlayer(db, target.actorId, {
           templateId: resolved.itemId || "",
           itemName: payload.itemName,
           quantity: payload.quantity,
-          quality: payload.quality
+          quality: databaseGrade
         });
-    return { ok: true, operation: "dbGiveItemToPlayer", item: payload, result };
+    return { ok: true, operation: "dbGiveItemToPlayer", item: { ...payload, quality: databaseGrade }, result };
   }
   const command = buildDuneArgs(operation, payload);
   if (config.mockMode) return { ok: true, operation, command };

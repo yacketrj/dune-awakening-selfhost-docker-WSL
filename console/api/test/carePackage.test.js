@@ -233,6 +233,29 @@ test("care package supports separate manual and auto-grant kit selection", async
   }
 });
 
+test("care package grants schematics through the database item path", async () => {
+  const config = tempConfig();
+  try {
+    writeCatalog(config);
+    saveCarePackageConfig(config, {
+      enabled: true,
+      activeKitId: "schematic-kit",
+      kits: [{ id: "schematic-kit", name: "Schematic Kit", xp: 0, items: [{ itemName: "Arhun K-28 Lasgun", quantity: 1, quality: 0 }] }]
+    });
+    const result = await grantCarePackage(config, "Player#1", {
+      confirmation: "GRANT CARE PACKAGE",
+      kitId: "schematic-kit",
+      actorId: 101,
+      characterName: "Test"
+    }, { db: {}, dbGiveItemToPlayer: async (_actorId, item) => ({ ok: true, inserted: { template_id: item.templateId, quality_level: item.quality } }) });
+    const itemGrant = result.results.find((row) => row.item?.itemId === "ChoamHeavyLasgunSchematic");
+    assert.equal(itemGrant.operation, "dbGiveItemToPlayer");
+    assert.equal(itemGrant.result.inserted.quality_level, 0);
+  } finally {
+    rmSync(config.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("care package auto scan supports multiple enabled rules with different conditions", async () => {
   const config = tempConfig();
   try {
@@ -559,7 +582,8 @@ function writeCatalog(config) {
   mkdirSync(resolve(config.repoRoot, "runtime/data"), { recursive: true });
   writeFileSync(resolve(config.repoRoot, "runtime/data/admin-items.json"), JSON.stringify([
     { id: "PlantFiber_1", name: "Plant Fiber", category: "materials" },
-    { id: "CupWater_1", name: "Cup of Water", category: "consumables" }
+    { id: "CupWater_1", name: "Cup of Water", category: "consumables" },
+    { id: "ChoamHeavyLasgunSchematic", name: "Arhun K-28 Lasgun", category: "schematics", source: "Schematics" }
   ]));
 }
 

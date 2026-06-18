@@ -45,6 +45,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
   const [playerAdmin_itemEditIndex, playerAdmin_setItemEditIndex] = useState<number | null>(null);
   const [playerAdmin_itemEditDraft, playerAdmin_setItemEditDraft] = useState({ quantity: "1", grade: "0" });
   const [playerAdmin_actionResult, playerAdmin_setActionResult] = useState<{ key: string; tone: "success" | "danger" | "neutral"; text: string; pending?: boolean } | null>(null);
+  const [playerAdmin_busyActionKey, playerAdmin_setBusyActionKey] = useState("");
   const [playerAdmin_characterLog, playerAdmin_setCharacterLog] = useState<Record<string, string>[]>([]);
   const [playerAdmin_adminLog, playerAdmin_setAdminLog] = useState<Record<string, string>[]>([]);
   const [playerAdmin_craftingRows, playerAdmin_setCraftingRows] = useState<CraftingRecipeRow[]>([]);
@@ -83,7 +84,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
     playerAdmin_setActionResult({ key, text, tone, pending });
     if (playerAdmin_resultTimer.current) window.clearTimeout(playerAdmin_resultTimer.current);
     playerAdmin_resultTimer.current = null;
-    if (!pending) playerAdmin_resultTimer.current = window.setTimeout(() => playerAdmin_setActionResult(null), 5000);
+    if (!pending) playerAdmin_resultTimer.current = window.setTimeout(() => playerAdmin_setActionResult(null), 8000);
   }
   function playerAdmin_addLog(actionType: string, target: string, amount: string, notes: string) {
     const row = { "Date / Time": new Date().toLocaleString(), Admin: "Console", "Action Type": actionType, Target: target, Amount: amount, Notes: notes };
@@ -201,17 +202,19 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
   async function playerAdmin_unlockCraftingRecipe(row: CraftingRecipeRow) {
     const key = `crafting:${row.recipeId}`;
     onError("");
-    playerAdmin_showResult(key, `Unlocking ${row.displayName} for ${playerName}`, "neutral", true);
+    playerAdmin_setBusyActionKey(key);
     try {
       const response = await playersApi.unlockCraftingRecipe(dbPlayerId, { recipeId: row.recipeId, confirmation: "UNLOCK CRAFTING RECIPE" });
       const alreadyUnlocked = Boolean(response.result?.alreadyUnlocked);
-      playerAdmin_showResult(key, alreadyUnlocked ? `${row.displayName} was already unlocked for ${playerName}.` : `${row.displayName} was unlocked for ${playerName}.`, "success");
       playerAdmin_addLog("Unlock Crafting Recipe", row.recipeId, "1", alreadyUnlocked ? "Already Unlocked" : "Succeeded");
       await playerAdmin_loadCraftingRecipes();
+      playerAdmin_showResult(key, alreadyUnlocked ? "Already unlocked." : "Unlocked. Player will see it on next login.", "success");
     } catch (error) {
       const message = friendlyInlineError(error);
       playerAdmin_showResult(key, message, "danger");
       playerAdmin_addLog("Unlock Crafting Recipe", row.recipeId, "1", `Failed: ${message}`);
+    } finally {
+      playerAdmin_setBusyActionKey("");
     }
   }
   async function playerAdmin_loadResearchItems() {
@@ -243,18 +246,20 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
   async function playerAdmin_unlockResearchItem(row: ResearchItemRow) {
     const key = `research:${row.itemKey}`;
     onError("");
-    playerAdmin_showResult(key, `Unlocking ${row.displayName} for ${playerName}`, "neutral", true);
+    playerAdmin_setBusyActionKey(key);
     try {
       const response = await playersApi.unlockResearchItem(dbPlayerId, { itemKey: row.itemKey, confirmation: "UNLOCK RESEARCH ITEM" });
       const alreadyUnlocked = Boolean(response.result?.alreadyUnlocked);
-      playerAdmin_showResult(key, alreadyUnlocked ? `${row.displayName} was already unlocked for ${playerName}.` : `${row.displayName} was unlocked for ${playerName}.`, "success");
       playerAdmin_addLog("Unlock Research", row.itemKey, "1", alreadyUnlocked ? "Already Unlocked" : "Succeeded");
       await playerAdmin_loadResearchItems();
       await playerAdmin_loadCraftingRecipes();
+      playerAdmin_showResult(key, alreadyUnlocked ? "Already researched." : "Researched. Player will see it on next login.", "success");
     } catch (error) {
       const message = friendlyInlineError(error);
       playerAdmin_showResult(key, message, "danger");
       playerAdmin_addLog("Unlock Research", row.itemKey, "1", `Failed: ${message}`);
+    } finally {
+      playerAdmin_setBusyActionKey("");
     }
   }
   async function playerAdmin_loadSkillCatalog() {
@@ -693,7 +698,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
   const playerAdmin_craftingTable = (
     <div className="playerAdmin_tableWrap">
       <table className="playerAdmin_table playerAdmin_compactTable playerAdmin_fullResultTable playerAdmin_schematicTable">
-        <thead><tr><th>Recipe</th><th>Recipe ID</th><th>Source</th><th>Quality</th><th>Result</th><th>Action</th></tr></thead>
+        <thead><tr><th>Recipe</th><th>Recipe ID</th><th>Source</th><th>Grade</th><th>Result</th><th>Action</th></tr></thead>
         <tbody>
           {playerAdmin_filteredCraftingRows.map((row) => (
             <tr key={row.recipeId}>
@@ -702,7 +707,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
               <td>{friendlyCraftingSource(row.source)}</td>
               <td>{row.qualityLevel}</td>
               <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={`crafting:${row.recipeId}`} /></td>
-              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockCraftingRecipe(row)}>{row.unlocked ? "Unlocked" : "Unlock"}</button></td>
+              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || Boolean(playerAdmin_busyActionKey)} onClick={() => playerAdmin_unlockCraftingRecipe(row)}>{playerAdmin_busyActionKey === `crafting:${row.recipeId}` ? "Unlocking..." : row.unlocked ? "Unlocked" : "Unlock"}</button></td>
             </tr>
           ))}
           {!playerAdmin_filteredCraftingRows.length && <tr><td colSpan={6}>{playerAdmin_craftingLoading ? "Loading recipes..." : "No crafting recipes found for this category."}</td></tr>}
@@ -722,7 +727,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
               <td>{row.type}</td>
               <td>{row.productGroup}</td>
               <td className="playerAdmin_resultCell"><InlineActionResult result={playerAdmin_actionResult} resultKey={`research:${row.itemKey}`} /></td>
-              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || playerAdmin_actionResult?.pending} onClick={() => playerAdmin_unlockResearchItem(row)}>{row.unlocked ? "Researched" : "Research"}</button></td>
+              <td className="playerAdmin_actionCell"><button className="playerAdmin_stateActionButton" disabled={!dbPlayerId || row.unlocked || Boolean(playerAdmin_busyActionKey)} onClick={() => playerAdmin_unlockResearchItem(row)}>{playerAdmin_busyActionKey === `research:${row.itemKey}` ? "Researching..." : row.unlocked ? "Researched" : "Research"}</button></td>
             </tr>
           ))}
           {!playerAdmin_filteredResearchRows.length && <tr><td colSpan={6}>{playerAdmin_researchLoading ? "Loading research..." : "No research entries found for this filter."}</td></tr>}
@@ -847,7 +852,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
           {playerAdmin_actionRow("intel", "Give Intel", <input type="number" min="1" value={playerAdmin_intelAmount} onChange={(event) => playerAdmin_setIntelAmount(event.target.value)} />, "Give", () => playerAdmin_runAction("intel", `Giving ${Number(playerAdmin_intelAmount) || 0} Intel to ${playerName}`, () => playersApi.addIntel(dbPlayerId, { amount: Number(playerAdmin_intelAmount) || 0, confirmation: "ADD INTEL" }), `${playerName}'s Intel was updated and will load on next join.`, { actionType: "Give Intel", target: playerName, amount: String(Number(playerAdmin_intelAmount) || 0) }), !dbPlayerId || playerAdmin_isOnline, playerAdmin_isOnline ? "The player must be offline." : "The player must be offline for this database edit.")}
           {playerAdmin_actionRow("faction", "Give Faction Reputation", <><select value={playerAdmin_factionName} onChange={(event) => playerAdmin_setFactionName(event.target.value)}><option>Atreides</option><option>Harkonnen</option><option>Smuggler</option></select><input type="number" min="1" max="12474" value={playerAdmin_factionAmount} onChange={(event) => playerAdmin_setFactionAmount(event.target.value)} /></>, "Give", () => playerAdmin_runAction("faction", `Giving ${Number(playerAdmin_factionAmount) || 0} ${playerAdmin_factionName} reputation to ${playerName}`, () => playersApi.addFactionReputation(dbPlayerId, { factionId: playerAdmin_factionIds[playerAdmin_factionName] || 1, amount: Number(playerAdmin_factionAmount) || 0, confirmation: "ADD FACTION REPUTATION" }), `${playerName}'s faction reputation was updated. Relog required.`, { actionType: "Give Faction Reputation", target: playerAdmin_factionName, amount: String(Number(playerAdmin_factionAmount) || 0) }), !dbPlayerId, "A relog is required to see the change.")}
         </div></section>
-        <div className={`playerAdmin_toggle ${playerAdmin_openToggles.give_items ? "open" : ""}`}><button className="playerAdmin_toggleHeader" onClick={() => playerAdmin_toggle("give_items")}>{playerAdmin_openToggles.give_items ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Give Items</span></button>{playerAdmin_openToggles.give_items && <div className="playerAdmin_toggleBody"><div className="playerAdmin_section"><p className="action-help-note">The player must be online. Grade 0 is instant. Grades 1-5 are saved to the player inventory and may require a relog before they appear correctly.</p><ItemCatalogSelector selected={playerAdmin_selectedItem} onSelect={playerAdmin_chooseItem} /><div className="playerAdmin_itemActionStack"><div className="playerAdmin_itemInputLine"><span className="playerAdmin_actionLabel playerAdmin_itemSelectedLabel">Selected Item</span><label className="playerAdmin_itemNumberField">Quantity<input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_quantity} onChange={(event) => playerAdmin_setQuantity(event.target.value)} /></label><label className="playerAdmin_itemNumberField">Grade<ItemGradeSelect value={playerAdmin_grade} onChange={playerAdmin_setGrade} /></label><div className="playerAdmin_actionRow playerAdmin_itemActionRow"><button disabled={!playerAdmin_canRunLiveAction || (!playerAdmin_multiList.length && !playerAdmin_selectedItem) || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_giveMultipleItems()}>{playerAdmin_multiList.length ? "Give Package" : "Give Item"}</button><button disabled={!playerAdmin_selectedItem} onClick={playerAdmin_addSelectedItem}>Add Item</button><InlineActionResult result={playerAdmin_actionResult} resultKey="giveMultiple" /></div></div></div>
+        <div className={`playerAdmin_toggle ${playerAdmin_openToggles.give_items ? "open" : ""}`}><button className="playerAdmin_toggleHeader" onClick={() => playerAdmin_toggle("give_items")}>{playerAdmin_openToggles.give_items ? <ChevronUp size={18} /> : <ChevronDown size={18} />}<span>Give Items</span></button>{playerAdmin_openToggles.give_items && <div className="playerAdmin_toggleBody"><div className="playerAdmin_section"><p className="action-help-note">The player must be online for instant normal item grants. Schematics, augments, and Grades 1-5 are saved to the player inventory and may require a relog before they appear correctly.</p><ItemCatalogSelector selected={playerAdmin_selectedItem} onSelect={playerAdmin_chooseItem} /><div className="playerAdmin_itemActionStack"><div className="playerAdmin_itemInputLine"><span className="playerAdmin_actionLabel playerAdmin_itemSelectedLabel">Selected Item</span><label className="playerAdmin_itemNumberField">Quantity<input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_quantity} onChange={(event) => playerAdmin_setQuantity(event.target.value)} /></label><label className="playerAdmin_itemNumberField">Grade<ItemGradeSelect value={playerAdmin_grade} onChange={playerAdmin_setGrade} /></label><div className="playerAdmin_actionRow playerAdmin_itemActionRow"><button disabled={!playerAdmin_canRunLiveAction || (!playerAdmin_multiList.length && !playerAdmin_selectedItem) || playerAdmin_actionResult?.pending} onClick={() => void playerAdmin_giveMultipleItems()}>{playerAdmin_multiList.length ? "Give Package" : "Give Item"}</button><button disabled={!playerAdmin_selectedItem} onClick={playerAdmin_addSelectedItem}>Add Item</button><InlineActionResult result={playerAdmin_actionResult} resultKey="giveMultiple" /></div></div></div>
           {playerAdmin_multiList.length ? <div className="table-wrap package-items-table playerAdmin_itemsTable"><table><thead><tr><th>Preview</th><th>Item Name</th><th>Item ID</th><th>Quantity</th><th>Grade</th><th>Actions</th></tr></thead><tbody>{playerAdmin_multiList.map((item, index) => {
             const editing = playerAdmin_itemEditIndex === index;
             return <tr key={`${item.itemName || item.itemId}-${index}`}><td><PackageItemPreview item={item} /></td><td>{catalogItemName(item)}</td><td>{catalogItemId(item)}</td><td>{editing ? <input className="package-item-quantity-input" type="number" min="1" value={playerAdmin_itemEditDraft.quantity} onChange={(event) => playerAdmin_setItemEditDraft({ ...playerAdmin_itemEditDraft, quantity: event.target.value })} /> : item.quantity}</td><td>{editing ? <ItemGradeSelect value={playerAdmin_itemEditDraft.grade} onChange={(grade) => playerAdmin_setItemEditDraft({ ...playerAdmin_itemEditDraft, grade })} /> : itemGrade(item)}</td><td className="package-actions-cell"><div className="service-actions">{editing ? <><button onClick={() => playerAdmin_saveQueuedItem(index)}>Save</button><button onClick={() => playerAdmin_setItemEditIndex(null)}>Cancel</button></> : <button onClick={() => playerAdmin_editQueuedItem(index)}>Edit</button>}<button className="danger" onClick={() => playerAdmin_setMultiList(playerAdmin_multiList.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div></td></tr>;
@@ -861,7 +866,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
           <section className="playerAdmin_box">
             <h4>Crafting Schematics</h4>
             <div className="playerAdmin_boxHeaderLine">
-              <p>The player must be online.</p>
+              <p>Recipe unlocks require the player to be offline. The Grade shown is the recipe grade found in the game database.</p>
               <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
                 <span className="playerAdmin_note">{playerAdmin_filteredCraftingRows.length} Schematic{playerAdmin_filteredCraftingRows.length === 1 ? "" : "s"} Detected</span>
                 <button disabled={!dbPlayerId || playerAdmin_craftingLoading} onClick={() => playerAdmin_loadCraftingRecipes()}>{playerAdmin_craftingLoading ? "Loading..." : "Reload"}</button>
@@ -883,7 +888,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
           <section className="playerAdmin_box">
             <h4>Research Schematics</h4>
             <div className="playerAdmin_boxHeaderLine">
-              <p>The player must be online.</p>
+              <p>Research unlocks require the player to be offline. Unlocking research may also materialize its linked crafting recipe when the game database exposes one.</p>
               <div className="playerAdmin_filterRow playerAdmin_filterRowRight">
                 <span className="playerAdmin_note">{playerAdmin_filteredResearchRows.length} Research Entr{playerAdmin_filteredResearchRows.length === 1 ? "y" : "ies"} Detected</span>
                 {playerAdmin_researchCategory && <select value={playerAdmin_productGroup} onChange={(playerAdmin_event) => playerAdmin_setProductGroup(playerAdmin_event.target.value)}><option value="">All Product Groups</option>{playerAdmin_researchGroups[playerAdmin_researchCategory].map((playerAdmin_option) => <option key={playerAdmin_option}>{playerAdmin_option}</option>)}</select>}
