@@ -1609,11 +1609,15 @@ function mergeMapAndMemoryRows(mapsText: string, memoryText: string, serversText
 
 function mapRuntimeStatus(row: { assignedServer?: unknown; ready?: unknown; alive?: unknown }) {
   const assigned = Boolean(String(row.assignedServer || "").trim());
-  const ready = /^true$/i.test(String(row.ready || "").trim());
-  const alive = /^true$/i.test(String(row.alive || "").trim());
+  const ready = isTruthyDbValue(row.ready);
+  const alive = isTruthyDbValue(row.alive);
   if (ready) return "Running";
   if (assigned || alive) return "Warming";
   return "Not Running";
+}
+
+function isTruthyDbValue(value: unknown) {
+  return /^(true|t|1|yes|y)$/i.test(String(value || "").trim());
 }
 
 function mapCanForceDespawn(row: Record<string, unknown>) {

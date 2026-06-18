@@ -273,12 +273,16 @@ function formatMemoryValue(value) {
 
 function mapRuntimeStatus(row) {
   const assigned = Boolean(String(row.assignedServer || "").trim());
-  const ready = /^true$/i.test(String(row.ready || "").trim());
-  const alive = /^true$/i.test(String(row.alive || "").trim());
+  const ready = isTruthyDbValue(row.ready);
+  const alive = isTruthyDbValue(row.alive);
   if (ready) return "Ready";
   if (alive) return "Running";
   if (assigned) return "Starting";
   return "Not Running";
+}
+
+function isTruthyDbValue(value) {
+  return /^(true|t|1|yes|y)$/i.test(String(value || "").trim());
 }
 
 function sectionLines(text, section) {
