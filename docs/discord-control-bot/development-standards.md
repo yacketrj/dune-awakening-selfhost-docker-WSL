@@ -2,20 +2,20 @@
 
 ## Purpose
 
-This document defines the engineering standards for the Discord Control Bot and its Dune Console API adapter. The goal is to deliver WebUI parity using industry-standard development practices while maintaining security, auditability, and SOC 2 readiness evidence.
+This document defines the engineering standards for the Discord Control Bot and its Dune Console API adapter. The upstreamable scope is a read-only Discord companion that provides safe operational visibility. Full WebUI parity, moderator write commands, evidence automation, and compliance artifact generation remain separate fork-local or future work unless explicitly approved upstream.
 
 ## Core Engineering Standards
 
-1. Use TypeScript with strict compiler settings.
-2. Use small, typed modules with explicit boundaries.
-3. Keep Discord client logic separate from Dune Console API adapter logic.
-4. Do not duplicate privileged WebUI backend logic inside the bot.
-5. Prefer allowlists over denylists for service names, command names, file paths, and action types.
-6. Use structured logging with redaction.
-7. Treat all Discord inputs as untrusted.
-8. Test authorization and confirmation behavior before feature completeness.
-9. Require PR review before merge.
-10. Produce compliance evidence as part of normal CI.
+1. Keep Discord client logic separate from Dune Console API adapter logic.
+2. Do not duplicate privileged WebUI backend logic inside the bot.
+3. Do not add Discord write/mutation commands in the read-only release.
+4. Prefer allowlists over denylists for service names, command names, file paths, and action types.
+5. Use structured logging with redaction.
+6. Treat all Discord inputs as untrusted.
+7. Test authorization behavior before feature completeness.
+8. Require PR review before merge.
+9. Update setup, usage, and role-matrix documentation when behavior changes.
+10. Keep generated artifacts, runtime state, passwords, tokens, and evidence bundles out of upstream PRs.
 
 ## Architecture Standards
 
@@ -24,20 +24,9 @@ This document defines the engineering standards for the Discord Control Bot and 
 | Layer | Responsibility | Must Not Do |
 | --- | --- | --- |
 | Discord Bot Client | Discord connection, slash commands, interaction UX, formatting | Final authorization, direct Docker control, direct destructive DB writes |
-| Dune Console Discord API Adapter | Bot auth, server-side authorization, confirmations, audit, safe routing | Expose broad unauthenticated WebUI APIs |
-| Existing Console Backend | Reuse WebUI execution paths and safety behavior | Trust Discord client-only checks |
+| Dune Console Discord API Adapter | Bot auth, server-side authorization, audit, safe read-only routing | Expose broad unauthenticated WebUI APIs |
+| Existing Console Backend | Reuse WebUI read paths and safety behavior | Trust Discord client-only checks |
 | Dune Stack | Existing Docker/Postgres/RabbitMQ/game services | Accept direct unreviewed bot mutations |
-
-## TypeScript Standards
-
-1. `strict` mode must remain enabled.
-2. `noUncheckedIndexedAccess` must remain enabled.
-3. `exactOptionalPropertyTypes` must remain enabled.
-4. Public functions must use explicit types.
-5. Use discriminated unions for command/action models.
-6. Avoid `any`; require documented exception if used.
-7. Validate runtime input at trust boundaries.
-8. Keep transport DTOs separate from internal domain models.
 
 ## Secure Coding Standards
 
@@ -50,9 +39,8 @@ Required patterns:
 - Validate command names against allowlists.
 - Validate role IDs and channel IDs as strings, never as trusted authorization claims.
 - Validate service names against known service allowlists.
-- Validate SQL mode before execution.
-- Validate file paths with safe relative path helpers.
-- Validate numeric ranges for quantities, XP, coordinates, ports, and limits.
+- Validate file paths with safe relative path helpers where file reads are required.
+- Validate numeric ranges for ports, limits, counts, and timeouts.
 
 ### Output Handling
 
@@ -61,28 +49,30 @@ Required patterns:
 3. Admin diagnostic output must require admin/owner capability.
 4. Large responses must be paginated or summarized.
 5. Errors must use safe messages.
+6. Discord responses must set `allowed_mentions: { parse: [] }` unless a future feature explicitly needs mentions and has a separate review.
 
 ### Command Execution
 
-1. The bot must not use `child_process.exec`.
+1. The bot must not use `child_process.exec` for Discord-originated actions.
 2. The bot must not spawn shell commands for admin actions.
 3. Backend execution must use existing Console backend wrappers.
 4. If process execution is required in backend code, use fixed command paths and argument arrays; avoid shell interpolation.
 
 ### Database Access
 
-1. The bot must not connect directly to Postgres for write operations.
-2. Read-only SQL must be validated as read-only.
-3. Write SQL, if enabled, must be owner-only, typed-confirmed, audited, rate-limited, and backed up first where supported.
+1. The bot must not connect directly to Postgres.
+2. The read-only release must not add database write behavior.
+3. Any future database write feature must be separately approved, owner-only, typed-confirmed, audited, rate-limited, and backed up first where supported.
 4. Do not concatenate user input into SQL statements.
 
 ### Secrets
 
 1. Use file-based runtime secrets: `*_TOKEN_FILE`, `*_PASSWORD_FILE` where possible.
 2. Do not commit `.env` files containing secrets.
-3. Do not store Discord bot token in `addon.json`, static WebUI addon files, source files, tests, docs, logs, or container layers.
+3. Do not store the Discord bot token in addon files, static WebUI addon files, source files, tests, docs, logs, or container layers.
 4. Do not echo secrets in Discord.
 5. Do not log request bodies that may contain secrets.
+6. Do not upstream generated runtime state, local evidence bundles, vulnerability artifacts, passwords, tokens, or session secrets.
 
 ## Branching and Pull Request Standards
 
@@ -99,7 +89,7 @@ fix/discord-redaction-leak
 
 ### Pull Request Requirements
 
-Every PR must include:
+Every upstream PR must include:
 
 1. Purpose summary.
 2. Risk classification.
@@ -108,32 +98,31 @@ Every PR must include:
 5. Rollback plan.
 6. Screenshots/log snippets if user-facing behavior changes.
 7. Updated docs if behavior or controls change.
+8. Confirmation that no generated runtime files, artifacts, passwords, or secrets are included.
 
-Privileged feature PRs must also include:
+Privileged future-feature PRs must also include:
 
 1. Threat model update.
 2. Authorization matrix update.
 3. Confirmation matrix update.
 4. Audit event mapping.
 5. DAST test cases.
+6. Explicit owner approval.
 
 ## Definition of Done
 
 A feature is not done until all applicable items are complete:
 
 ```text
-[ ] Code is typed and reviewed.
+[ ] Code is reviewed.
 [ ] Unit tests pass.
 [ ] Authorization tests pass.
 [ ] Redaction tests pass.
 [ ] Secret scan passes.
-[ ] SCA gate passes.
-[ ] SAST gate passes.
-[ ] DCA gate passes if container files changed.
-[ ] DAST test cases exist for runtime features.
+[ ] Container checks pass if container files changed.
 [ ] Documentation is updated.
-[ ] SOC 2 evidence mapping is updated where applicable.
 [ ] Rollback path is documented.
+[ ] Upstream diff excludes generated artifacts, runtime state, passwords, tokens, and local evidence bundles.
 ```
 
 ## Testing Standards
@@ -146,7 +135,6 @@ A feature is not done until all applicable items are complete:
 | Authorization matrix tests | Every command and API route |
 | Redaction tests | All logging and response formatting |
 | Integration tests | API adapter and bot client interaction |
-| DAST tests | Runtime API and destructive workflows |
 | Container tests | Dockerfile and Compose changes |
 | Regression tests | Every fixed security issue |
 
@@ -155,20 +143,19 @@ A feature is not done until all applicable items are complete:
 Tests should describe policy intent:
 
 ```text
-blocks moderator from backup restore
 redacts postgres connection string in error output
-rejects write SQL through read-only query route
-requires owner confirmation for reset progression
+rejects unmapped observer command
+blocks write-capable Discord command registration
 blocks Docker socket mount in bot compose
 ```
 
 ## Logging Standards
 
-Use structured logs. Required fields:
+Use structured logs. Required fields where applicable:
 
 ```json
 {
-  "service": "dune-discord-control-bot",
+  "service": "dune-discord-companion-bot",
   "event": "command.received",
   "discordGuildId": "...",
   "discordChannelId": "...",
@@ -191,30 +178,27 @@ Forbidden in logs:
 
 ## Audit Standards
 
-Every state-changing command must emit an audit event with:
+Every Discord-originated adapter request should emit an audit event with:
 
 1. Source: `discord`.
 2. Discord actor context.
 3. Command and normalized action.
-4. Target object.
+4. Target object, if any.
 5. Risk level.
-6. Confirmation status.
-7. Authorization decision.
-8. Result.
-9. Error reason if blocked or failed.
+6. Authorization decision.
+7. Result.
+8. Error reason if blocked or failed.
 
 ## Release Standards
 
 A release candidate requires:
 
-1. Passing CI.
-2. SBOM.
-3. Image vulnerability scan.
-4. Image signing.
-5. Release notes.
-6. Rollback instructions.
-7. SOC 2 evidence index updated.
-8. No open critical/high security findings unless exception is approved and time-bound.
+1. Passing tests.
+2. Passing secret scan.
+3. Passing container checks if container files changed.
+4. Release notes.
+5. Rollback instructions.
+6. No open critical/high security findings unless exception is approved and time-bound.
 
 ## Exception Handling
 
