@@ -10,7 +10,7 @@ const importAnchor = 'import { funcomAuthMismatchDetected, matchingFuncomAuthLin
 const imports = [
   'import { handleDiscordAdapterRoute, isDiscordAdapterRoute } from "./integrations/discord/routes.js";\n',
   'import { discordStatusProvider } from "./integrations/discord/statusProvider.js";\n',
-  'import { discordReadinessProvider, discordServicesProvider } from "./integrations/discord/readOnlyProviders.js";\n'
+  'import { discordPopulationProvider, discordReadinessProvider, discordServicesProvider } from "./integrations/discord/readOnlyProviders.js";\n'
 ];
 
 if (!source.includes(importAnchor)) throw new Error("Server import anchor not found.");
@@ -19,13 +19,13 @@ for (const line of imports) {
 }
 
 const hookAnchor = '  if (path === "/api/health") return json(res, 200, { ok: true, app: config.appName });\n';
-const hook = `\n  if (isDiscordAdapterRoute(path)) {\n    return handleDiscordAdapterRoute({\n      req,\n      res,\n      path,\n      config,\n      readJson,\n      json,\n      statusProvider: ({ diagnostic } = {}) => discordStatusProvider(config, { diagnostic }),\n      readinessProvider: () => discordReadinessProvider(config),\n      servicesProvider: () => discordServicesProvider(config)\n    });\n  }\n`;
+const hook = `\n  if (isDiscordAdapterRoute(path)) {\n    return handleDiscordAdapterRoute({\n      req,\n      res,\n      path,\n      config,\n      readJson,\n      json,\n      statusProvider: ({ diagnostic } = {}) => discordStatusProvider(config, { diagnostic }),\n      readinessProvider: () => discordReadinessProvider(config),\n      servicesProvider: () => discordServicesProvider(config),\n      populationProvider: () => discordPopulationProvider(config)\n    });\n  }\n`;
 
-if (!source.includes("readinessProvider: () => discordReadinessProvider(config)")) {
-  if (source.includes("statusProvider: ({ diagnostic } = {}) => discordStatusProvider(config, { diagnostic })")) {
+if (!source.includes("populationProvider: () => discordPopulationProvider(config)")) {
+  if (source.includes("servicesProvider: () => discordServicesProvider(config)")) {
     source = source.replace(
-      "statusProvider: ({ diagnostic } = {}) => discordStatusProvider(config, { diagnostic })",
-      "statusProvider: ({ diagnostic } = {}) => discordStatusProvider(config, { diagnostic }),\n      readinessProvider: () => discordReadinessProvider(config),\n      servicesProvider: () => discordServicesProvider(config)"
+      "servicesProvider: () => discordServicesProvider(config)",
+      "servicesProvider: () => discordServicesProvider(config),\n      populationProvider: () => discordPopulationProvider(config)"
     );
   } else {
     if (!source.includes(hookAnchor)) throw new Error("Server route anchor not found.");
