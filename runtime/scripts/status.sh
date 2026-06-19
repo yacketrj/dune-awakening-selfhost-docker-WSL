@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../.."
 
 set -a
 [ -f .env ] && . ./.env
-[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 set +a
 source runtime/scripts/runtime-env.sh
 

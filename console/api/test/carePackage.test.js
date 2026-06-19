@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { clearCarePackageHistory, enableCarePackage, grantEligibleCarePackages, grantCarePackage, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory, validateCarePackageConfig } from "../src/carePackage.js";
@@ -193,6 +193,66 @@ test("care package first-online does not repeat after the package kit changes", 
       actor_id: 202,
       account_id: "stable-account-1",
       character_name: "Test1",
+      action_player_id: "Player#1",
+      funcom_id: "Player#1",
+      fls_id: "Player#1",
+      online_status: "Online"
+    }]);
+
+    assert.equal(repeat.granted, 0);
+    assert.equal(repeat.skipped, 1);
+    assert.match(repeat.results[0].reason, /Already received first-online Care Package/);
+  } finally {
+    rmSync(config.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("care package first-online does not repeat after many skipped scans", async () => {
+  const config = tempConfig();
+  try {
+    saveCarePackageConfig(config, {
+      enabled: true,
+      activeKitId: "starter-kit",
+      autoGrantKitId: "starter-kit",
+      kits: [{ id: "starter-kit", name: "Starter Kit", xp: 10, items: [] }],
+      autoGrantRules: [{ id: "first-online-rule", enabled: true, kitId: "starter-kit", grantWhen: "first_online" }]
+    });
+    await runCarePackageAutoScan(config, [{
+      actor_id: 101,
+      account_id: "stable-account-1",
+      character_name: "Test1",
+      action_player_id: "Player#1",
+      funcom_id: "Player#1",
+      fls_id: "Player#1",
+      online_status: "Online"
+    }]);
+
+    const grantsFile = resolve(config.generatedDir, "care-package-grants.jsonl");
+    for (let index = 0; index < 600; index += 1) {
+      appendFileSync(grantsFile, `${JSON.stringify({
+        id: `skipped-${index}`,
+        playerId: "Other#1",
+        action_player_id: "Other#1",
+        actor_id: "202",
+        account_id: "stable-account-2",
+        character_name: "Offline Player",
+        source: "auto",
+        version: "starter-kit",
+        kitId: "starter-kit",
+        kitName: "Starter Kit",
+        status: "skipped",
+        ok: true,
+        reason: "Not currently online",
+        startedAt: new Date(Date.now() + index).toISOString(),
+        finishedAt: new Date(Date.now() + index).toISOString(),
+        results: []
+      })}\n`);
+    }
+
+    const repeat = await runCarePackageAutoScan(config, [{
+      actor_id: 303,
+      account_id: "stable-account-1",
+      character_name: "Test1 Again",
       action_player_id: "Player#1",
       funcom_id: "Player#1",
       fls_id: "Player#1",

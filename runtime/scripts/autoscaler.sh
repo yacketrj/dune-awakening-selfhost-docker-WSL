@@ -378,7 +378,7 @@ director_heal_due() {
 repair_chat_exchanges_due() {
   director_heal_due chat_exchanges "$CHAT_EXCHANGE_REPAIR_SECONDS" || return 0
   runtime/scripts/repair-chat-exchanges.sh >/dev/null 2>&1 || {
-    echo "WARN guild chat exchange repair failed"
+    echo "WARN chat exchange repair failed"
   }
 }
 

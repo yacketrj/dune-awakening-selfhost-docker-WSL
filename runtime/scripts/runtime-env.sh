@@ -19,7 +19,7 @@ config_value() {
   local file="$1"
   local key="$2"
 
-  [ -f "$file" ] || return 1
+  [ -r "$file" ] || return 1
   awk -F= -v key="$key" '
     $1 == key {
       value = substr($0, length(key) + 2)
@@ -29,6 +29,21 @@ config_value() {
       exit
     }
   ' "$file"
+}
+
+normalize_generated_env_permissions() {
+  local file
+
+  for file in \
+    runtime/generated/battlegroup.env \
+    runtime/generated/battlegroup-restore-point.env \
+    runtime/generated/db-backup.env \
+    runtime/generated/ip-change-restart.env \
+    runtime/generated/restart-schedule.env \
+    runtime/generated/update-auto.env; do
+    [ -e "$file" ] || continue
+    chmod g+r,u+rw "$file" 2>/dev/null || true
+  done
 }
 
 container_exists_any_state() {

@@ -752,6 +752,7 @@ persist_runtime_identity_snapshot() {
     printf 'SERVER_REGION=%q\n' "${server_region:-Europe}"
     printf 'SERVER_IP=%q\n' "${server_ip:-auto}"
   } > runtime/generated/battlegroup.env
+  chmod 664 runtime/generated/battlegroup.env 2>/dev/null || true
 }
 
 show_config_summary() {

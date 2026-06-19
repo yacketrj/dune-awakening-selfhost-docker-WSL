@@ -265,7 +265,7 @@ if [ "${DUNE_INIT_ASSUME_YES:-0}" = "1" ]; then
     exit 1
   fi
 
-  if [ -f runtime/generated/battlegroup.env ]; then
+  if [ -r runtime/generated/battlegroup.env ]; then
     set -a
     # shellcheck disable=SC1091
     . runtime/generated/battlegroup.env
@@ -416,7 +416,7 @@ EOF
 printf '%s' "$FUNCOM_TOKEN" > runtime/secrets/funcom-token.txt
 
 chmod 644 .env
-chmod 600 runtime/generated/battlegroup.env
+chmod 664 runtime/generated/battlegroup.env
 chmod 600 runtime/secrets/funcom-token.txt
 
 export SERVER_IP SERVER_IP_MODE SERVER_TITLE SERVER_REGION STEAM_APP_ID BATTLEGROUP_ID

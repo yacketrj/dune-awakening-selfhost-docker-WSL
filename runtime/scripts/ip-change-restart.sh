@@ -281,8 +281,8 @@ restart_stack_after_ip_change() {
   set_env_value SERVER_IP "$new_ip"
   set_env_value SERVER_IP_MODE "public"
   if [ -f runtime/generated/battlegroup.env ]; then
-    set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$new_ip" "600"
-    set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "600"
+    set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$new_ip" "664"
+    set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "664"
   fi
   echo "Updated SERVER_IP from ${old_ip:-unknown} to $new_ip."
 
@@ -326,8 +326,8 @@ check_now() {
 
   if [ "$current" = "$previous" ]; then
     if [ "$(config_value .env SERVER_IP 2>/dev/null || true)" = "$current" ] && [ -f runtime/generated/battlegroup.env ]; then
-      set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$current" "600"
-      set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "600"
+      set_env_file_value runtime/generated/battlegroup.env SERVER_IP "$current" "664"
+      set_env_file_value runtime/generated/battlegroup.env SERVER_IP_MODE "public" "664"
     fi
     write_state "${DUNE_IP_CHANGE_RESTART_ENABLED:-0}" "$interval_minutes" "$notify_minutes" "$current" "$checked_at" "${DUNE_IP_CHANGE_RESTART_LAST_RESTART:-}" "${DUNE_IP_CHANGE_RESTART_TIMER_INSTALLED:-0}"
     echo "Public IP unchanged: $current"

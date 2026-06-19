@@ -74,10 +74,10 @@ export function carePackageHistory(config, limit = 100) {
   const rows = readFileSync(file, "utf8")
     .split(/\r?\n/)
     .filter(Boolean)
-    .slice(-safeLimit)
     .map((line) => JSON.parse(line))
     .map(normalizeHistoryRow)
     .filter((row) => String(row.status || "").toLowerCase() !== "skipped")
+    .slice(-safeLimit)
     .reverse();
   return { rows };
 }
