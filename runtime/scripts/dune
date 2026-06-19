@@ -354,7 +354,7 @@ Usage:
   dune restart <service>
   dune console restart
   dune update [check|auto enable|auto disable|auto status|--yes]
-  dune self-update [check|list|install [latest|previous|<tag>]]
+  dune self-update [check|list|install [latest|<tag>]]
   dune restart-schedule [enable <HH:MM> [notify-minutes]|disable|status]
   dune ip-change-restart [enable [interval-minutes] [notify-minutes]|disable|status|check-now]
   dune db backup [output-dir]

@@ -34,8 +34,6 @@ const simpleOperations = {
   updateAutoDisable: ["update", "auto", "disable"],
   selfUpdateCheck: ["self-update", "check"],
   selfUpdateApply: ["self-update", "install", "latest"],
-  selfUpdateList: ["self-update", "list"],
-  selfUpdatePrevious: ["self-update", "install", "previous"],
   backupCreate: ["db", "backup"],
   backupList: ["db", "list"],
   backupDeleteAll: ["db", "delete", "--all"],

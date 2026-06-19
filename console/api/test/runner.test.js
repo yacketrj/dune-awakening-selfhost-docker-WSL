@@ -30,8 +30,6 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("updateAutoEnable", { time: "05:00" }), ["update", "auto", "enable", "05:00"]);
   assert.deepEqual(buildDuneArgs("updateAutoDisable"), ["update", "auto", "disable"]);
   assert.deepEqual(buildDuneArgs("selfUpdateApply"), ["self-update", "install", "latest"]);
-  assert.deepEqual(buildDuneArgs("selfUpdateList"), ["self-update", "list"]);
-  assert.deepEqual(buildDuneArgs("selfUpdatePrevious"), ["self-update", "install", "previous"]);
   assert.deepEqual(buildDuneArgs("backupAutoStatus"), ["db", "auto", "status"]);
   assert.deepEqual(buildDuneArgs("backupAutoEnable", { time: "05:30", retentionDays: 14 }), ["db", "auto", "enable", "05:30", "14"]);
   assert.deepEqual(buildDuneArgs("backupAutoEnable", { time: "05:30", retentionDays: 0 }), ["db", "auto", "enable", "05:30"]);

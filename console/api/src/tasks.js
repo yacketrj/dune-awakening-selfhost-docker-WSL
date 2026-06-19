@@ -156,7 +156,7 @@ export function buildSelfUpdateHelperDockerArgs({ helperName, hostRepoRoot, comp
 }
 
 function isSelfUpdateApplyOperation(operation) {
-  return operation === "selfUpdateApply" || operation === "selfUpdatePrevious";
+  return operation === "selfUpdateApply";
 }
 
 function runDockerCommand(args, cwd) {
@@ -183,7 +183,7 @@ function shellQuote(value) {
 }
 
 export function taskTimeoutMs(config, operation) {
-  if (["start", "stop", "restartAll", "restartService", "serverTitle", "init", "updateApply", "updateFixSteamcmd", "selfUpdateApply", "selfUpdatePrevious", "backupRestore", "userSettingsSaveAndRestart", "userSettingsResetAndRestart", "userSettingsRawAndRestart", "mapsApplySettings"].includes(operation)) {
+  if (["start", "stop", "restartAll", "restartService", "serverTitle", "init", "updateApply", "updateFixSteamcmd", "selfUpdateApply", "backupRestore", "userSettingsSaveAndRestart", "userSettingsResetAndRestart", "userSettingsRawAndRestart", "mapsApplySettings"].includes(operation)) {
     return Math.max(config.commandTimeoutMs, 30 * 60 * 1000);
   }
   return config.commandTimeoutMs;

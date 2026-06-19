@@ -250,9 +250,7 @@ async function handleApi(req, res) {
   if (path === "/api/updates/check-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateCheck", {});
   if (path === "/api/updates/apply-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateApply", {});
   if (path === "/api/updates/auto-game" && req.method === "POST") return autoGameUpdateRoute(req, res);
-  if (path === "/api/updates/restore-previous-stack" && req.method === "POST") return previousStackRestoreRoute(req, res);
   if (path === "/api/updates/auto-game") return safeCommandJson(res, "updateAutoStatus");
-  if (path === "/api/updates/previous-stack") return safeCommandJson(res, "selfUpdateList");
   if (path === "/api/updates/repair-runtime" && req.method === "POST") return task(req, res, "updates", "readiness", {});
 
   if (path === "/api/backups") return backupsListRoute(res);
@@ -1096,14 +1094,6 @@ async function autoGameUpdateRoute(req, res) {
   }
   const operation = body.enabled ? "updateAutoEnable" : "updateAutoDisable";
   return task(req, res, "updates", operation, body);
-}
-
-async function previousStackRestoreRoute(req, res) {
-  const body = await readJson(req);
-  if (body.confirmation !== "RESTORE PREVIOUS STACK") {
-    return json(res, 400, { error: "Confirmation phrase required: RESTORE PREVIOUS STACK" });
-  }
-  return task(req, res, "updates", "selfUpdatePrevious", body);
 }
 
 async function sietchesUpdateRoute(req, res) {
