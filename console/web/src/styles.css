@@ -483,6 +483,7 @@ main { padding: 22px; min-width: 0; }
 .addons-owner-copy { display: grid; gap: 6px; min-width: 0; }
 .addon-catalog-status-row { margin-top: 10px; }
 .addon-result-panel { margin-top: 12px; animation: addonNoticeFade 5s ease forwards; }
+.addons-empty-state { margin-top: 8px; padding-top: 6px; }
 .addons-table th:nth-child(6), .addons-table td:nth-child(6), .addons-table th:nth-child(7), .addons-table td:nth-child(7) { text-align: center; }
 .addon-status-cell { display: flex; justify-content: center; }
 .addon-status-stack { display: grid; justify-items: center; gap: 6px; }

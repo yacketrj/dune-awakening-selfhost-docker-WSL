@@ -199,7 +199,7 @@ export function AddonsPanel({ pinnedAddons, setPinnedAddons, selectedAddonId, cl
     <section className="action-section info-panel addons-intro-panel">
       <h4>Community Addons</h4>
       <div className="addons-owner-copy">
-        <p>Add community-built tools to your Dune Docker Console. Install addons you trust, review what each addon can access, and turn them on only when you want them available.</p>
+        <p>Add community-built tools into your Dune Docker Console. Discover addons created by the community, see what each one adds, review what it can access, and enable new features whenever you're ready to expand your console.</p>
       </div>
       <div className="badge-row addon-catalog-status-row" aria-label="Addon catalog lifecycle summary">
         {lifecycleSummary.map((item) => <span key={item.lifecycle} className={`badge ${lifecycleBadgeKind(item.lifecycle)}`}>{formatLifecycleLabel(item.lifecycle)}: {item.count}</span>)}
@@ -248,7 +248,7 @@ function AddonsTable({ rows, loading, installedById, pinnedAddons, installingId,
   setOpenAddonId: Dispatch<SetStateAction<string>>;
   toggleAddonPin: (addon: InstalledAddon, pinned: boolean) => void;
 }) {
-  if (!rows.length) return <div className="empty">{loading ? "Loading community addons..." : "No community addons are listed yet."}</div>;
+  if (!rows.length) return <div className="empty addons-empty-state">{loading ? "Loading community addons..." : "No community addons are listed yet."}</div>;
   return <div className="table-wrap"><table className="addons-table"><thead><tr><th>Name</th><th>Description</th><th>Author</th><th>Version</th><th>Permissions</th><th>Status</th><th>Catalog</th><th className="backup-table-actions">Actions</th><th className="addon-pin-column">Sub-Menu</th></tr></thead><tbody>{rows.map((row) => {
     const installedAddon = installedById.get(row.id);
     const busy = busyAddonId === row.id;
