@@ -133,9 +133,9 @@ done
 echo
 echo "=== Ports ==="
 check_tcp 15432 "Postgres"
-check_tcp 32573 "RabbitMQ admin"
-check_tcp 31982 "RabbitMQ game"
-check_tcp 31983 "RabbitMQ game HTTP"
+check_tcp "${RMQ_ADMIN_HOST_PORT:-32573}" "RabbitMQ admin"
+check_tcp "${RMQ_GAME_HOST_PORT:-31982}" "RabbitMQ game"
+check_tcp "${RMQ_GAME_HTTP_HOST_PORT:-31983}" "RabbitMQ game HTTP"
 check_tcp 5059 "TextRouter"
 check_tcp 11717 "Director"
 client_port_base="$(resolve_client_port_base)"

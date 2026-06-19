@@ -151,7 +151,7 @@ docker ps --filter "name=dune-" --format "table {{.Names}}\t{{.Status}}\t{{.Port
 
 echo
 echo "=== Required TCP listeners ==="
-ss -lntp | grep -E ':(15432|31982|31983|32573|5059|11717)' || true
+ss -lntp | grep -E ':(${POSTGRES_HOST_PORT:-15432}|${RMQ_GAME_HOST_PORT:-31982}|${RMQ_GAME_HTTP_HOST_PORT:-31983}|${RMQ_ADMIN_HOST_PORT:-32573}|5059|11717)' || true
 
 client_port_base="$(resolve_client_port_base)"
 igw_port_base="$(resolve_igw_port_base)"

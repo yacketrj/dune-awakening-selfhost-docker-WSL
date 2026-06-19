@@ -206,9 +206,9 @@ docker run -d \
   "-ini:engine:[URL]:IGWPort=$IGW_PORT" \
   -battlegroup-director-url=127.0.0.1:11717 \
   "--RMQGameHostname=$RMQ_GAME_HOST" \
-  --RMQGamePort=31982 \
+  --RMQGamePort=${RMQ_GAME_HOST_PORT:-31982} \
   "--RMQAdminHostname=$RMQ_ADMIN_HOST" \
-  --RMQAdminPort=32573 \
+  --RMQAdminPort=${RMQ_ADMIN_HOST_PORT:-32573} \
   "${SIETCH_RUNTIME_ARGS[@]}" \
   "${LOG_RUNTIME_ARGS[@]}"
 
