@@ -24,7 +24,7 @@ import { serveStatic, contentTypeForPath } from "./http/staticFiles.js";
 import { discoverServices } from "./services/serviceDiscovery.js";
 import { createBackupDownloadArchive, enrichBackupRows, nextImportedBackupName, normalizeImportedBackupMetadata, validBackupDownloadName } from "./services/backups.js";
 import { createMemoryBalancer } from "./services/memoryBalancer.js";
-import { quoteEnv as quoteEnvValue, updateEnvFileValue as updateEnvValue } from "./services/envFile.js";
+import { updateEnvFileValue as updateEnvValue } from "./services/envFile.js";
 import { funcomAuthMismatchDetected, matchingFuncomAuthLines, saveFuncomTokenValue as writeFuncomToken, validDockerSince } from "./services/funcomAuth.js";
 
 const config = loadConfig();
@@ -1612,11 +1612,9 @@ async function carePackageAutoTick() {
 async function writeConfig(req, res) {
   const body = await readJson(req);
   const allowed = ["SERVER_IP", "SERVER_IP_MODE", "SERVER_TITLE", "SERVER_REGION", "SERVER_PROVIDER", "STEAM_APP_ID", "BATTLEGROUP_ID"];
-  const lines = [];
   for (const key of allowed) {
-      if (body[key] !== undefined) lines.push(`${key}=${quoteEnvValue(String(body[key]))}`);
+    if (body[key] !== undefined) updateEnvFileValue(key, String(body[key]));
   }
-  writeFileSync(resolve(config.repoRoot, ".env"), `${lines.join("\n")}\n`, { mode: 0o644 });
   audit(config, req, "setup.write-config", { keys: Object.keys(body).filter((key) => allowed.includes(key)) });
   return json(res, 200, { ok: true });
 }
