@@ -525,21 +525,22 @@ test("intel mutation clamps grants to the spendable cap", async () => {
   assert.ok(calls.some((call) => call.text.includes("TechKnowledgePlayerComponent") && call.text.includes("jsonb_set") && call.values[1] === 2779));
 });
 
-test("crafting recipe listing uses verified BaseRecipeId names and player unlock status", async () => {
+test("crafting recipe listing uses catalog schematics and player unlock status", async () => {
   const calls = [];
   const db = fakeMutationDb(calls, {
     craftingListRows: [
-      { recipe_id: "T2_Material_Silicone_Recipe", source: "SchematicPickup", quality_level: 0, unlocked: true },
-      { recipe_id: "BuggyEngine_4_Recipe", source: "SchematicPickup", quality_level: 0, unlocked: false }
+      { recipe_id: "HealthPackRecipe" }
     ]
   });
   const result = await playerCraftingRecipes(db, 123);
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.rows[0].recipeId, "T2_Material_Silicone_Recipe");
-  assert.equal(result.rows[0].displayName, "T2 Material Silicone");
-  assert.equal(result.rows[0].unlocked, true);
-  assert.equal(result.rows[1].category, "Vehicles");
-  assert.ok(calls.some((call) => call.text.includes("CraftingRecipesLibraryActorComponent") && call.text.includes("all_recipes")));
+  assert.ok(result.rows.length > 500);
+  const healthPack = result.rows.find((row) => row.recipeId === "HealthPackRecipe");
+  const buggyBoost = result.rows.find((row) => row.recipeId === "UniqueBuggyBoostRecipe");
+  assert.equal(healthPack.displayName, "Healkit");
+  assert.equal(healthPack.unlocked, true);
+  assert.equal(buggyBoost.category, "Vehicles");
+  assert.equal(buggyBoost.unlocked, false);
+  assert.ok(calls.some((call) => call.text.includes("CraftingRecipesLibraryActorComponent") && call.text.includes("player_recipes")));
 });
 
 test("crafting recipe unlock appends exact recipe object without dropping existing recipes", async () => {
@@ -765,7 +766,7 @@ function fakeMutationDb(calls, fixtures = {}) {
       if (text.includes("TechKnowledgePlayerComponent") && text.includes("select exists")) return { rows: [{ exists: Boolean(fixtures.researchExists) }] };
       if (text.includes("TechKnowledgePlayerComponent") && text.includes("m_TechKnowledgeData") && text.includes("for update")) return { rows: fixtures.currentResearchItems === null ? [] : [{ items: fixtures.currentResearchItems || [] }] };
       if (text.includes("TechKnowledgePlayerComponent,m_TechKnowledge,m_TechKnowledgeData") && text.includes("update dune.actors")) return { rows: [{ ok: true }] };
-      if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("all_recipes")) return { rows: fixtures.craftingListRows || [] };
+      if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("player_recipes")) return { rows: fixtures.craftingListRows || [] };
       if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("select exists")) return { rows: [{ exists: Boolean(fixtures.recipeExists) }] };
       if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("for update")) return { rows: fixtures.currentCraftingRecipes === null ? [] : [{ recipes: fixtures.currentCraftingRecipes || [] }] };
       if (text.includes("CraftingRecipesLibraryActorComponent,m_KnownItemRecipes") && text.includes("update dune.actors")) return { rows: [{ ok: true }] };

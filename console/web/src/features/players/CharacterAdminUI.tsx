@@ -27,7 +27,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
   const playerAdmin_tabs = ["Character", "Crafting", "Research", "Skills", "Journey", "Admin"];
   const [playerAdmin_activeTab, playerAdmin_setActiveTab] = useState("Character");
   const [playerAdmin_openToggles, playerAdmin_setOpenToggles] = useState<Record<string, boolean>>({ give_items: true });
-  const [playerAdmin_craftingCategory, playerAdmin_setCraftingCategory] = useState("Essentials");
+  const [playerAdmin_craftingCategory, playerAdmin_setCraftingCategory] = useState("");
   const [playerAdmin_researchCategory, playerAdmin_setResearchCategory] = useState("");
   const [playerAdmin_productGroup, playerAdmin_setProductGroup] = useState("");
   const [playerAdmin_skillSchool, playerAdmin_setSkillSchool] = useState("Trooper");
@@ -944,8 +944,7 @@ export function CharacterAdminUI({ detail, fallback, dbPlayerId, actionPlayerId,
               options={playerAdmin_craftingCategories}
               value={playerAdmin_craftingCategory}
               onChange={playerAdmin_setCraftingCategory}
-              emptyLabel="Select Category"
-              includeAll={false}
+              allLabel="All Categories"
             />
             {playerAdmin_craftingError ? <p className="playerAdmin_note danger">{playerAdmin_craftingError}</p> : playerAdmin_craftingTable}
           </section>

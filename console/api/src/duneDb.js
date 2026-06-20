@@ -1,5 +1,8 @@
 import { assertIdentifier, intParam, isReadOnlySql, quoteIdentifier, quoteQualified, rowsResult } from "./db.js";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+  craftingRecipeCatalogRows,
   factionDisplayName,
   factionIdByName,
   factionTierBumps,
@@ -25,6 +28,7 @@ import {
 
 const MAX_INTEL_POINTS = 2779;
 const MAX_TABLE_PREVIEW_ROWS = 10000;
+let craftingRecipeCatalogCache = null;
 
 export class UnsupportedCapabilityError extends Error {
   constructor(message, details = {}) {
@@ -1662,40 +1666,30 @@ export async function playerCraftingRecipes(db, id) {
   await requireCapability(await supportsCraftingRecipes(db), "Crafting recipes require dune.actors.properties with CraftingRecipesLibraryActorComponent.");
   const player = await resolvePlayerMutationTarget(db, id);
   const result = await db.query(`
-    with all_recipes as (
-      select distinct on (recipe->'BaseRecipeId'->>'Name')
-             recipe->'BaseRecipeId'->>'Name' as recipe_id,
-             coalesce(nullif(recipe->>'m_Source', ''), 'Unknown') as source,
-             case when recipe->>'m_QualityLevel' ~ '^-?[0-9]+$' then (recipe->>'m_QualityLevel')::int else 0 end as quality_level
-      from dune.actors a
-      cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
-      where recipe->'BaseRecipeId'->>'Name' is not null
-      order by recipe->'BaseRecipeId'->>'Name', coalesce(nullif(recipe->>'m_Source', ''), 'Unknown')
-    ),
-    player_recipes as (
+    with player_recipes as (
       select recipe->'BaseRecipeId'->>'Name' as recipe_id
       from dune.actors a
       cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
       where a.id = $1 and recipe->'BaseRecipeId'->>'Name' is not null
     )
-    select all_recipes.recipe_id,
-           all_recipes.source,
-           all_recipes.quality_level,
-           (player_recipes.recipe_id is not null) as unlocked
-    from all_recipes
-    left join player_recipes on player_recipes.recipe_id = all_recipes.recipe_id
-    order by all_recipes.recipe_id`, [player.actorId]);
+    select recipe_id from player_recipes
+    order by recipe_id`, [player.actorId]);
+  const unlocked = new Set(result.rows.map((row) => String(row.recipe_id || "")).filter(Boolean));
+  const catalog = craftingRecipeCatalog();
+  const rows = catalog.length
+    ? catalog.map((row) => ({ ...row, unlocked: unlocked.has(row.recipeId) }))
+    : [...unlocked].map((recipeId) => ({
+      recipeId,
+      displayName: recipeDisplayName(recipeId),
+      category: recipeCategory(recipeId),
+      source: "Known Recipes",
+      qualityLevel: 0,
+      unlocked: true
+    }));
   return {
     capabilities: { craftingRecipes: true },
     player,
-    rows: result.rows.map((row) => ({
-      recipeId: row.recipe_id,
-      displayName: recipeDisplayName(row.recipe_id),
-      category: recipeCategory(row.recipe_id),
-      source: row.source || "Unknown",
-      qualityLevel: Number(row.quality_level || 0),
-      unlocked: Boolean(row.unlocked)
-    }))
+    rows
   };
 }
 
@@ -1705,14 +1699,17 @@ export async function unlockCraftingRecipe(db, id, { recipeId }) {
   return db.transaction(async (tx) => {
     const player = await resolvePlayerMutationTarget(tx, id);
     requireOfflinePlayer(player, "Crafting recipe unlocks");
-    const known = await tx.query(`
-      select exists (
-        select 1
-        from dune.actors a
-        cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
-        where recipe->'BaseRecipeId'->>'Name' = $1
-      ) as exists`, [safeRecipeId]);
-    if (!known.rows[0]?.exists) throw new Error(`Crafting recipe ${safeRecipeId} was not found in the game database.`);
+    const catalogHasRecipe = craftingRecipeCatalog().some((row) => row.recipeId === safeRecipeId);
+    if (!catalogHasRecipe) {
+      const known = await tx.query(`
+        select exists (
+          select 1
+          from dune.actors a
+          cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
+          where recipe->'BaseRecipeId'->>'Name' = $1
+        ) as exists`, [safeRecipeId]);
+      if (!known.rows[0]?.exists) throw new Error(`Crafting recipe ${safeRecipeId} was not found in the game database.`);
+    }
     const current = await tx.query(`
       select properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes' as recipes
       from dune.actors
@@ -1737,6 +1734,20 @@ export async function unlockCraftingRecipe(db, id, { recipeId }) {
       where id = $1 and properties ? 'CraftingRecipesLibraryActorComponent'`, [player.actorId, JSON.stringify(nextRecipes)]);
     return { ok: true, player, recipeId: safeRecipeId, alreadyUnlocked: false };
   });
+}
+
+function craftingRecipeCatalog() {
+  if (craftingRecipeCatalogCache) return craftingRecipeCatalogCache;
+  try {
+    const path = [
+      resolve(process.cwd(), "runtime/data/admin-items.json"),
+      resolve(process.cwd(), "../../runtime/data/admin-items.json")
+    ].find((candidate) => existsSync(candidate)) || resolve(process.cwd(), "runtime/data/admin-items.json");
+    craftingRecipeCatalogCache = craftingRecipeCatalogRows(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    craftingRecipeCatalogCache = [];
+  }
+  return craftingRecipeCatalogCache;
 }
 
 export async function playerResearchItems(db, id) {
