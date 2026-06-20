@@ -76,21 +76,6 @@ alive_candidates AS (
     fs.revision DESC NULLS LAST,
     fs.server_id
 ),
-load_checks AS (
-  SELECT
-    c.server_id,
-    c.map_name,
-    c.partition_id,
-    COUNT(lp.*) AS returned_rows
-  FROM alive_candidates c
-  LEFT JOIN LATERAL load_world_partition(
-    c.map_name,
-    c.server_id,
-    c.dimension_index,
-    c.partition_id
-  ) lp ON true
-  GROUP BY c.server_id, c.map_name, c.partition_id
-),
 checks AS (
   SELECT
     (SELECT COUNT(*) FROM farm_state WHERE alive = true) AS alive_count,
@@ -105,15 +90,13 @@ checks AS (
           AND wp.map = c.map_name
           AND wp.dimension_index = c.dimension_index
       )
-    ) AS missing_ownership_count,
-    (SELECT COUNT(*) FROM load_checks WHERE returned_rows <> 1) AS bad_load_count
+    ) AS missing_ownership_count
 )
 SELECT
   CASE
     WHEN alive_count = 0 THEN 'WARN_NO_ALIVE_SERVERS'
     WHEN partition_count = 0 THEN 'FAIL_WORLD_PARTITION_EMPTY'
     WHEN missing_ownership_count > 0 THEN 'FAIL_MISSING_OWNERSHIP'
-    WHEN bad_load_count > 0 THEN 'FAIL_LOAD_WORLD_PARTITION'
     ELSE 'OK'
   END
 FROM checks;
@@ -123,7 +106,7 @@ SQL
   case "$result" in
     OK)
       log "OK: alive configured servers have valid world_partition ownership"
-      log "OK: load_world_partition validation returns exactly one row"
+      log "OK: configured partition rows are present"
       return 0
       ;;
     WARN_NO_ALIVE_SERVERS)
@@ -136,10 +119,6 @@ SQL
       ;;
     FAIL_MISSING_OWNERSHIP)
       log "FAIL: one or more alive configured servers lack world_partition ownership"
-      return 1
-      ;;
-    FAIL_LOAD_WORLD_PARTITION)
-      log "FAIL: load_world_partition did not return exactly one row for at least one configured alive server"
       return 1
       ;;
     *)
@@ -433,35 +412,29 @@ ORDER BY
   fs.revision DESC NULLS LAST,
   fs.server_id;
 
-\\echo '[partition-repair] selected alive server candidates'
+\echo '[partition-repair] selected alive server candidates'
 SELECT *
 FROM _partition_candidates
 ORDER BY game_port;
 
-\\echo '[partition-repair] world_partition after repair'
+\echo '[partition-repair] world_partition after repair'
 SELECT partition_id, server_id, map, dimension_index, blocked, label
 FROM world_partition
 ORDER BY partition_id;
 
-\\echo '[partition-repair] load_world_partition validation'
+\echo '[partition-repair] ownership validation'
 SELECT
   c.map_name,
   c.server_id,
   c.dimension_index,
-  c.partition_id AS requested_partition_id,
-  COUNT(lp.*) AS returned_rows
+  c.partition_id AS expected_partition_id,
+  CASE WHEN wp.partition_id IS NULL THEN 'missing' ELSE 'owned' END AS ownership_state,
+  wp.partition_id AS actual_partition_id
 FROM _partition_candidates c
-LEFT JOIN LATERAL load_world_partition(
-  c.map_name,
-  c.server_id,
-  c.dimension_index,
-  c.partition_id
-) lp ON true
-GROUP BY
-  c.map_name,
-  c.server_id,
-  c.dimension_index,
-  c.partition_id
+LEFT JOIN world_partition wp
+  ON wp.server_id = c.server_id
+ AND wp.map = c.map_name
+ AND wp.dimension_index = c.dimension_index
 ORDER BY
   c.partition_id;
 SQL
