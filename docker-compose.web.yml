@@ -6,6 +6,8 @@ services:
       context: .
       dockerfile: console/api/Dockerfile
     image: redblink-dune-docker-console:dev
+    group_add:
+      - "${DOCKER_SOCKET_GID:-986}"
     container_name: redblink-dune-docker-console
     restart: unless-stopped
     # Host networking lets the console reach RedBlink defaults such as

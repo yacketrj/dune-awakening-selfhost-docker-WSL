@@ -25,10 +25,21 @@ def run(cmd, check=True, user=None):
     printable = " ".join(str(x) for x in cmd)
     print(f"[dune] $ {printable}", flush=True)
 
+    cmd = [str(x) for x in cmd]
+
     if user:
-        cmd = ["runuser", "-u", user, "--"] + [str(x) for x in cmd]
-    else:
-        cmd = [str(x) for x in cmd]
+        current_uid = os.geteuid()
+        current_user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+
+        if current_uid == 0:
+            cmd = ["runuser", "-u", user, "--"] + cmd
+        elif current_user and current_user == user:
+            pass
+        else:
+            print(
+                f"[dune] Not running as root; executing directly instead of using runuser for target user '{user}'.",
+                flush=True,
+            )
 
     return subprocess.run(cmd, check=check)
 

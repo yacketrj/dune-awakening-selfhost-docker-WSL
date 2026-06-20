@@ -3,6 +3,8 @@ services:
     build:
       context: ./orchestrator
     image: dune-orchestrator:dev
+    group_add:
+      - "${DOCKER_SOCKET_GID:-986}"
     container_name: dune-orchestrator
     restart: unless-stopped
     network_mode: host
