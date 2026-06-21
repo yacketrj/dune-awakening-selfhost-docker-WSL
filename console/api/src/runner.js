@@ -45,6 +45,8 @@ const simpleOperations = {
   restartScheduleStatus: ["restart-schedule", "status"],
   restartScheduleDisable: ["restart-schedule", "disable"],
   dbStatus: ["database", "status"],
+  worldPartitionsCheck: ["database", "world-partitions", "check"],
+  worldPartitionsRepair: ["database", "world-partitions", "repair"],
   servers: ["servers"],
   mapsList: ["maps", "list"],
   sietchesList: ["sietches", "list"],

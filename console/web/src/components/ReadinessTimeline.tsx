@@ -53,19 +53,20 @@ function buildReadinessGroups(readyText: string, statusText: string) {
 }
 
 function parseReadyRows(text: string): GroupedCheckRow[] {
-  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(OK|WAIT|FAIL)\s+/i.test(line)).map((line) => {
-    const raw = line.replace(/^(OK|WAIT|FAIL)\s+/i, "").trim();
-    const status: CheckRow["status"] = /^FAIL\s+/i.test(line) ? "Failed" : /^WAIT\s+/i.test(line) && /warming/i.test(raw) ? "Info" : /^WAIT\s+/i.test(line) ? "Warn" : "Ready";
+  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(OK|WARN|WAIT|FAIL)\s+/i.test(line)).map((line) => {
+    const raw = line.replace(/^(OK|WARN|WAIT|FAIL)\s+/i, "").trim();
+    const status: CheckRow["status"] = /^FAIL\s+/i.test(line) ? "Failed" : /^(WARN|WAIT)\s+/i.test(line) && /warming/i.test(raw) ? "Info" : /^(WARN|WAIT)\s+/i.test(line) ? "Warn" : "Ready";
     const group = readyGroupFor(raw);
     const name = friendlyReadyName(raw);
     return { name, detail: detailForReady(raw, name, status), status, kind: kindForStatus(status), group };
-  }).filter((row) => row.group && row.name && !/world_partition|partition rows/i.test(row.name));
+  }).filter((row) => row.group && row.name && !/world_partition rows|partition rows/i.test(row.name));
 }
 
 function readyGroupFor(raw: string) {
   if (/^container\s+/i.test(raw)) return "Container Checks";
   if (/^(TCP|UDP)\s+\d+/i.test(raw)) return "Listener Checks";
   if (/^no dynamic|dynamic game/i.test(raw)) return "Dynamic Game Map";
+  if (/world partition ownership/i.test(raw)) return "Game Server Checks";
   if (/rmq|connections/i.test(raw)) return "RabbitMQ Game Connections";
   if (/fls|population|gateway monitoring/i.test(raw)) return "Funcom/FLS Summary";
   if (/survival_1|overmap/i.test(raw)) return "Game Server Checks";

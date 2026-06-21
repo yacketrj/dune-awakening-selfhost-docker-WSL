@@ -12,5 +12,7 @@ export const databaseApi = {
   updateRow: (schema: string, table: string, rowId: string, values: Record<string, unknown>) => api<{ ok: boolean; updatedRows: number; schema: string; table: string; message?: string }>(`/api/database/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row`, { method: "PATCH", body: JSON.stringify({ rowId, values }) }),
   search: (q: string) => api<Record<string, unknown>[]>(`/api/database/search?q=${encodeURIComponent(q)}`),
   query: (query: string) => post<{ columns: { name: string }[]; rows: Record<string, unknown>[]; rowCount?: number; command?: string }>("/api/database/query", { query }),
-  export: (query: string) => post<{ columns: { name: string }[]; rows: Record<string, unknown>[]; rowCount?: number; command?: string }>("/api/database/export", { query })
+  export: (query: string) => post<{ columns: { name: string }[]; rows: Record<string, unknown>[]; rowCount?: number; command?: string }>("/api/database/export", { query }),
+  worldPartitions: () => api<{ stdout: string; stderr?: string; exitCode?: number }>("/api/database/world-partitions"),
+  repairWorldPartitions: () => post<{ task: Task }>("/api/database/world-partitions/repair")
 };
