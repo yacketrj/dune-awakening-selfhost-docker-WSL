@@ -64,6 +64,18 @@ Forward these ports for public/internet hosting:
 
 Keep database and internal admin ports private.
 
+## Docker Socket Access
+
+The Web UI controls Docker through `/var/run/docker.sock`, which is powerful host-level access. Keep the Web UI limited to trusted admins.
+
+If the Web UI reports Docker socket permission errors on WSL2 or non-root container setups, run:
+
+```bash
+dune console repair-docker-socket
+```
+
+The repair command detects the socket group ID and records `DOCKER_SOCKET_GID`. It only writes the compose group override after you enable `ENABLE_DOCKER_SOCKET_GROUP_FIX=1`, then restart the console.
+
 ## Getting Started
 
 Copy and paste this on a fresh Linux server:

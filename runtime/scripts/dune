@@ -348,6 +348,7 @@ Usage:
   dune logs <service> [--raw]
   dune restart <service>
   dune console restart
+  dune console repair-docker-socket [--restart]
   dune update [check|auto enable|auto disable|auto status|--yes]
   dune self-update [check|list|install [latest|previous|<tag>]]
   dune restart-schedule [enable <HH:MM> [notify-minutes]|disable|status]

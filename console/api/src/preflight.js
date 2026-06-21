@@ -85,16 +85,54 @@ function dockerDaemonCheck() {
     const line = out.split(/\r?\n/).map((part) => part.trim()).find(Boolean) || "Docker daemon is reachable";
     return check("Docker daemon", "pass", line);
   } catch (error) {
+    const failure = classifyDockerDaemonFailure(error);
     return check(
       "Docker daemon",
       "fail",
-      "Docker is installed but is not running or cannot be reached.",
-      [
-        "Run the included installer again so it can start Docker and repair access where supported.",
-        "If you use Docker Desktop, open Docker Desktop and wait until it says the engine is running."
-      ].join("\n")
+      failure.message,
+      failure.detail
     );
   }
+}
+
+export function classifyDockerDaemonFailure(error) {
+  const output = [
+    error?.stdout,
+    error?.stderr,
+    error?.message
+  ].map((part) => Buffer.isBuffer(part) ? part.toString("utf8") : String(part || "")).join("\n");
+
+  if (/permission denied/i.test(output) && /\/var\/run\/docker\.sock/i.test(output)) {
+    return {
+      code: "docker_socket_permission",
+      message: "Docker socket permission denied.",
+      detail: [
+        "The Web UI can see Docker, but its container user cannot access /var/run/docker.sock.",
+        "Run: dune console repair-docker-socket",
+        "Only enable ENABLE_DOCKER_SOCKET_GROUP_FIX=1 after confirming this diagnostic."
+      ].join("\n")
+    };
+  }
+
+  if (/Cannot connect to (the )?Docker daemon|docker daemon is not running/i.test(output)) {
+    return {
+      code: "docker_daemon_unavailable",
+      message: "Docker is installed but the daemon is not reachable.",
+      detail: [
+        "Start Docker and wait until the engine is running.",
+        "If you use Docker Desktop, open Docker Desktop first."
+      ].join("\n")
+    };
+  }
+
+  return {
+    code: "docker_unknown",
+    message: "Docker is installed but is not running or cannot be reached.",
+    detail: [
+      "Run the included installer again so it can start Docker and repair access where supported.",
+      "If you use Docker Desktop, open Docker Desktop and wait until it says the engine is running."
+    ].join("\n")
+  };
 }
 
 function fileCheck(name, path, optional = false) {

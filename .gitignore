@@ -4,6 +4,7 @@ runtime/secrets/
 runtime/generated/
 runtime/backups/
 runtime/addons/
+runtime/generated/docker-compose.web.socket-gid.yml
 *.bak-before-*
 
 # Runtime state / generated service configs

@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 WEB_COMPOSE="docker-compose.web.yml"
+WEB_SOCKET_GID_COMPOSE="${DUNE_DOCKER_SOCKET_GROUP_COMPOSE:-runtime/generated/docker-compose.web.socket-gid.yml}"
 WEB_SERVICE="redblink-dune-docker-console"
 PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}"
 HOST_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}"
@@ -16,8 +17,41 @@ Usage:
 
 Commands:
   restart   Rebuild and restart the Dune Docker Console safely.
+  repair-docker-socket
+            Diagnose and optionally repair Web UI Docker socket permissions.
   status    Show the Dune Docker Console container and URL.
 EOF
+}
+
+config_value() {
+  local file="$1"
+  local key="$2"
+
+  [ -f "$file" ] || return 1
+  awk -F= -v key="$key" '
+    $1 == key {
+      value = substr($0, length(key) + 2)
+      gsub(/^"/, "", value)
+      gsub(/"$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
+}
+
+socket_gid_fix_enabled() {
+  local enabled="${ENABLE_DOCKER_SOCKET_GROUP_FIX:-}"
+  if [ -z "$enabled" ]; then
+    enabled="$(config_value .env ENABLE_DOCKER_SOCKET_GROUP_FIX 2>/dev/null || true)"
+  fi
+  [ "$enabled" = "1" ]
+}
+
+web_compose_args() {
+  printf '%s\n' -f "$WEB_COMPOSE"
+  if socket_gid_fix_enabled && [ -f "$WEB_SOCKET_GID_COMPOSE" ]; then
+    printf '%s\n' -f "$WEB_SOCKET_GID_COMPOSE"
+  fi
 }
 
 detect_web_console_ip() {
@@ -57,12 +91,14 @@ require_compose() {
 
 restart_console() {
   require_compose
+  local compose_args=()
+  mapfile -t compose_args < <(web_compose_args)
   mkdir -p runtime/generated
   echo "Rebuilding Dune Docker Console..."
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" DUNE_HOST_REPO_ROOT="$HOST_ROOT" docker compose -f "$WEB_COMPOSE" build "$WEB_SERVICE"
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" DUNE_HOST_REPO_ROOT="$HOST_ROOT" docker compose "${compose_args[@]}" build "$WEB_SERVICE"
   echo "Replacing Dune Docker Console container..."
   docker rm -f "$WEB_SERVICE" >/dev/null 2>&1 || true
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" DUNE_HOST_REPO_ROOT="$HOST_ROOT" docker compose -f "$WEB_COMPOSE" up -d "$WEB_SERVICE"
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" DUNE_HOST_REPO_ROOT="$HOST_ROOT" docker compose "${compose_args[@]}" up -d "$WEB_SERVICE"
   echo "Dune Docker Console restarted."
   print_url
 }
@@ -74,9 +110,13 @@ status_console() {
 }
 
 cmd="${1:-help}"
+shift || true
 case "$cmd" in
   restart|rebuild)
     restart_console
+    ;;
+  repair-docker-socket|heal-docker-socket)
+    runtime/scripts/repair-docker-socket-access.sh repair "$@"
     ;;
   status|url)
     status_console
