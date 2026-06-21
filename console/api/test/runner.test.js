@@ -40,6 +40,8 @@ test("builds allowlisted command arguments without shell interpolation", () => {
   assert.deepEqual(buildDuneArgs("restartScheduleEnable", { time: "04:30" }), ["restart-schedule", "enable", "04:30", "15"]);
   assert.deepEqual(buildDuneArgs("restartScheduleEnable", { time: "04:30", notifyMinutes: 30 }), ["restart-schedule", "enable", "04:30", "30"]);
   assert.deepEqual(buildDuneArgs("restartScheduleDisable"), ["restart-schedule", "disable"]);
+  assert.deepEqual(buildDuneArgs("worldPartitionsCheck"), ["database", "world-partitions", "check"]);
+  assert.deepEqual(buildDuneArgs("worldPartitionsRepair"), ["database", "world-partitions", "repair"]);
   assert.deepEqual(buildDuneArgs("adminTeleport", { playerId: "FLS_TEST", x: 1, y: 2, z: 3, yaw: 90 }), ["admin", "teleport", "FLS_TEST", "1", "2", "3", "90"]);
   assert.deepEqual(buildDuneArgs("adminGiveItem", { playerId: "FLS_TEST", itemName: "Water", quantity: 2 }), ["admin", "grant-item", "FLS_TEST", "Water", "2", "1", "0"]);
   assert.deepEqual(buildDuneArgs("adminGiveItem", { playerId: "FLS_TEST", itemName: "Water", quantity: 2, quality: 3 }), ["admin", "grant-item", "FLS_TEST", "Water", "2", "1", "3"]);

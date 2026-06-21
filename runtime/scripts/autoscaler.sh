@@ -21,6 +21,7 @@ DYNAMIC_READY_HEAL_STALE_SECONDS="${DUNE_AUTOSCALER_DYNAMIC_READY_HEAL_STALE_SEC
 DIRECTOR_BROWSER_SCAN_SECONDS="${DUNE_AUTOSCALER_DIRECTOR_BROWSER_SCAN_SECONDS:-30}"
 DYNAMIC_READY_HEAL_SCAN_SECONDS="${DUNE_AUTOSCALER_DYNAMIC_READY_HEAL_SCAN_SECONDS:-30}"
 CHAT_EXCHANGE_REPAIR_SECONDS="${DUNE_AUTOSCALER_CHAT_EXCHANGE_REPAIR_SECONDS:-60}"
+WORLD_PARTITION_HEAL_SECONDS="${DUNE_AUTOSCALER_WORLD_PARTITION_HEAL_SECONDS:-30}"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 touch "$STATE_FILE"
@@ -40,6 +41,7 @@ echo "Dynamic mode-change grace: ${DESPAWN_GRACE_SECONDS}s"
 echo "Travel grace: ${TRAVEL_GRACE_SECONDS}s"
 echo "Director browser heal scan: ${DIRECTOR_BROWSER_SCAN_SECONDS}s"
 echo "Dynamic ready heal scan: ${DYNAMIC_READY_HEAL_SCAN_SECONDS}s"
+echo "World partition heal scan: ${WORLD_PARTITION_HEAL_SECONDS}s"
 echo "State file: ${STATE_FILE}"
 echo
 
@@ -380,6 +382,22 @@ repair_chat_exchanges_due() {
   runtime/scripts/repair-chat-exchanges.sh >/dev/null 2>&1 || {
     echo "WARN guild chat exchange repair failed"
   }
+}
+
+repair_world_partitions_due() {
+  local output
+
+  [ "${DUNE_AUTOSCALER_WORLD_PARTITION_HEAL:-1}" = "1" ] || return 0
+  director_heal_due world_partitions "$WORLD_PARTITION_HEAL_SECONDS" || return 0
+
+  if output="$(runtime/scripts/repair-world-partitions.sh 2>&1)"; then
+    if grep -Eq 'patched|claimed|reused|inserted|cleared|UPDATE [1-9]' <<< "$output"; then
+      sed 's/^/HEAL world partitions: /' <<< "$output"
+    fi
+  else
+    echo "WARN world partition repair failed"
+    sed 's/^/WARN world partition repair: /' <<< "$output" | tail -80
+  fi
 }
 
 dynamic_container_name_for_partition() {
@@ -1839,10 +1857,12 @@ scan_director_browser_state() {
 follow_director_hagga_handoffs &
 reconcile_always_on_maps
 repair_chat_exchanges_due
+repair_world_partitions_due
 
 while true; do
   reconcile_always_on_maps
   repair_chat_exchanges_due
+  repair_world_partitions_due
   scan_deepdesert_loading_responses
   ensure_overmap_travel_maps_prewarmed
   scan_travel_demand

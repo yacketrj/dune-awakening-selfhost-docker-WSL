@@ -208,6 +208,28 @@ EOF
     runtime/scripts/ping-diagnostics.sh
     ;;
 
+  repair)
+    shift || true
+    case "${1:-world-partitions}" in
+      world-partitions|partitions|partition)
+        shift || true
+        runtime/scripts/repair-world-partitions.sh "$@"
+        ;;
+      core-ready)
+        shift || true
+        runtime/scripts/heal-core-ready.sh "$@"
+        ;;
+      "")
+        runtime/scripts/repair-world-partitions.sh
+        ;;
+      *)
+        echo "Unknown repair target: $1"
+        echo "Usage: dune repair [world-partitions|core-ready]"
+        exit 1
+        ;;
+    esac
+    ;;
+
   ready)
     runtime/scripts/ready.sh
     ;;
@@ -344,6 +366,7 @@ Usage:
   dune autoscaler [status|start|stop|restart|logs|run]
   dune ports
   dune ping
+  dune repair [world-partitions|core-ready]
   dune ready
   dune logs <service> [--raw]
   dune restart <service>

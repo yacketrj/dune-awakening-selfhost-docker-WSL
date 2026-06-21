@@ -5,11 +5,12 @@ import { setupApi, type Task } from "../../api/setup";
 import { SecretInput } from "../../components/SecretInput";
 import { DataTable } from "../../components/common/DataTable";
 import { KeyValueGrid, StatusPill, TechnicalDetails } from "../../components/common/DisplayPrimitives";
-import { formatUiSentence } from "../../lib/display";
+import { formatUiSentence, stripAnsi } from "../../lib/display";
 import { conciseTaskError } from "../../lib/taskDisplay";
 
 type HomeTaskResult = { status: "running" | "succeeded" | "failed" | "stopped"; title: string; message?: string; details?: string };
 type DatabasePasswordState = { taskId?: string; result: HomeTaskResult | null };
+type CommandResult = { stdout?: string; stderr?: string; exitCode?: number };
 
 const DATABASE_PASSWORD_STATE_KEY = "arrakis.databasePasswordState";
 const DATABASE_PREVIEW_MAX_ROWS = 10000;
@@ -102,6 +103,10 @@ export function DatabasePanel() {
   const [databaseStatus, setDatabaseStatus] = useState<Record<string, unknown> | null>(null);
   const [databaseStatusError, setDatabaseStatusError] = useState("");
   const [databaseStatusLoading, setDatabaseStatusLoading] = useState(false);
+  const [worldPartitions, setWorldPartitions] = useState<CommandResult | null>(null);
+  const [worldPartitionsError, setWorldPartitionsError] = useState("");
+  const [worldPartitionsLoading, setWorldPartitionsLoading] = useState(false);
+  const [worldPartitionRepairResult, setWorldPartitionRepairResult] = useState<HomeTaskResult | null>(null);
   const [passwordPanelOpen, setPasswordPanelOpen] = useState(false);
   const [databasePassword, setDatabasePassword] = useState("");
   const [databasePasswordConfirm, setDatabasePasswordConfirm] = useState("");
@@ -120,6 +125,7 @@ export function DatabasePanel() {
   async function loadTables() { setTables(await databaseApi.tables(schema)); }
   useEffect(() => {
     loadTables().catch(() => undefined);
+    loadWorldPartitions().catch(() => undefined);
   }, []);
   useEffect(() => {
     let cancelled = false;
@@ -146,6 +152,11 @@ export function DatabasePanel() {
     const timer = window.setTimeout(() => setEditResult(null), 5000);
     return () => window.clearTimeout(timer);
   }, [editResult]);
+  useEffect(() => {
+    if (!worldPartitionRepairResult || worldPartitionRepairResult.status === "running") return undefined;
+    const timer = window.setTimeout(() => setWorldPartitionRepairResult(null), 10400);
+    return () => window.clearTimeout(timer);
+  }, [worldPartitionRepairResult?.status, worldPartitionRepairResult?.title]);
   useEffect(() => {
     if (!queryRan || (!queryError && !queryResult)) return undefined;
     if (!queryError && Array.isArray(queryResult?.rows) && queryResult.rows.length > 0) return undefined;
@@ -203,6 +214,34 @@ export function DatabasePanel() {
       setDatabaseStatusError(error instanceof Error ? error.message : String(error));
     } finally {
     setDatabaseStatusLoading(false);
+    }
+  }
+  async function loadWorldPartitions() {
+    setWorldPartitionsLoading(true);
+    setWorldPartitionsError("");
+    try {
+      setWorldPartitions(await databaseApi.worldPartitions());
+    } catch (error) {
+      setWorldPartitions(null);
+      setWorldPartitionsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorldPartitionsLoading(false);
+    }
+  }
+  async function repairWorldPartitions() {
+    setWorldPartitionRepairResult({ status: "running", title: "Repairing World Partitions" });
+    try {
+      const response = await databaseApi.repairWorldPartitions();
+      const final = await waitForDatabaseTask(response.task, (task) => {
+        setWorldPartitionRepairResult({ status: "running", title: "Repairing World Partitions", details: taskTechnicalDetails(task) });
+      });
+      const details = taskTechnicalDetails(final);
+      setWorldPartitionRepairResult(final.status === "succeeded"
+        ? { status: "succeeded", title: "World Partitions Repaired", details }
+        : { status: "failed", title: "World Partition Repair Failed", message: conciseTaskError(final), details });
+      await loadWorldPartitions().catch(() => undefined);
+    } catch (error) {
+      setWorldPartitionRepairResult({ status: "failed", title: "World Partition Repair Failed", details: error instanceof Error ? error.message : String(error) });
     }
   }
   async function changeDatabasePassword() {
@@ -289,6 +328,8 @@ export function DatabasePanel() {
   const filteredTables = tableSearchTerm
     ? tables.filter((table) => `${String(table.schema || "")}.${String(table.name || "")}`.toLowerCase().includes(tableSearchTerm))
     : tables;
+  const worldPartitionStatus = summarizeWorldPartitions(worldPartitions, worldPartitionsError, worldPartitionsLoading);
+  const worldPartitionDetails = commandDetails(worldPartitions, worldPartitionsError);
   return <section className="panel">
     <h2>Database Browser</h2>
     <p className="database-browser-note">
@@ -320,6 +361,20 @@ export function DatabasePanel() {
       ]} />}
       {!databaseStatusError && Boolean(databaseServer?.version) && <TechnicalDetails title="Postgres version" text={String(databaseServer?.version)} />}
     </section>}
+    <section className="action-section database-world-partitions">
+      <div className="panel-title database-status-title"><strong>World Partitions</strong><StatusPill value={worldPartitionStatus.status} /></div>
+      <p>{worldPartitionStatus.message}</p>
+      <div className="action-line">
+        <button disabled={worldPartitionsLoading} onClick={loadWorldPartitions}>{worldPartitionsLoading ? "Checking..." : "Check World Partitions"}</button>
+        <button disabled={worldPartitionRepairResult?.status === "running"} onClick={repairWorldPartitions}>Repair World Partitions</button>
+        {worldPartitionRepairResult && <span className={`inline-task-result result-${worldPartitionRepairResult.status === "succeeded" ? "ok" : worldPartitionRepairResult.status === "failed" ? "fail" : "running"}`}>
+          <strong className={worldPartitionRepairResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(worldPartitionRepairResult.title, worldPartitionRepairResult.status === "running")}</strong>
+          {worldPartitionRepairResult.message && <span className="inline-task-message">{formatResultMessage(worldPartitionRepairResult.message)}</span>}
+        </span>}
+      </div>
+      {worldPartitionDetails && <TechnicalDetails title="World partition check" text={worldPartitionDetails} />}
+      {worldPartitionRepairResult?.details && <TechnicalDetails title="Repair details" text={worldPartitionRepairResult.details} />}
+    </section>
     <h3>Tables</h3>
     <div className="action-row database-table-search-row">
       <input value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} placeholder="Search table names" />
@@ -401,4 +456,42 @@ function parseEditableDbValue(value: string, original: unknown) {
     try { return JSON.parse(text); } catch { return text; }
   }
   return text;
+}
+
+async function waitForDatabaseTask(task: Task, onUpdate: (task: Task) => void) {
+  let current = task;
+  onUpdate(current);
+  for (let i = 0; i < 3600 && !isTerminalTask(current.status); i += 1) {
+    await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
+    current = (await setupApi.task(current.id)).task;
+    onUpdate(current);
+  }
+  return current;
+}
+
+function taskTechnicalDetails(task: Task) {
+  return task.logLines.map((line) => line.line).filter(Boolean).join("\n") || task.errorMessage || "";
+}
+
+function summarizeWorldPartitions(result: CommandResult | null, error: string, loading: boolean) {
+  if (loading) return { status: "Checking", message: "Checking world partition ownership." };
+  if (error) return { status: "Failed", message: formatResultMessage(error) };
+  if (!result) return { status: "Info", message: "World partition ownership has not been checked yet." };
+  const output = commandDetails(result);
+  const issueLine = firstMatchingOutputLine(output, /^(FAIL|WARN|WAIT)\s+/i);
+  if (Number(result.exitCode || 0) === 0) {
+    return { status: "Ready", message: firstMatchingOutputLine(output, /^OK\s+/i) || "World partition ownership is healthy." };
+  }
+  if (Number(result.exitCode) === 2) {
+    return { status: "WARN", message: issueLine || "No alive target game servers were available yet." };
+  }
+  return { status: "Failed", message: issueLine || "World partition ownership needs repair." };
+}
+
+function commandDetails(result: CommandResult | null, error = "") {
+  return stripAnsi([error, result?.stdout, result?.stderr].filter(Boolean).join("\n")).trim();
+}
+
+function firstMatchingOutputLine(text: string, pattern: RegExp) {
+  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).find((line) => pattern.test(line)) || "";
 }
