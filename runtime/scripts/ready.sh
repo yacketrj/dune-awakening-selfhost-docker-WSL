@@ -372,6 +372,27 @@ if is_running dune-postgres; then
     echo "       runtime/scripts/generate-world-partitions-sql.sh"
     echo "       docker exec -i dune-postgres psql -U dune -d dune < runtime/generated/reset-world-partitions.sql"
   fi
+
+  partition_check_out="$(mktemp /tmp/dune-world-partition-check.XXXXXX.out)"
+  partition_check_err="$(mktemp /tmp/dune-world-partition-check.XXXXXX.err)"
+  partition_check_rc=0
+  runtime/scripts/repair-world-partitions.sh check >"$partition_check_out" 2>"$partition_check_err" || partition_check_rc=$?
+  partition_check_output="$(cat "$partition_check_out" "$partition_check_err" 2>/dev/null || true)"
+  rm -f "$partition_check_out" "$partition_check_err"
+  case "$partition_check_rc" in
+    0)
+      mark_ok "World Partition Ownership"
+      ;;
+    2)
+      mark_wait "World Partition Ownership"
+      printf '%s\n' "$partition_check_output" | sed -n '/^\(WARN\|FAIL\) /s/^/     /p'
+      ;;
+    *)
+      mark_fail "World Partition Ownership"
+      printf '%s\n' "$partition_check_output" | sed -n '/^\(WARN\|FAIL\) /s/^/     /p'
+      echo "     Run: dune repair world-partitions"
+      ;;
+  esac
 else
   mark_fail "world_partition check"
   echo "     dune-postgres is not running."

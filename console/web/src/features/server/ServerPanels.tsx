@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Play } from "lucide-react";
+import { databaseApi } from "../../api/database";
 import { serverApi, type PerformanceSnapshot } from "../../api/server";
 import { setupApi, type Task } from "../../api/setup";
 import { PortChecklist } from "../../components/PortChecklist";
@@ -426,6 +427,7 @@ export function ServerPanel(props: {
   const [funcomToken, setFuncomToken] = useState("");
   const [serviceRestartResult, setServiceRestartResult] = useState<HomeTaskResult | null>(null);
   const [serviceRestartingService, setServiceRestartingService] = useState("");
+  const [partitionRepairResult, setPartitionRepairResult] = useState<HomeTaskResult | null>(null);
   const controlActionRunId = useRef(0);
   const controlActionStartedAt = useRef(0);
   const serviceRestartRunId = useRef(0);
@@ -436,6 +438,7 @@ export function ServerPanel(props: {
   const titleSaving = titleResult?.status === "running";
   const funcomTokenSaving = funcomTokenResult?.status === "running";
   const scheduleSaving = scheduleResult?.status === "running";
+  const partitionRepairRunning = partitionRepairResult?.status === "running";
   const restartScheduleValues = parseKeyValueText(restartSchedule?.stdout || "");
   const scheduleTimerValue = restartScheduleValues.systemd_timer || "";
   const scheduleTimerLabel = scheduleTimerValue ? formatTimerStatus(scheduleTimerValue) : "Not Installed";
@@ -447,6 +450,7 @@ export function ServerPanel(props: {
   const scheduleStatusLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleDisplayActive ? "Enabled" : "Disabled";
   const scheduleDisplayTimerLabel = !scheduleLoaded && !scheduleSaving ? "Checking" : scheduleSaving ? restartEnabled ? "Activating" : "Deactivating" : restartEnabled ? scheduleTimerLabel : "Inactive";
   const serverState = getHomeServerState(props.status, props.readiness);
+  const partitionOwnership = summarizeWorldPartitionOwnership(props.readiness);
   async function run(action: () => Promise<unknown>) {
     props.onError("");
     try { await action(); } catch (error) { props.onError(error instanceof Error ? error.message : String(error)); }
@@ -610,6 +614,24 @@ export function ServerPanel(props: {
       setServiceRestartResult({ status: "failed", title: "Restart Failed", details: error instanceof Error ? error.message : String(error) });
     }
   }
+  async function repairWorldPartitions() {
+    if (!(await confirmAction("Repair world partition ownership now?"))) return;
+    setPartitionRepairResult({ status: "running", title: "Repairing World Partitions" });
+    props.onError("");
+    try {
+      const response = await databaseApi.repairWorldPartitions();
+      const final = await waitForTaskWithUpdates(response.task, (task) => {
+        setPartitionRepairResult({ status: "running", title: "Repairing World Partitions", details: taskTechnicalDetails(task) });
+      });
+      const details = taskTechnicalDetails(final);
+      await loadControlStatus(true).catch(() => null);
+      setPartitionRepairResult(final.status === "succeeded"
+        ? { status: "succeeded", title: "World Partitions Repaired", details }
+        : { status: "failed", title: "World Partition Repair Failed", message: conciseTaskError(final), details });
+    } catch (error) {
+      setPartitionRepairResult({ status: "failed", title: "World Partition Repair Failed", details: error instanceof Error ? error.message : String(error) });
+    }
+  }
   async function loadRestartSchedule() {
     setScheduleLoading(true);
     try {
@@ -770,6 +792,11 @@ export function ServerPanel(props: {
     const id = window.setTimeout(() => setScheduleResult(null), 10400);
     return () => window.clearTimeout(id);
   }, [scheduleResult?.status, scheduleResult?.title]);
+  useEffect(() => {
+    if (!partitionRepairResult || partitionRepairResult.status === "running") return;
+    const id = window.setTimeout(() => setPartitionRepairResult(null), 10400);
+    return () => window.clearTimeout(id);
+  }, [partitionRepairResult?.status, partitionRepairResult?.title]);
   return (
     <section className="panel server-control-panel">
       <h2>Server Controls</h2>
@@ -800,6 +827,18 @@ export function ServerPanel(props: {
         </span>}
       </div>
       <ReadinessTimeline text={props.readiness} statusText={props.status} />
+      <section className="action-section">
+        <div className="panel-title"><h4>World Partition Ownership</h4><StatusPill value={partitionOwnership.status} /></div>
+        <p>{partitionOwnership.detail}</p>
+        <div className="action-line">
+          <button disabled={actionRunning || serviceRestartRunning || titleSaving || funcomTokenSaving || scheduleSaving || partitionRepairRunning} onClick={repairWorldPartitions}>Repair World Partitions</button>
+          {partitionRepairResult && <span className={`inline-task-result result-${partitionRepairResult.status === "succeeded" ? "ok" : partitionRepairResult.status === "failed" ? "fail" : "running"}`}>
+            <strong className={partitionRepairResult.status === "running" ? "loading-dots" : ""}>{formatResultTitle(partitionRepairResult.title, partitionRepairResult.status === "running")}</strong>
+            {partitionRepairResult.message && <span className="inline-task-message">{formatResultMessage(partitionRepairResult.message)}</span>}
+          </span>}
+        </div>
+        {partitionRepairResult?.details && <TechnicalDetails title="Repair details" text={partitionRepairResult.details} />}
+      </section>
       <PortChecklist text={props.ports} statusText={props.status} />
       <section className="action-section">
         <div className="panel-title"><h4>Change Funcom Token</h4></div>
@@ -1105,11 +1144,12 @@ function summarizeHomeStatus(status: string, readiness: string, readinessWarning
   const rawContainers = preferKnownHomeHealth(summarizeContainers(status), summarizeReadinessContainers(readiness));
   const rawListeners = preferKnownHomeHealth(summarizeListeners(status), summarizeReadinessListeners(readiness));
   const rawDatabase = preferKnownHomeHealth(summarizeDatabase(status), summarizeReadinessDatabase(readiness));
+  const rawPartitions = summarizeReadinessWorldPartitions(readiness);
   const rawGames = preferKnownHomeHealth(summarizeGameServers(status), summarizeReadinessGameServers(readiness));
   const rawRabbit = preferKnownHomeHealth(summarizeRabbit(status), summarizeReadinessRabbit(readiness));
   const rawFls = preferKnownHomeHealth(summarizeFls(status), summarizeReadinessFls(readiness));
   const readyOverride = readinessReady ? { label: "OK", status: "Ready", detail: "" } : null;
-  const coreReadyWithReview = !runningAction && isHomeCoreReadyWithReview(status, readiness, rawContainers, rawListeners, rawDatabase, rawGames, rawRabbit, rawFls);
+  const coreReadyWithReview = !runningAction && isHomeCoreReadyWithReview(status, readiness, rawContainers, rawListeners, rawDatabase, rawPartitions, rawGames, rawRabbit, rawFls);
   const isStarting = runningAction === "start" || runningAction === "restart" || (bootStarting && !coreReadyWithReview);
   const transitionOverall = runningAction === "restart" ? "Restarting" : runningAction === "stop" ? "Stopping" : isStarting ? "Starting" : "";
   const warmingOverall = /^Warming$/i.test(rawGames.label) ? "Warming" : "";
@@ -1119,6 +1159,7 @@ function summarizeHomeStatus(status: string, readiness: string, readinessWarning
   const containers = readyOverride || transitionHomeHealthCard(rawContainers, transitionAction) || attentionHealth?.containers || rawContainers;
   const listeners = readyOverride || transitionHomeHealthCard(rawListeners, transitionAction) || attentionHealth?.listeners || rawListeners;
   const database = readyOverride || transitionHomeHealthCard(rawDatabase, transitionAction) || attentionHealth?.database || rawDatabase;
+  const partitions = readyOverride || transitionHomeHealthCard(rawPartitions, transitionAction) || attentionHealth?.partitions || rawPartitions;
   const games = readyOverride || transitionHomeHealthCard(rawGames, transitionAction) || attentionHealth?.games || rawGames;
   const rabbit = readyOverride || transitionHomeHealthCard(rawRabbit, transitionAction) || attentionHealth?.rabbit || rawRabbit;
   const fls = funcomTokenAuthFailure
@@ -1139,6 +1180,7 @@ function summarizeHomeStatus(status: string, readiness: string, readinessWarning
       { label: "Containers", value: containers.label, status: containers.status, detail: containers.detail },
       { label: "Listeners", value: listeners.label, status: listeners.status, detail: listeners.detail },
       { label: "Database", value: database.label, status: database.status, detail: database.detail },
+      { label: "World Partitions", value: partitions.label, status: partitions.status, detail: partitions.detail },
       { label: "Game Servers", value: games.label, status: games.status, detail: games.detail },
       { label: "RabbitMQ", value: rabbit.label, status: rabbit.status, detail: rabbit.detail },
       { label: "Funcom/FLS", value: fls.label, status: fls.status, detail: fls.detail }
@@ -1167,6 +1209,7 @@ function isHomeCoreReadyWithReview(
   containers: { label: string; status: string; detail: string },
   listeners: { label: string; status: string; detail: string },
   database: { label: string; status: string; detail: string },
+  partitions: { label: string; status: string; detail: string },
   games: { label: string; status: string; detail: string },
   rabbit: { label: string; status: string; detail: string },
   fls: { label: string; status: string; detail: string }
@@ -1174,9 +1217,10 @@ function isHomeCoreReadyWithReview(
   const text = `${status}\n${readiness}`;
   const gamesReady = isReadyHomeCard(games) || (/OK\s+Survival_1\s+ready/i.test(text) && /OK\s+Overmap\s+ready/i.test(text));
   const databaseReady = isReadyHomeCard(database) || /OK\s+world_partition rows:/i.test(text);
+  const partitionsReady = isReadyHomeCard(partitions) || /OK\s+World Partition Ownership/i.test(text);
   const rabbitReady = isReadyHomeCard(rabbit) || /OK\s+game server sg\.\* RMQ connections/i.test(text);
-  const hasReview = [containers, listeners, database, games, rabbit, fls].some((item) => /^Needs Review$/i.test(item.label) || /^WARN$/i.test(item.status));
-  return gamesReady && databaseReady && rabbitReady && hasReview;
+  const hasReview = [containers, listeners, database, partitions, games, rabbit, fls].some((item) => /^Needs Review$/i.test(item.label) || /^WARN$/i.test(item.status));
+  return gamesReady && databaseReady && partitionsReady && rabbitReady && hasReview;
 }
 
 function isReadyHomeCard(item: { label: string; status: string; detail: string }) {
@@ -1258,6 +1302,7 @@ function isHomeReadinessOperational(readiness: string) {
     /OK\s+container\s+dune-server-survival-1/i,
     /OK\s+container\s+dune-server-overmap/i,
     /OK\s+world_partition rows:/i,
+    /OK\s+World Partition Ownership/i,
     /OK\s+game server sg\.\* RMQ connections/i
   ];
   return requiredSignals.every((pattern) => pattern.test(readiness));
@@ -1331,6 +1376,7 @@ function attentionHomeHealthCards() {
     containers: item,
     listeners: item,
     database: item,
+    partitions: item,
     games: item,
     rabbit: item,
     fls: item
@@ -1529,6 +1575,20 @@ function summarizeReadinessDatabase(text: string) {
     : { label: "Needs Review", status: "WARN", detail: "" };
 }
 
+function summarizeReadinessWorldPartitions(text: string) {
+  return summarizeWorldPartitionOwnership(text);
+}
+
+function summarizeWorldPartitionOwnership(text: string) {
+  const lines = readinessRows(text, /World Partition Ownership/i);
+  if (!lines.length) return { label: "Unknown", status: "Info", detail: "Run readiness to check world partition ownership." };
+  const line = lines[0];
+  const detail = friendlyIssueLine(line) || "World Partition Ownership";
+  if (/^OK\s+/i.test(line)) return { label: "OK", status: "Ready", detail };
+  if (/^(WAIT|WARN)\s+/i.test(line)) return { label: "Warming", status: "WARN", detail };
+  return { label: "Repair Needed", status: "Failed", detail };
+}
+
 function summarizeReadinessGameServers(text: string) {
   const lines = readinessRows(text, /\b(Survival_1|Overmap)\s+ready\b/i);
   if (!lines.length) return { label: "Unknown", status: "Unknown", detail: "" };
@@ -1554,7 +1614,7 @@ function summarizeReadinessFls(text: string) {
 }
 
 function readinessRows(text: string, pattern: RegExp) {
-  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(OK|WARN|FAIL)\s+/i.test(line) && pattern.test(line));
+  return stripAnsi(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(OK|WARN|WAIT|FAIL)\s+/i.test(line) && pattern.test(line));
 }
 
 function numberAfterLabel(lines: string[], label: string) {

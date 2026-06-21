@@ -285,6 +285,8 @@ async function handleApi(req, res) {
   if (path === "/api/database/query" && req.method === "POST") return databaseQuery(req, res);
   if (path === "/api/database/export" && req.method === "POST") return databaseExport(req, res);
   if (path === "/api/database/password" && req.method === "POST") return databasePasswordRoute(req, res);
+  if (path === "/api/database/world-partitions") return safeCommandJson(res, "worldPartitionsCheck");
+  if (path === "/api/database/world-partitions/repair" && req.method === "POST") return task(req, res, "database", "worldPartitionsRepair", {});
   if (path === "/api/settings/admin-password" && req.method === "POST") return adminPasswordRoute(req, res);
   if (path === "/api/settings/web-port" && req.method === "POST") return webPortRoute(req, res);
 

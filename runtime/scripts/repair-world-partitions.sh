@@ -25,7 +25,9 @@ DEFAULT_PARTITION_DEF='{"box": {"max_x": 1, "max_y": 1, "min_x": 0, "min_y": 0},
 usage() {
   cat <<'EOF'
 Usage:
+  dune repair world-partitions check
   dune repair world-partitions [once|watch]
+  dune database world-partitions check
   runtime/scripts/repair-world-partitions.sh [once|watch]
 
 Environment:
@@ -57,7 +59,7 @@ require_container() {
 
 psql_exec() {
   docker exec -i "$POSTGRES_CONTAINER" \
-    psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+    psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"
 }
 
 target_values_sql() {
@@ -286,6 +288,171 @@ BEGIN
 END
 $$;
 SQL
+}
+
+run_check() {
+  local targets rows fail_count warn_count
+
+  require_uint SURVIVAL_PORT "$SURVIVAL_PORT"
+  require_uint OVERMAP_PORT "$OVERMAP_PORT"
+  require_uint SURVIVAL_PARTITION_ID "$SURVIVAL_PARTITION_ID"
+  require_uint OVERMAP_PARTITION_ID "$OVERMAP_PARTITION_ID"
+  require_uint ALIAS_PARTITION_MIN_ID "$ALIAS_PARTITION_MIN_ID"
+
+  targets="$(target_values_sql)"
+  require_container
+
+  rows="$(
+    cat <<SQL | psql_exec -qAt -F '|'
+SET search_path TO dune, public;
+
+CREATE TEMP TABLE _partition_targets (
+  game_port integer NOT NULL,
+  preferred_partition_id bigint,
+  map_name text NOT NULL,
+  dimension_index integer NOT NULL DEFAULT 0
+);
+
+INSERT INTO _partition_targets(game_port, preferred_partition_id, map_name, dimension_index)
+VALUES
+  $targets;
+
+CREATE TEMP TABLE _target_servers AS
+SELECT DISTINCT ON (t.game_port)
+  t.game_port,
+  t.preferred_partition_id,
+  t.map_name,
+  t.dimension_index,
+  fs.server_id,
+  fs.revision,
+  EXISTS (
+    SELECT 1
+    FROM active_server_ids asi
+    WHERE asi.server_id = fs.server_id
+  ) AS has_active_db_connection
+FROM _partition_targets t
+JOIN farm_state fs
+  ON fs.game_port = t.game_port
+ AND fs.alive = true
+ORDER BY
+  t.game_port,
+  has_active_db_connection DESC,
+  fs.revision DESC NULLS LAST,
+  fs.server_id;
+
+WITH function_checks AS (
+  SELECT
+    'get_active_servers_for_gateway'::text AS function_name,
+    EXISTS (
+      SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'dune'
+        AND p.proname = 'get_active_servers_for_gateway'
+        AND position('partition-repair-sentinel: gateway-wp-map' IN lower(p.prosrc)) > 0
+    ) AS healthy
+  UNION ALL
+  SELECT
+    'load_world_partition',
+    EXISTS (
+      SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'dune'
+        AND p.proname = 'load_world_partition'
+        AND position('partition-repair-sentinel: load-world-partition-overmap' IN lower(p.prosrc)) > 0
+    )
+),
+ownership AS (
+  SELECT
+    t.game_port,
+    t.map_name,
+    t.preferred_partition_id,
+    ts.server_id,
+    ts.has_active_db_connection,
+    wp.partition_id,
+    wp.blocked
+  FROM _partition_targets t
+  LEFT JOIN _target_servers ts
+    ON ts.game_port = t.game_port
+  LEFT JOIN LATERAL (
+    SELECT wp.partition_id, wp.blocked
+    FROM world_partition wp
+    WHERE wp.partition_id < ${ALIAS_PARTITION_MIN_ID}
+      AND wp.server_id = ts.server_id
+      AND wp.map = t.map_name
+      AND wp.dimension_index = t.dimension_index
+    LIMIT 1
+  ) wp ON true
+),
+result_rows AS (
+  SELECT
+    'FAIL'::text AS status,
+    format('Database function %s needs repair', function_name) AS message
+  FROM function_checks
+  WHERE NOT healthy
+
+  UNION ALL
+  SELECT
+    'WARN',
+    format('No alive %s server found on game port %s yet', map_name, game_port)
+  FROM ownership
+  WHERE server_id IS NULL
+
+  UNION ALL
+  SELECT
+    'FAIL',
+    format('Alive %s server %s has no matching world_partition row', map_name, left(server_id, 8))
+  FROM ownership
+  WHERE server_id IS NOT NULL
+    AND partition_id IS NULL
+
+  UNION ALL
+  SELECT
+    'FAIL',
+    format('%s partition %s is blocked for server %s', map_name, partition_id, left(server_id, 8))
+  FROM ownership
+  WHERE server_id IS NOT NULL
+    AND partition_id IS NOT NULL
+    AND blocked = true
+
+  UNION ALL
+  SELECT
+    'OK',
+    format('%s server %s owns partition_id=%s', map_name, left(server_id, 8), partition_id)
+  FROM ownership
+  WHERE server_id IS NOT NULL
+    AND partition_id IS NOT NULL
+    AND blocked = false
+)
+SELECT status, message
+FROM result_rows
+ORDER BY
+  CASE status WHEN 'FAIL' THEN 1 WHEN 'WARN' THEN 2 ELSE 3 END,
+  message;
+SQL
+  )"
+
+  echo "=== World partition ownership ==="
+  if [ -z "$rows" ]; then
+    echo "WARN No world partition check rows were returned."
+    return 2
+  fi
+
+  fail_count="$(printf '%s\n' "$rows" | awk -F '|' '$1 == "FAIL" { c++ } END { print c + 0 }')"
+  warn_count="$(printf '%s\n' "$rows" | awk -F '|' '$1 == "WARN" { c++ } END { print c + 0 }')"
+  printf '%s\n' "$rows" | while IFS='|' read -r status message; do
+    [ -n "${status:-}" ] || continue
+    printf '%-4s %s\n' "$status" "$message"
+  done
+
+  if [ "${fail_count:-0}" -gt 0 ]; then
+    return 1
+  fi
+  if [ "${warn_count:-0}" -gt 0 ]; then
+    return 2
+  fi
+  return 0
 }
 
 run_once() {
@@ -630,7 +797,11 @@ SQL
 }
 
 case "${1:-once}" in
-  once|"") ;;
+  check|status)
+    run_check
+    exit $?
+    ;;
+  repair|once|"") ;;
   watch|--watch) REPAIR_WATCH=1 ;;
   help|--help|-h)
     usage

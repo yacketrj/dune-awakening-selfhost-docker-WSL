@@ -21,6 +21,7 @@ Usage:
   runtime/scripts/db-manager.sh preview <schema.table> [limit] [offset]
   runtime/scripts/db-manager.sh sql <query>
   runtime/scripts/db-manager.sh export <query>
+  runtime/scripts/db-manager.sh world-partitions [check|repair|watch]
 EOF
 }
 
@@ -208,5 +209,14 @@ case "${1:-}" in
   preview) shift; cmd_preview "${1:-}" "${2:-25}" "${3:-0}" ;;
   sql) shift; cmd_sql "$*" ;;
   export) shift; cmd_export "$*" ;;
+  world-partitions)
+    shift
+    case "${1:-check}" in
+      check|status) runtime/scripts/repair-world-partitions.sh check ;;
+      repair|once|"") runtime/scripts/repair-world-partitions.sh once ;;
+      watch|--watch) runtime/scripts/repair-world-partitions.sh watch ;;
+      *) echo "Unknown world-partitions command: $1" >&2; exit 2 ;;
+    esac
+    ;;
   *) usage >&2; exit 2 ;;
 esac
