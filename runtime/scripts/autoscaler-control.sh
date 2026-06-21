@@ -25,6 +25,12 @@ status() {
   if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     echo "State: running"
     docker ps --filter "name=^${CONTAINER_NAME}$" --format "Container: {{.Names}}\nStatus:    {{.Status}}"
+    if docker exec "$CONTAINER_NAME" sh -lc 'docker ps >/dev/null 2>&1' >/dev/null 2>&1; then
+      echo "Docker socket: accessible"
+    else
+      echo "Docker socket: unavailable"
+      echo "Self-heal: dune autoscaler restart"
+    fi
   elif docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     echo "State: stopped"
     docker ps -a --filter "name=^${CONTAINER_NAME}$" --format "Container: {{.Names}}\nStatus:    {{.Status}}"

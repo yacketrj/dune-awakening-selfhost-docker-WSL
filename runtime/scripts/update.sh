@@ -334,6 +334,8 @@ if [ "$cmd" = "check" ] || [ "$cmd" = "status" ]; then
   echo
   echo "=== Check Steam for available update ==="
 
+  update_check_log="$(mktemp)"
+  set +e
   docker compose exec -T -e APP_ID="$APP_ID" orchestrator bash -lc '
 set -euo pipefail
 
@@ -418,9 +420,22 @@ fi
 
 echo "Update available."
 exit 100
-'
+  ' 2>&1 | tee "$update_check_log"
+  update_check_rc="${PIPESTATUS[0]}"
+  set -e
 
-  exit $?
+  if grep -Fq "No update available." "$update_check_log"; then
+    rm -f "$update_check_log"
+    exit 0
+  fi
+
+  if grep -Fq "Update available." "$update_check_log"; then
+    rm -f "$update_check_log"
+    exit 100
+  fi
+
+  rm -f "$update_check_log"
+  exit "$update_check_rc"
 fi
 
 skip_preflight=0
