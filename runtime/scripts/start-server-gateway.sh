@@ -10,6 +10,7 @@ cd "$(dirname "$0")/../.."
 source runtime/scripts/host-paths.sh
 source runtime/scripts/runtime-env.sh
 source runtime/scripts/image-tags.sh
+source runtime/scripts/db-passwords.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
 IMAGE="registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${WORLD_IMAGE_TAG}"
 
@@ -40,7 +41,7 @@ SERVER_TITLE="$(resolve_server_title)"
 SERVER_REGION="$(resolve_server_region)"
 SERVER_IP="$(resolve_server_ip)"
 BATTLEGROUP_ID="$(resolve_battlegroup_id)"
-DUNE_DB_PASSWORD="${DUNE_DB_PASSWORD:-dune}"
+DUNE_DB_PASSWORD="$(resolve_dune_db_password)"
 
 
 mkdir -p runtime/server-gateway/config

@@ -9,12 +9,24 @@ cd "$(dirname "$0")/../.."
 [ -r runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
 source runtime/scripts/host-paths.sh
 source runtime/scripts/image-tags.sh
+source runtime/scripts/db-passwords.sh
 POSTGRES_IMAGE_TAG="$(resolve_postgres_image_tag)"
 IMAGE="registry.funcom.com/funcom/self-hosting/igw-postgres:${POSTGRES_IMAGE_TAG}"
 
 mkdir -p runtime/postgres/initdb
 
-dune_db_password="${DUNE_DB_PASSWORD:-dune}"
+if docker volume inspect dune-postgres-data >/dev/null 2>&1 &&
+  [ -z "${DUNE_DB_PASSWORD:-}" ] &&
+  [ -z "${POSTGRES_PASSWORD:-}" ] &&
+  [ ! -s runtime/secrets/dune-db-password.txt ] &&
+  [ ! -s runtime/secrets/postgres-password.txt ]; then
+  export DUNE_DB_SECRET_LEGACY_DEFAULTS=1
+  echo "Existing Postgres volume found without generated DB secrets; preserving legacy credentials."
+  echo "Use the web Database password workflow to rotate the dune role when ready."
+fi
+
+dune_db_password="$(resolve_dune_db_password)"
+postgres_password="$(resolve_postgres_password)"
 dune_db_password_sql="$(printf '%s' "$dune_db_password" | sed "s/'/''/g")"
 
 cat > runtime/postgres/initdb/01-create-dune-user.sql <<SQL
@@ -45,7 +57,7 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:15432:5432 \
   -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_PASSWORD="$postgres_password" \
   -e POSTGRES_DB=dune \
   -v dune-postgres-data:/var/lib/postgresql/data \
   -v "$(host_path "$PWD/runtime/postgres/initdb"):/docker-entrypoint-initdb.d:ro" \
@@ -73,7 +85,7 @@ docker exec dune-postgres pg_isready -h 127.0.0.1 -p 5432 -U postgres -d dune
 
 echo
 echo "=== Normalizing dune schema ownership and privileges ==="
-docker exec -i dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune <<'SQL'
+docker exec -i -e PGPASSWORD="$postgres_password" dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune <<'SQL'
 ALTER DATABASE dune OWNER TO dune;
 ALTER SCHEMA dune OWNER TO dune;
 GRANT ALL PRIVILEGES ON DATABASE dune TO dune;
@@ -130,11 +142,11 @@ SQL
 
 echo
 echo "=== Databases ==="
-docker exec dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune -c '\l'
+docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune -c '\l'
 
 echo
 echo "=== Roles ==="
-docker exec dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune -c '\du'
+docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -h 127.0.0.1 -p 5432 -U postgres -d dune -c '\du'
 
 echo
 echo "=== Container ==="
