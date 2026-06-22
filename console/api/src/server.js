@@ -16,7 +16,7 @@ import { redact } from "./redact.js";
 import { itemRequiresDatabaseGrant, listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
 import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishMapChat, publishServerCommand } from "./rmq.js";
 import { clearCarePackageHistory, enableCarePackage, ensureCarePackageServerPersona, grantEligibleCarePackages, grantCarePackage, retryCarePackageGrant, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory } from "./carePackage.js";
-import { readJsonBody, readMultipartForm } from "./httpSafety.js";
+import { createConnectionLimiter, readJsonBody, readMultipartForm } from "./httpSafety.js";
 import { parseBackupAutoStatus, parseBackupListRows } from "./statusParsers.js";
 import { assertInstalledAddonPermission, fetchCommunityAddons, installCommunityAddon, installedAddonContentPath, listInstalledAddons, removeInstalledAddon, setInstalledAddonEnabled, syncInstalledAddonLifecycle } from "./addons.js";
 import { performanceSnapshot as collectPerformanceSnapshot } from "./services/performance.js";
@@ -30,6 +30,7 @@ import { funcomAuthMismatchDetected, matchingFuncomAuthLines, saveFuncomTokenVal
 const config = loadConfig();
 const auth = createAuth(config);
 const loginRateLimiter = createLoginRateLimiter();
+const sseConnectionLimiter = createConnectionLimiter(config.maxSseConnections);
 const tasks = new TaskManager(config);
 let db = createDb(config);
 let carePackageAutoRunning = false;
@@ -1514,7 +1515,7 @@ function taskRoute(req, res, path) {
   const taskObj = tasks.get(id);
   if (!taskObj) return json(res, 404, { error: "Task not found" });
   if (parts[5] === "stream") {
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    if (!openSseStream(req, res)) return;
     res.write(`data: ${JSON.stringify(publicTask(taskObj))}\n\n`);
     const unsubscribe = tasks.subscribe(id, (data) => res.write(data));
     req.on("close", unsubscribe);
@@ -1541,7 +1542,7 @@ async function logsRoute(req, res, path) {
     return;
   }
   if (parts[4] === "stream") {
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    if (!openSseStream(req, res)) return;
     try {
       await readLogs(service, {
         follow: true,
@@ -1563,6 +1564,17 @@ async function logsRoute(req, res, path) {
     if (!output) output = redact(error.stdout || error.message || "");
   }
   return json(res, 200, { operation: "logs", stdout: output, stderr: "", exitCode: 0 });
+}
+
+function openSseStream(req, res) {
+  const release = sseConnectionLimiter.enter();
+  if (!release) {
+    json(res, 429, { error: "Too many live streams are open. Close an existing log or task stream, then try again." }, { "retry-after": "30" });
+    return null;
+  }
+  req.on("close", release);
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  return release;
 }
 
 function readLogs(service, options) {
