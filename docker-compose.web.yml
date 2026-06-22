@@ -8,6 +8,13 @@ services:
     image: redblink-dune-docker-console:dev
     container_name: redblink-dune-docker-console
     restart: unless-stopped
+    mem_limit: "${ADMIN_CONTAINER_MEMORY_LIMIT:-512m}"
+    cpus: "${ADMIN_CONTAINER_CPUS:-1.0}"
+    pids_limit: "${ADMIN_CONTAINER_PIDS_LIMIT:-256}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # Host networking lets the console reach RedBlink defaults such as
     # Postgres on 127.0.0.1:15432 and bind ADMIN_BIND_PORT directly.
     network_mode: host
