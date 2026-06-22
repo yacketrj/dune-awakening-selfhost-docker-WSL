@@ -505,6 +505,10 @@ prepare_web_console_rebuild_env() {
     persist_env_file_value ADMIN_BIND_PORT "$port"
   fi
   prepare_docker_socket_gid
+  export DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}"
+  export DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}"
+  persist_env_file_value DUNE_HOST_UID "$DUNE_HOST_UID"
+  persist_env_file_value DUNE_HOST_GID "$DUNE_HOST_GID"
 }
 
 rebuild_web_console_now() {

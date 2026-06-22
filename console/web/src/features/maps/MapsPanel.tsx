@@ -1087,7 +1087,7 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
         const baseStatus = isDeepDesertRow && deepDesertDualConfiguring
           ? "Configuring"
           : isSurvivalRow && primarySurvivalSietch ? readinessStatusByPartitionId.get(primarySurvivalSietch.partitionId) || partitionStatusById.get(primarySurvivalSietch.partitionId) || String(row.status || "Not Available") : String(row.status || "Not Available");
-        const displayStatus = statusWithLiveMemory(baseStatus, memoryRow);
+        const displayStatus = statusWithLiveMemory(baseStatus, memoryRow, row.mode);
         const canForceDespawn = isDeepDesertRow && deepDesertDualEnabled
           ? [displayStatus, ...dynamicDeepDesertRows.map((deepRow) => partitionStatusById.get(String(deepRow.partitionId || "")) || String(deepRow.status || ""))].some((status) => mapCanForceDespawn({ status }))
           : mapCanForceDespawn({ ...row, status: displayStatus });
@@ -1135,7 +1135,7 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
             const childSelected = selectedMapName === "DeepDesert_1" && selectedPartitionId === String(deepRow.partitionId || "");
             const deepMemory = partitionMemoryValue(memoryText, String(deepRow.partitionId || ""), String(row.memory || ""), "DeepDesert_1");
             const childMemoryRow = memoryForMap(liveMemory, "DeepDesert_1", { partitionId: deepRow.partitionId });
-            const childStatus = deepDesertDualConfiguring ? "Configuring" : statusWithLiveMemory(partitionStatusById.get(String(deepRow.partitionId || "")) || String(deepRow.status || "Not Available"), childMemoryRow);
+            const childStatus = deepDesertDualConfiguring ? "Configuring" : statusWithLiveMemory(partitionStatusById.get(String(deepRow.partitionId || "")) || String(deepRow.status || "Not Available"), childMemoryRow, row.mode);
             const childMemoryDirty = childSelected && memory !== memoryInputValue(deepMemory);
             const childCanForceDespawn = mapCanForceDespawn({ ...deepRow, status: childStatus });
             const childResultActive = mapsResultTarget === mapResultTarget("DeepDesert_1", String(deepRow.partitionId || ""));
@@ -1170,7 +1170,7 @@ export function MapsPanel({ onError, confirmAction, confirmSettingsRestart, wait
             const passwordTouched = Boolean(sietchPasswordTouched[sietch.partitionId]);
             const childDirty = childMemoryDirty || draft.displayName !== sietch.displayName || sietchPasswordDraftChanged(sietch, draft, passwordTouched);
             const childMemoryRow = memoryForMap(liveMemory, "Survival_1", { ...row, partitionId: sietch.partitionId });
-            const childStatus = statusWithLiveMemory(readinessStatusByPartitionId.get(sietch.partitionId) || partitionStatusById.get(sietch.partitionId) || (sietch.active ? String(row.status || "Not Available") : "Not Running"), childMemoryRow);
+            const childStatus = statusWithLiveMemory(readinessStatusByPartitionId.get(sietch.partitionId) || partitionStatusById.get(sietch.partitionId) || (sietch.active ? String(row.status || "Not Available") : "Not Running"), childMemoryRow, row.mode);
             const childResultActive = mapsResultTarget === mapResultTarget("Survival_1", sietch.partitionId);
             const childMapSettingsResultActive = Boolean(childResultActive && mapsResult && mapsResultScope === "maps" && isMapSettingsResult(mapsResult));
             return <Fragment key={`sietch-${sietch.partitionId}`}><tr className="sietch-child-row"><td><span className="sietch-child-name"><SietchName sietch={sietch} draft={draft} /></span><span className="sietch-child-meta">Partition {sietch.partitionId} / Dimension {sietch.dimension}</span></td><td>{childStatus}</td><td>Sietch</td><td>{sietch.active ? <MemoryUsageBar row={childMemoryRow} fallback={liveMemoryFallback(row)} configuredLimit={sietchMemory} /> : <span className="muted">Unallocated</span>}</td><td className="actions-column"><button className="stable-action-button" onClick={() => selectSietch(sietch)}>{childSelected ? "Close" : "Edit"}</button></td></tr>
@@ -1425,10 +1425,17 @@ function memoryForMap(rows: LiveMapMemoryRow[], map: string, row?: Record<string
   }) || null;
 }
 
-function statusWithLiveMemory(status: string, memoryRow: LiveMapMemoryRow | null) {
+function statusWithLiveMemory(status: string, memoryRow: LiveMapMemoryRow | null, mode?: unknown) {
   const normalized = String(status || "Not Available");
-  if (/^(Not Running|Not Available|Unallocated)$/i.test(normalized) && memoryRow) return "Warming";
+  if (!memoryRow) return normalized;
+  if (/^(Not Running|Not Available|Unallocated|Assigned|Idle)$/i.test(normalized)) {
+    return liveMemoryIsReadyMode(mode) ? "Running" : "Warming";
+  }
   return normalized;
+}
+
+function liveMemoryIsReadyMode(mode: unknown) {
+  return /^(Always On|Core Map)$/i.test(String(mode || "").trim());
 }
 
 function partitionMemoryValue(memoryText: string, partitionId: string, fallback: string, mapName = "Survival_1") {

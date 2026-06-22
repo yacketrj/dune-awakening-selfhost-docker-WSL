@@ -51,6 +51,11 @@ prepare_docker_socket_gid() {
   export DOCKER_SOCKET_GID="${DOCKER_SOCKET_GID:-0}"
 }
 
+prepare_host_user_ids() {
+  export DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}"
+  export DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}"
+}
+
 require_compose() {
   if [ ! -f "$WEB_COMPOSE" ]; then
     echo "Missing $WEB_COMPOSE. Run this from the repo root."
@@ -65,6 +70,7 @@ require_compose() {
 restart_console() {
   require_compose
   prepare_docker_socket_gid
+  prepare_host_user_ids
   mkdir -p runtime/generated
   echo "Rebuilding Dune Docker Console..."
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" DUNE_HOST_REPO_ROOT="$HOST_ROOT" docker compose -f "$WEB_COMPOSE" build "$WEB_SERVICE"
@@ -78,6 +84,7 @@ restart_console() {
 status_console() {
   require_compose
   prepare_docker_socket_gid
+  prepare_host_user_ids
   docker ps -a --filter "name=^/${WEB_SERVICE}$" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
   print_url
 }

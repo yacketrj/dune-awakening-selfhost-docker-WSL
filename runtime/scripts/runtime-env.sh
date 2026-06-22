@@ -150,6 +150,11 @@ detect_public_ip() {
         printf '%s' "$ip"
         return 0
       fi
+      ip="$(curl -fsS --max-time 8 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+      if is_ipv4 "$ip"; then
+        printf '%s' "$ip"
+        return 0
+      fi
     done
   fi
 

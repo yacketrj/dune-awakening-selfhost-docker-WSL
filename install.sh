@@ -315,6 +315,8 @@ start_console() {
   step "Starting the Web UI."
   export ADMIN_BIND_PORT="$WEB_PORT"
   export DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}"
+  export DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}"
+  export DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}"
   export COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}"
   prepare_docker_socket_gid
   "${DOCKER[@]}" compose -f "$WEB_COMPOSE" up -d --build "$WEB_SERVICE"
