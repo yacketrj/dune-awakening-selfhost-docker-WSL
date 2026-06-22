@@ -74,6 +74,18 @@ bash -c 'set -euo pipefail; if ! command -v curl >/dev/null 2>&1; then sudo apt-
 
 The installer downloads the latest release, prepares the server, starts the Web UI, and tells you what address to open in your browser. The Web UI controls the Docker daemon, so it defaults to local access on `127.0.0.1`. To expose it beyond the host, explicitly set `ADMIN_BIND_HOST=auto` or a trusted interface and protect access with a firewall, VPN, or TLS-terminating reverse proxy. Do not directly expose TCP `8088` to the public internet.
 
+## Docker Socket Access
+
+The Web UI uses the local Docker socket so it can start, stop, update, and inspect the server containers. This is powerful host-level access, so only expose the Web UI to trusted admins.
+
+If setup says the Docker socket is permission denied, run this from the repo root:
+
+```bash
+DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)" dune console restart
+```
+
+On a normal Linux install this is usually detected automatically. The command above is mainly for custom Docker setups where the socket group differs from the default container groups.
+
 ## Community Addons
 
 Dune Docker Console includes a Community Addons area for extra tools built by the community. Server owners can discover, install, enable, and remove addons from the Web UI without replacing the main console.

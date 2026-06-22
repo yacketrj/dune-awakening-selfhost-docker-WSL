@@ -67,7 +67,7 @@ udp_listener_addresses_for_port() {
 
   awk -v port="$port" '
     $0 ~ "[:.]" port "[[:space:]]" {
-      local = $5
+      local = $4
       gsub(/^\[/, "", local)
       gsub(/\]$/, "", local)
       sub(":" port "$", "", local)
