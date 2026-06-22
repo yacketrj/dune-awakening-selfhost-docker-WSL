@@ -48,6 +48,14 @@ test("detects destructive SQL and redacts connection strings", () => {
   assert.doesNotMatch(redactDbError("postgres://dune:secret@127.0.0.1:15432/dune password=secret"), /secret/);
 });
 
+test("runSql rejects destructive SQL unless explicitly allowed", async () => {
+  const db = {
+    query: async () => ({ rows: [], fields: [], rowCount: 0, command: "DELETE" })
+  };
+  await assert.rejects(() => runSql(db, "delete from dune.items"), /read-only SQL/);
+  assert.equal((await runSql(db, "delete from dune.items", true)).command, "DELETE");
+});
+
 test("formats single database query results", () => {
   assert.deepEqual(rowsResult({
     fields: [{ name: "status", dataTypeID: 25 }],

@@ -26,6 +26,7 @@ import { createBackupDownloadArchive, enrichBackupRows, nextImportedBackupName, 
 import { createMemoryBalancer } from "./services/memoryBalancer.js";
 import { updateEnvFileValue as updateEnvValue } from "./services/envFile.js";
 import { funcomAuthMismatchDetected, matchingFuncomAuthLines, saveFuncomTokenValue as writeFuncomToken, validDockerSince } from "./services/funcomAuth.js";
+import { DESTRUCTIVE_SQL_CONFIRMATION, sqlSafetyDecision } from "./sqlGuardrails.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
@@ -683,12 +684,16 @@ async function safeCommand(operation, payload = {}) {
 async function databaseQuery(req, res) {
   const body = await readJson(req);
   const query = String(body.query || "");
-  const readOnly = isReadOnlySql(query);
-  if (!config.mockMode && !readOnly) {
+  if (!query.trim()) return json(res, 400, { error: "SQL query is required." });
+  const safety = sqlSafetyDecision(query, body);
+  if (safety.needsConfirmation) {
+    return json(res, 400, { error: `Destructive SQL requires confirmation. Resubmit with allowDestructive=true and confirmation="${DESTRUCTIVE_SQL_CONFIRMATION}".` });
+  }
+  if (!config.mockMode && safety.destructive) {
     await runDune(config, buildDuneArgs("backupCreate"), { env: { DB_BACKUP_ORIGIN: "destructive-sql" } });
   }
-  audit(config, req, "database.query", { readOnly, destructive: !readOnly });
-  return dbJson(res, () => duneDb.runSql(db, query, true));
+  audit(config, req, "database.query", { readOnly: safety.readOnly, destructive: safety.destructive, confirmed: safety.allowDestructive });
+  return dbJson(res, () => duneDb.runSql(db, query, safety.allowDestructive));
 }
 
 async function databaseExport(req, res) {
