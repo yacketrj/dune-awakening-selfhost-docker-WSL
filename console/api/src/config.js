@@ -16,14 +16,17 @@ export function loadConfig() {
 
   const adminPasswordFile = resolve(secretsDir, "admin-web-password.txt");
   const adminPasswordEnvManaged = Boolean(process.env.ADMIN_PASSWORD);
+  const host = resolveAdminBindHost(process.env.ADMIN_BIND_HOST);
+  const authDisabled = process.env.ADMIN_AUTH_DISABLED === "1";
+  assertSafeAuthDisabledMode({ host, authDisabled });
   return {
     appName: APP_NAME,
     version: readConsoleVersion(repoRoot),
     repoRoot,
     duneScript: resolve(repoRoot, "runtime/scripts/dune"),
-    host: resolveAdminBindHost(process.env.ADMIN_BIND_HOST),
+    host,
     port: Number(process.env.ADMIN_BIND_PORT || 8088),
-    authDisabled: process.env.ADMIN_AUTH_DISABLED === "1",
+    authDisabled,
     secureCookies: secureCookieEnv === undefined ? process.env.NODE_ENV === "production" : secureCookieEnv === "1",
     allowHostBootstrap: process.env.ALLOW_HOST_BOOTSTRAP === "true",
     mockMode: process.env.ADMIN_MOCK_MODE === "1",
@@ -126,9 +129,19 @@ function readConsoleVersion(repoRoot) {
 }
 
 function resolveAdminBindHost(value) {
-  const raw = String(value || "0.0.0.0").trim();
+  const raw = String(value || "127.0.0.1").trim();
   if (raw && raw !== "auto") return raw;
   return detectPrivateIpv4() || "127.0.0.1";
+}
+
+function assertSafeAuthDisabledMode({ host, authDisabled }) {
+  if (!authDisabled || isLoopbackHost(host)) return;
+  throw new Error("ADMIN_AUTH_DISABLED=1 is only allowed when ADMIN_BIND_HOST resolves to localhost or loopback.");
+}
+
+function isLoopbackHost(value) {
+  const host = String(value || "").trim().toLowerCase();
+  return host === "localhost" || host === "::1" || host === "[::1]" || host.startsWith("127.");
 }
 
 function detectPrivateIpv4() {
