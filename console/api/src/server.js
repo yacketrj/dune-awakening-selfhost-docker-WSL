@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync, writeFileSync, chmodSync, mkdirSync, createReadStream, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { loadConfig, publicConfig } from "./config.js";
-import { createAuth, setSessionCookie, clearSessionCookie, json, withSecurityHeaders } from "./auth.js";
+import { EMBEDDABLE_CONTENT_SECURITY_POLICY, createAuth, setSessionCookie, clearSessionCookie, json, withSecurityHeaders } from "./auth.js";
 import { createLoginRateLimiter } from "./rateLimit.js";
 import { TaskManager, publicTask } from "./tasks.js";
 import { preflight } from "./preflight.js";
@@ -533,6 +533,7 @@ function addonContentRoute(req, res, path) {
   if (!existsSync(target)) return json(res, 404, { error: "Addon content file not found." });
   res.writeHead(200, withSecurityHeaders({
     "content-type": contentTypeForPath(target),
+    "content-security-policy": EMBEDDABLE_CONTENT_SECURITY_POLICY,
     "x-frame-options": "SAMEORIGIN"
   }));
   createReadStream(target).pipe(res);
