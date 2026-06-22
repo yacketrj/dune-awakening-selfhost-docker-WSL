@@ -3,9 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+source runtime/scripts/db-passwords.sh
+
 PG_CONTAINER="${DUNE_PG_CONTAINER:-dune-postgres}"
 PG_USER="${DUNE_DB_USER:-dune}"
-PG_PASSWORD="${DUNE_DB_PASSWORD:-dune}"
+PG_PASSWORD="$(resolve_dune_db_password)"
 PG_DB="${DUNE_DB_NAME:-}"
 EXPORT_DIR="runtime/generated/db-exports"
 

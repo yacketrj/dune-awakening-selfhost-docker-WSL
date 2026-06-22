@@ -1,19 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assertIdentifier, discoverDbConfig, isReadOnlySql, quoteQualified, redactDbError, rowsResult } from "../src/db.js";
 import { addCurrency, addFactionReputation, addIntel, addonLeadershipPlayers, completeJourneyNode, completeTutorial, deleteInventoryItem, giveItemToPlayer, giveItemToStorage, listPlayers, listTables, liveMapPlayers, liveMapServices, playerCraftingRecipes, playerJourney, playerResearchItems, resetJourneyNode, resetTutorial, runSql, tablePreview, unlockCraftingRecipe, unlockResearchItem, updateTableRow, UnsupportedCapabilityError } from "../src/duneDb.js";
 
 test("discovers RedBlink Postgres defaults and env overrides", () => {
-  assert.deepEqual(discoverDbConfig({}), {
-    host: "127.0.0.1",
-    port: 15432,
-    database: "dune",
-    user: "dune",
-    password: "dune",
-    source: "RedBlink defaults"
-  });
-  assert.equal(discoverDbConfig({ ADMIN_DATABASE_URL: "postgres://user:secret@host/db" }).source, "ADMIN_DATABASE_URL");
-  assert.equal(discoverDbConfig({ DUNE_DB_HOST: "db", DUNE_DB_PORT: "5432" }).host, "db");
+  const missingSecretRoot = mkdtempSync(join(tmpdir(), "arrakis-db-config-missing-"));
+  const repoRoot = mkdtempSync(join(tmpdir(), "arrakis-db-config-"));
+  try {
+    const missingSecretConfig = discoverDbConfig({}, { repoRoot: missingSecretRoot });
+    assert.equal(missingSecretConfig.password, undefined);
+    assert.equal(missingSecretConfig.usesDefaultPassword, false);
+
+    mkdirSync(join(repoRoot, "runtime/secrets"), { recursive: true });
+    writeFileSync(join(repoRoot, "runtime/secrets/dune-db-password.txt"), "generated-secret\n");
+    assert.deepEqual(discoverDbConfig({}, { repoRoot }), {
+      host: "127.0.0.1",
+      port: 15432,
+      database: "dune",
+      user: "dune",
+      password: "generated-secret",
+      source: "runtime/secrets/dune-db-password.txt",
+      usesDefaultPassword: false
+    });
+    assert.equal(discoverDbConfig({ ADMIN_DATABASE_URL: "postgres://user:secret@host/db" }, { repoRoot }).source, "ADMIN_DATABASE_URL");
+    assert.equal(discoverDbConfig({ DUNE_DB_HOST: "db", DUNE_DB_PORT: "5432", DUNE_DB_PASSWORD: "env-secret" }, { repoRoot }).host, "db");
+    assert.equal(discoverDbConfig({ DUNE_DB_PASSWORD: "env-secret" }, { repoRoot }).password, "env-secret");
+  } finally {
+    rmSync(missingSecretRoot, { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
 
 test("validates and quotes SQL identifiers", () => {

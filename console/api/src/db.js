@@ -1,24 +1,29 @@
 import pg from "pg";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { redact } from "./redact.js";
 
 const { Pool } = pg;
 
-export function discoverDbConfig(env = process.env) {
+export function discoverDbConfig(env = process.env, options = {}) {
   if (env.ADMIN_DATABASE_URL) {
     return { connectionString: env.ADMIN_DATABASE_URL, source: "ADMIN_DATABASE_URL" };
   }
+  const repoRoot = resolve(options.repoRoot || env.DUNE_DOCKER_DIR || env.RUNTIME_DIR || process.cwd());
+  const passwordInfo = discoverDbPassword(env, repoRoot);
   return {
     host: env.DUNE_DB_HOST || env.PGHOST || "127.0.0.1",
     port: Number(env.DUNE_DB_PORT || env.PGPORT || 15432),
     database: env.DUNE_DB_NAME || env.PGDATABASE || "dune",
     user: env.DUNE_DB_USER || env.PGUSER || "dune",
-    password: env.DUNE_DB_PASSWORD || env.PGPASSWORD || "dune",
-    source: "RedBlink defaults"
+    password: passwordInfo.password,
+    source: passwordInfo.source,
+    usesDefaultPassword: passwordInfo.password === "dune"
   };
 }
 
 export function createDb(config) {
-  const dbConfig = discoverDbConfig();
+  const dbConfig = discoverDbConfig(process.env, { repoRoot: config?.repoRoot });
   const pool = new Pool({
     ...dbConfig,
     max: Number(process.env.ADMIN_DB_POOL_SIZE || 5),
@@ -27,6 +32,7 @@ export function createDb(config) {
     query_timeout: Number(process.env.ADMIN_DB_QUERY_TIMEOUT_MS || 15000),
     statement_timeout: Number(process.env.ADMIN_DB_STATEMENT_TIMEOUT_MS || 15000)
   });
+  const safeConfig = publicDbConfig(dbConfig);
 
   async function query(text, values = []) {
     try {
@@ -56,11 +62,22 @@ export function createDb(config) {
   }
 
   return {
-    config: publicDbConfig(dbConfig),
+    config: safeConfig,
+    usesDefaultPassword: dbConfig.usesDefaultPassword,
     query,
     transaction,
     close: () => pool.end()
   };
+}
+
+function discoverDbPassword(env, repoRoot) {
+  if (env.DUNE_DB_PASSWORD) return { password: env.DUNE_DB_PASSWORD, source: "DUNE_DB_PASSWORD" };
+  if (env.PGPASSWORD) return { password: env.PGPASSWORD, source: "PGPASSWORD" };
+  const secretPath = resolve(repoRoot, "runtime/secrets/dune-db-password.txt");
+  if (existsSync(secretPath)) {
+    return { password: readFileSync(secretPath, "utf8").replace(/[\r\n]+/g, ""), source: "runtime/secrets/dune-db-password.txt" };
+  }
+  return { password: undefined, source: "RedBlink defaults without password secret" };
 }
 
 export function publicDbConfig(config) {
