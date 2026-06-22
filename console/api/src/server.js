@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { loadConfig, publicConfig } from "./config.js";
 import { createAuth, setSessionCookie, clearSessionCookie, json, withSecurityHeaders } from "./auth.js";
 import { createLoginRateLimiter } from "./rateLimit.js";
-import { TaskManager, publicTask } from "./tasks.js";
+import { TaskManager, buildSelfUpdateHelperDockerArgs, publicTask } from "./tasks.js";
 import { preflight } from "./preflight.js";
 import { buildDuneArgs, isDynamicServerService, isReadOnlySql, parseVehicleList, runDockerLogs, runDune, validateServiceName } from "./runner.js";
 import { createDb } from "./db.js";
@@ -816,22 +816,14 @@ function scheduleConsoleRestart(port) {
       "docker compose -f docker-compose.web.yml up -d redblink-dune-docker-console >> runtime/generated/console-restart.log 2>&1",
       `echo "[$(date -Is)] Dune Docker Console restart command finished" >> runtime/generated/console-restart.log`
     ].join("\n");
-    const child = spawn("docker", [
-      "run",
-      "--rm",
-      "-d",
-      "--name", helperName,
-      "--network", "host",
-      "-v", `${hostRepoRoot}:/repo`,
-      "-v", "/var/run/docker.sock:/var/run/docker.sock",
-      "-e", `ADMIN_BIND_PORT=${port}`,
-      "-e", `DUNE_HOST_REPO_ROOT=${hostRepoRoot}`,
-      "-e", `COMPOSE_PROJECT_NAME=${composeProjectName}`,
-      "-e", `DUNE_COMPOSE_PROJECT_NAME=${composeProjectName}`,
-      "-w", "/repo",
-      "redblink-dune-docker-console:dev",
-      "sh", "-lc", script
-    ], {
+    const child = spawn("docker", buildSelfUpdateHelperDockerArgs({
+      helperName,
+      hostRepoRoot,
+      composeProjectName,
+      helperImage: "redblink-dune-docker-console:dev",
+      command: script,
+      extraEnv: { ADMIN_BIND_PORT: String(port) }
+    }), {
       cwd: config.repoRoot,
       detached: true,
       stdio: "ignore",

@@ -62,13 +62,33 @@ test("web self-update helper mounts the host repo path", () => {
     hostRepoRoot: "/home/ubuntu/dune-awakening-selfhost-docker",
     composeProjectName: "dune-awakening-selfhost-docker",
     helperImage: "redblink-dune-docker-console:dev",
-    command: "runtime/scripts/dune self-update install latest"
+    command: "runtime/scripts/dune self-update install latest",
+    extraEnv: { ADMIN_BIND_PORT: "8088" }
   });
 
   assert(args.includes("-v"));
   assert(args.includes("/home/ubuntu/dune-awakening-selfhost-docker:/repo"));
   assert(args.includes("DUNE_HOST_REPO_ROOT=/home/ubuntu/dune-awakening-selfhost-docker"));
+  assert(args.includes("ADMIN_BIND_PORT=8088"));
   assert(!args.includes("/repo:/repo"));
+});
+
+test("web self-update helper rejects unsafe docker helper inputs", () => {
+  const base = {
+    helperName: "dune-web-self-update-test",
+    hostRepoRoot: "/home/ubuntu/dune-awakening-selfhost-docker",
+    composeProjectName: "dune-awakening-selfhost-docker",
+    helperImage: "redblink-dune-docker-console:dev",
+    command: "runtime/scripts/dune self-update install latest"
+  };
+
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, helperName: "bad name" }), /helper container name/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, hostRepoRoot: "/tmp/repo;touch" }), /host repo root/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, hostRepoRoot: "relative/repo" }), /host repo root/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, composeProjectName: "bad project" }), /Compose project name/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, helperImage: "--privileged" }), /helper image/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, extraEnv: { "bad-name": "1" } }), /environment variable name/);
+  assert.throws(() => buildSelfUpdateHelperDockerArgs({ ...base, extraEnv: { ADMIN_BIND_PORT: "8088\nX=1" } }), /environment variable value/);
 });
 
 function waitForTask(manager, id) {

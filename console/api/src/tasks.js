@@ -137,22 +137,67 @@ export class TaskManager {
   }
 }
 
-export function buildSelfUpdateHelperDockerArgs({ helperName, hostRepoRoot, composeProjectName, helperImage, command }) {
+export function buildSelfUpdateHelperDockerArgs({ helperName, hostRepoRoot, composeProjectName, helperImage, command, extraEnv = {} }) {
+  const safeHelperName = validateDockerName(helperName, "helper container name");
+  const safeHostRepoRoot = validateHostRepoRoot(hostRepoRoot);
+  const safeComposeProjectName = validateComposeProjectName(composeProjectName);
+  const safeHelperImage = validateHelperImage(helperImage);
+  const extraEnvArgs = Object.entries(extraEnv).flatMap(([name, value]) => ["-e", `${validateEnvName(name)}=${validateEnvValue(value, name)}`]);
   return [
       "run",
       "--rm",
       "-d",
-      "--name", helperName,
+      "--name", safeHelperName,
       "--network", "host",
-      "-v", `${hostRepoRoot}:/repo`,
+      "-v", `${safeHostRepoRoot}:/repo`,
       "-v", "/var/run/docker.sock:/var/run/docker.sock",
-      "-e", `DUNE_HOST_REPO_ROOT=${hostRepoRoot}`,
-      "-e", `COMPOSE_PROJECT_NAME=${composeProjectName}`,
-      "-e", `DUNE_COMPOSE_PROJECT_NAME=${composeProjectName}`,
+      "-e", `DUNE_HOST_REPO_ROOT=${safeHostRepoRoot}`,
+      "-e", `COMPOSE_PROJECT_NAME=${safeComposeProjectName}`,
+      "-e", `DUNE_COMPOSE_PROJECT_NAME=${safeComposeProjectName}`,
+      ...extraEnvArgs,
       "-w", "/repo",
-      helperImage,
+      safeHelperImage,
       "sh", "-lc", command
     ];
+}
+
+export function validateHostRepoRoot(value) {
+  const raw = String(value || "").trim();
+  if (!raw.startsWith("/") || raw === "/") throw new Error("Invalid host repo root: expected an absolute path");
+  if (raw.includes("..") || /[\0\r\n\t :;&|`$<>"'\\]/.test(raw)) throw new Error("Invalid host repo root: unsupported characters");
+  return raw.replace(/\/+$/, "");
+}
+
+function validateComposeProjectName(value) {
+  const raw = String(value || "").trim();
+  if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(raw)) return raw;
+  throw new Error("Invalid Compose project name");
+}
+
+function validateDockerName(value, label) {
+  const raw = String(value || "").trim();
+  if (/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(raw)) return raw;
+  throw new Error(`Invalid ${label}`);
+}
+
+function validateHelperImage(value) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.startsWith("-") || raw.length > 255 || /[\0\r\n\t ;&|`$<>"']/.test(raw)) {
+    throw new Error("Invalid helper image reference");
+  }
+  return raw;
+}
+
+function validateEnvName(value) {
+  const raw = String(value || "").trim();
+  if (/^[A-Z_][A-Z0-9_]{0,63}$/.test(raw)) return raw;
+  throw new Error("Invalid helper environment variable name");
+}
+
+function validateEnvValue(value, name) {
+  const raw = String(value ?? "");
+  if (/[\0\r\n]/.test(raw)) throw new Error(`Invalid helper environment variable value: ${name}`);
+  return raw;
 }
 
 function isSelfUpdateApplyOperation(operation) {
