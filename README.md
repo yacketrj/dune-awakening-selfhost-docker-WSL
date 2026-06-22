@@ -107,6 +107,7 @@ The template gives addon developers a ready-to-use structure, examples, validati
 - Funcom self-hosting behavior may change over time.
 - Keep secrets, generated runtime files, and backups out of git.
 - Do not expose the Web UI to untrusted users.
+- Security-sensitive changes should follow the PR gates in `docs/security-gates.md`, use the transparency template, and keep evidence in `docs/changes/`.
 
 ## Credits
 

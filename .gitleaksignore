@@ -1,0 +1,20 @@
+# Reviewed historical baseline. See issue #53.
+9302ed3cb99fe97a1a46111c05aeb14e5bd7ef38:docs/discord-control-bot/README.md:discord-client-id:90
+69f8a7bbb22b1b8df46d81f2cc13d8d93a6b60b6:docs/discord-control-bot/README.md:discord-client-id:85
+69f8a7bbb22b1b8df46d81f2cc13d8d93a6b60b6:docs/discord-control-bot/README.md:discord-client-id:86
+69f8a7bbb22b1b8df46d81f2cc13d8d93a6b60b6:docs/discord-control-bot/README.md:discord-client-id:88
+69f8a7bbb22b1b8df46d81f2cc13d8d93a6b60b6:docs/discord-control-bot/README.md:discord-client-id:90
+43706a1abd5aa834854ca3d4d6690d5487aefd8d:docs/discord-control-bot/README.md:discord-client-id:85
+43706a1abd5aa834854ca3d4d6690d5487aefd8d:docs/discord-control-bot/README.md:discord-client-id:86
+43706a1abd5aa834854ca3d4d6690d5487aefd8d:docs/discord-control-bot/README.md:discord-client-id:88
+43706a1abd5aa834854ca3d4d6690d5487aefd8d:docs/discord-control-bot/README.md:discord-client-id:90
+e31debeb377fa8ab37dff45fd5064507bcd07413:docs/discord-control-bot/admin-guide.md:curl-auth-header:73
+e19ca2c53c18439ede02aed635b2794eb8d5bc65:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:85
+e19ca2c53c18439ede02aed635b2794eb8d5bc65:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:104
+e19ca2c53c18439ede02aed635b2794eb8d5bc65:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:112
+e19ca2c53c18439ede02aed635b2794eb8d5bc65:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:159
+502840ea2922ca19238d2581c16189ded308081e:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:63
+502840ea2922ca19238d2581c16189ded308081e:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:83
+502840ea2922ca19238d2581c16189ded308081e:docs/discord-control-bot/local-health-status-test.md:curl-auth-header:106
+6c9b64f2f18d0da3d46a1ea49b4115fdd8ef372e:admin-server/src/rmq.js:generic-api-key:6
+e12449799800c7ac1257bc5443593785eee8fb79:runtime/scripts/admin-tools.sh:generic-api-key:9

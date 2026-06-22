@@ -1,0 +1,120 @@
+name: Security gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "security/**"
+      - "upstream/**"
+      - "codex/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-build-audit:
+    name: Unit, build, and audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          package-manager-cache: false
+
+      - name: Install API dependencies
+        run: npm ci
+        working-directory: console/api
+
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: console/web
+
+      - name: Run API unit tests
+        run: npm test
+        working-directory: console/api
+
+      - name: Audit API dependencies
+        run: npm audit --audit-level=moderate
+        working-directory: console/api
+
+      - name: Audit web dependencies
+        run: npm audit --audit-level=moderate
+        working-directory: console/web
+
+      - name: Build web assets
+        run: npm run build
+        working-directory: console/web
+
+      - name: Validate web compose file
+        run: docker compose -f docker-compose.web.yml config >/tmp/docker-compose-web.config.yml
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Semgrep
+        run: python3 -m pip install --user semgrep
+
+      - name: Run Semgrep rules
+        run: ~/.local/bin/semgrep --config p/default --config p/secrets --error --metrics=off .
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy-filesystem:
+    name: Trivy filesystem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Scan filesystem for high and critical findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+          trivyignores: ./.trivyignore
+
+  trivy-image:
+    name: Docker build and Trivy image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build web console image
+        run: docker build -f console/api/Dockerfile -t redblink-dune-docker-console:ci .
+
+      - name: Scan image for high and critical findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: redblink-dune-docker-console:ci
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+          trivyignores: ./.trivyignore

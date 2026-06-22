@@ -47,6 +47,7 @@ def resolve_server_ip():
 
 def resolve_ipify_public_ip():
     try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - Fixed HTTPS endpoint, not user-controlled input.
         with urllib.request.urlopen("https://api.ipify.org", timeout=10) as r:
             return r.read().decode("utf-8").strip()
     except Exception:
@@ -54,6 +55,7 @@ def resolve_ipify_public_ip():
 
 def resolve_ifconfig_public_ip():
     try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - Fixed HTTPS endpoint, not user-controlled input.
         with urllib.request.urlopen("https://ifconfig.me/ip", timeout=10) as r:
             return r.read().decode("utf-8").strip()
     except Exception:

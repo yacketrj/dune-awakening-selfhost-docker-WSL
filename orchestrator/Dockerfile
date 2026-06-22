@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN dpkg --add-architecture i386 \
  && apt-get update -y \
- && apt-get install -y \
+ && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     tar \
@@ -33,5 +33,10 @@ RUN useradd -m -s /bin/bash dune \
 COPY dune_orchestrator.py /usr/local/bin/dune
 RUN chmod +x /usr/local/bin/dune
 
+# The orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
+USER root #trivy:ignore:AVD-DS-0002
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
 ENTRYPOINT ["/usr/local/bin/dune"]
+# nosemgrep: dockerfile.security.missing-user.missing-user - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
 CMD ["help"]
