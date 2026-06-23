@@ -25,6 +25,7 @@ Run the relevant gates before opening or merging a PR:
 | Gate | Command |
 |---|---|
 | API unit tests | `npm test --prefix console/api` |
+| Runtime shell regression | `bash -n runtime/scripts/secrets-bootstrap.sh runtime/scripts/bootstrap-runtime-secrets.sh runtime/scripts/db-passwords.sh runtime/scripts/start-postgres.sh runtime/scripts/start-all.sh runtime/scripts/start-text-router.sh runtime/scripts/start-director.sh runtime/scripts/start-server-gateway.sh runtime/tests/test-file-hygiene.sh runtime/tests/test-secrets-bootstrap.sh && bash runtime/tests/test-file-hygiene.sh` |
 | Web build | `npm run build --prefix console/web` |
 | API dependency audit | `npm audit --prefix console/api --audit-level=moderate` |
 | Web dependency audit | `npm audit --prefix console/web --audit-level=moderate` |
@@ -36,13 +37,13 @@ Run the relevant gates before opening or merging a PR:
 | Docker build | `docker build -f console/api/Dockerfile -t redblink-dune-docker-console:ci .` |
 | Trivy image | `trivy image --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 redblink-dune-docker-console:ci` |
 
-When runtime shell scripts change, also run `bash -n` on the touched scripts and any targeted `runtime/tests/*` coverage that applies.
+When runtime shell scripts change, the runtime shell regression gate is required. It must cover syntax for touched scripts and targeted `runtime/tests/*` coverage for behavior that can be tested without starting Docker services.
 
 ## CI Gates
 
 `.github/workflows/security-gates.yml` mirrors the required PR gates with separate jobs for:
 
-- Unit tests, web build, npm audits, and Compose rendering.
+- API unit tests, runtime shell regression, web build, npm audits, and Compose rendering.
 - Semgrep default and secrets rules.
 - Gitleaks secret scanning.
 - Trivy filesystem scanning.
@@ -65,6 +66,16 @@ If a scanner is unavailable locally, record that limitation in the PR and rely o
 - `.gitleaksignore` contains reviewed historical fingerprints only. Issue #53 tracks why those old findings are baselined and confirms the current tracked source snapshot is clean.
 - `.trivyignore` contains a time-boxed image-scan baseline only. Issue #54 tracks the remaining Debian and Docker Compose findings. The baseline expires on July 22, 2026.
 - Generated runtime state under ignored `runtime/*` directories is not PR source. Broad local scans may find live runtime keys there; source-scope scans should use tracked and nonignored files.
+
+## Runtime Secret Bootstrap Regression
+
+Runtime secret changes must preserve these invariants:
+
+- Existing non-empty secret files are never overwritten by bootstrap logic.
+- Empty or missing generated secret files are created idempotently with private file modes.
+- Missing `runtime/secrets` directories are created with private directory modes when the current user can write the parent path.
+- Permission or ownership problems fail before dependent services start, with a repair-oriented error message.
+- Database password files remain under `start-postgres.sh` / `db-passwords.sh` control so upgraded installs with existing Postgres volumes can preserve legacy credentials instead of accidentally rotating live database passwords.
 
 ## STRIDE Review
 
