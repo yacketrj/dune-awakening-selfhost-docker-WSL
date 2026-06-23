@@ -50,7 +50,8 @@ if [ "${DUNE_START_SKIP_POSTGRES_START:-0}" = "1" ] \
   echo "=== Starting Postgres ==="
   echo "Postgres is already running from fresh install bootstrap; keeping it online."
 else
-  run_timed_step "Starting Postgres" runtime/scripts/start-postgres.sh
+  run_timed_step "Bootstrapping Runtime Secrets" bash runtime/scripts/bootstrap-runtime-secrets.sh all
+run_timed_step "Starting Postgres" runtime/scripts/start-postgres.sh
 fi
 
 if [ "${DUNE_START_SKIP_DB_UPDATE:-0}" = "1" ]; then
