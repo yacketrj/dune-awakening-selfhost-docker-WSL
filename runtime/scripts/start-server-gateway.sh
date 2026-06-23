@@ -23,19 +23,12 @@ if [ ! -s "$TOKEN_FILE" ]; then
   exit 1
 fi
 
-if [ ! -s "$RMQ_SECRET_FILE" ]; then
-  openssl rand -hex 32 > "$RMQ_SECRET_FILE"
-  chmod 600 "$RMQ_SECRET_FILE"
-fi
-
-if [ ! -s "$FLS_APIKEY_FILE" ]; then
-  openssl rand -hex 16 > "$FLS_APIKEY_FILE"
-  chmod 600 "$FLS_APIKEY_FILE"
-fi
+ensure_runtime_secret_file "$RMQ_SECRET_FILE" openssl rand -hex 32
+ensure_runtime_secret_file "$FLS_APIKEY_FILE" openssl rand -hex 16
 
 FUNCOM_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
-RMQ_HTTP_TOKEN_AUTH_SECRET="$(tr -d '\r\n' < "$RMQ_SECRET_FILE")"
-FLS_APIKEY="$(tr -d '\r\n' < "$FLS_APIKEY_FILE")"
+RMQ_HTTP_TOKEN_AUTH_SECRET="$(read_runtime_secret_file "$RMQ_SECRET_FILE")"
+FLS_APIKEY="$(read_runtime_secret_file "$FLS_APIKEY_FILE")"
 
 SERVER_TITLE="$(resolve_server_title)"
 SERVER_REGION="$(resolve_server_region)"
