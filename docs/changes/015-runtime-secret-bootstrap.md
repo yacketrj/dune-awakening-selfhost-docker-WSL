@@ -27,11 +27,12 @@ Upgraded installs can reach runtime startup with `runtime/secrets/dune-db-passwo
 - Existing non-empty `runtime/secrets/dune-db-password.txt` and `runtime/secrets/postgres-password.txt` are read, not replaced.
 - Existing non-empty `admin-web-session-secret.txt` remains under the Web UI config path and is not changed by this bootstrap, preserving active Web UI session compatibility.
 - If an existing Postgres volume has no DB secret files and no DB password env overrides, `start-postgres.sh` still enables `DUNE_DB_SECRET_LEGACY_DEFAULTS=1` so the generated files match legacy defaults instead of rotating live database credentials.
-- Common generated secrets are bootstrapped before dependent services start, but individual service scripts still call the helper so targeted restarts remain safe.
+- Common generated secrets are bootstrapped during full-stack startup before dependent services start.
+- Targeted TextRouter and ServerGateway restarts call the helper directly. Director startup is covered by the full-stack bootstrap path; direct `start-director.sh` invocation still depends on writable `runtime/secrets` state.
 
 ## Regression Coverage
 
-- `runtime/tests/test-secrets-bootstrap.sh` verifies missing secret creation, `0600` mode, preservation of existing non-empty files, replacement of empty files, and read helper behavior.
+- `runtime/tests/test-secrets-bootstrap.sh` verifies missing secret creation, `0600` mode, preservation of existing non-empty files, replacement of empty files, read helper behavior, DB password env override behavior, DB password preservation, and legacy-default DB password generation.
 - `runtime/tests/test-file-hygiene.sh` now checks that DB passwords, TextRouter, Gateway, and start-all use the bootstrap helpers and rejects the prior direct-redirection secret generation pattern.
 - `.github/workflows/security-gates.yml` now runs runtime shell syntax checks and the file hygiene / secret bootstrap regression test in the `Unit, build, and audit` job.
 
