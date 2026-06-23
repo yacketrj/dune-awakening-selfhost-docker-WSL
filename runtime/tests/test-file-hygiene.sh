@@ -37,7 +37,7 @@ require_literal 'chmod 600 "$ADMIN_HISTORY_TSV" "$ADMIN_AUDIT_JSONL"' runtime/sc
 require_literal 'source runtime/scripts/secrets-bootstrap.sh' runtime/scripts/db-passwords.sh
 require_literal 'ensure_runtime_secret_file "$secret_file" db_password_secret_payload "$legacy_value"' runtime/scripts/db-passwords.sh
 require_literal 'read_runtime_secret_file "$secret_file"' runtime/scripts/db-passwords.sh
-require_literal 'runtime/scripts/bootstrap-runtime-secrets.sh common' runtime/scripts/start-all.sh
+require_literal 'bash runtime/scripts/bootstrap-runtime-secrets.sh common' runtime/scripts/start-all.sh
 require_literal 'ensure_runtime_secret_file "$RMQ_SECRET_FILE" openssl rand -hex 32' runtime/scripts/start-text-router.sh
 require_literal 'ensure_runtime_secret_file "$RMQ_SECRET_FILE" openssl rand -hex 32' runtime/scripts/start-server-gateway.sh
 require_literal 'ensure_runtime_secret_file "$FLS_APIKEY_FILE" openssl rand -hex 16' runtime/scripts/start-server-gateway.sh
