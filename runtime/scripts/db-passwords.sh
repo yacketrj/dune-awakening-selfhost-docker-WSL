@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+source runtime/scripts/secrets-bootstrap.sh
+
+db_password_secret_payload() {
+  local legacy_value="$1"
+
+  if [ "${DUNE_DB_SECRET_LEGACY_DEFAULTS:-0}" = "1" ]; then
+    printf '%s\n' "$legacy_value"
+  else
+    openssl rand -hex 32
+  fi
+}
+
 db_password_secret_value() {
   local env_name="$1"
   local secret_file="$2"
@@ -11,17 +23,8 @@ db_password_secret_value() {
     return 0
   fi
 
-  if [ ! -s "$secret_file" ]; then
-    mkdir -p "$(dirname "$secret_file")"
-    if [ "${DUNE_DB_SECRET_LEGACY_DEFAULTS:-0}" = "1" ]; then
-      printf '%s\n' "$legacy_value" > "$secret_file"
-    else
-      openssl rand -hex 32 > "$secret_file"
-    fi
-    chmod 600 "$secret_file" 2>/dev/null || true
-  fi
-
-  tr -d '\r\n' < "$secret_file"
+  ensure_runtime_secret_file "$secret_file" db_password_secret_payload "$legacy_value"
+  read_runtime_secret_file "$secret_file"
 }
 
 resolve_dune_db_password() {
