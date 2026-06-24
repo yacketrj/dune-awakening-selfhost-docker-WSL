@@ -6,7 +6,7 @@ ROOT_DIR="$(pwd)"
 HOST_ROOT_DIR="${DUNE_HOST_REPO_ROOT:-$ROOT_DIR}"
 
 [ -f .env ] && . ./.env
-[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 . runtime/scripts/runtime-env.sh
 
 SERVER_TITLE="$(resolve_server_title)"
@@ -651,6 +651,7 @@ echo
 echo "=== Refresh generated map catalogs ==="
 runtime/scripts/extract-partition-catalog.sh
 runtime/scripts/extract-server-catalog.sh
+echo "Generated map catalogs refreshed."
 
 echo
 if [ "$cmd" = "install" ]; then

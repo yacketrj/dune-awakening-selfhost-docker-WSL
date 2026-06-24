@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildBroadcastCommand, buildCarePackageWhisperPayload, buildShutdownBroadcastCommand, publishCarePackageWhisper, validateBroadcastMessage, validateLocalizedTexts, validatePublishLabel } from "../src/rmq.js";
+import { buildBroadcastCommand, buildCarePackageWhisperPayload, buildMapChatPayload, buildShutdownBroadcastCommand, publishCarePackageWhisper, publishMapChat, validateBroadcastMessage, validateLocalizedTexts, validatePublishLabel } from "../src/rmq.js";
 
 test("builds verified ServiceBroadcast generic command payload", () => {
   const command = buildBroadcastCommand({ message: "Server event starts soon", durationSec: 45, title: "Event" });
@@ -78,11 +78,77 @@ test("builds Care Package private whisper courier payload", () => {
   assert.equal(inner.m_HasSeenMessage, false);
 });
 
+test("builds map chat courier payload", () => {
+  const payload = buildMapChatPayload({
+    senderFuncomId: "Server#00000",
+    message: "Event starts soon",
+    now: "2026-06-08T12:34:56.000Z",
+    messageId: "map-chat-test"
+  });
+  assert.equal(payload.outer.Type, "TextChat");
+  const inner = JSON.parse(payload.outer.content);
+  assert.equal(inner.m_Id, "map-chat-test");
+  assert.equal(inner.m_ChannelType, "Map");
+  assert.equal(inner.m_bUseSpoofedUserName, false);
+  assert.deepEqual(inner.m_SpoofedUserNameFrom, { m_TableId: "", m_Key: "", m_UnlocalizedName: "" });
+  assert.equal(inner.m_FuncomIdFrom, "Server#00000");
+  assert.equal(inner.m_UserNameTo, "");
+  assert.equal(inner.m_Message.m_UnlocalizedMessage, "Event starts soon");
+  assert.deepEqual(inner.m_Message.m_LocalizedMessage.m_FormatArgs, []);
+  assert.equal(inner.m_Timestamp, "2026.06.08-12.34.56");
+  assert.deepEqual(inner.m_OriginLocation, { X: 0, Y: 0, Z: 0 });
+  assert.equal(inner.m_HasSeenMessage, false);
+});
+
 test("validates RabbitMQ publish labels before eval construction", () => {
   assert.equal(validatePublishLabel("web-broadcast"), "web-broadcast");
   assert.equal(validatePublishLabel("web_shutdown_1"), "web_shutdown_1");
   assert.throws(() => validatePublishLabel("bad label"));
   assert.throws(() => validatePublishLabel("bad\"), halt(). %"));
+});
+
+test("publishes map chat to chat.map routing key", async () => {
+  const originalSpawn = globalThis.__testSpawn;
+  try {
+    const calls = [];
+    globalThis.__testSpawn = (command, args) => {
+      calls.push({ command, args });
+      return fakeSpawn("publish=ok exchange=chat.map routing=HaggaBasin.0 type=text_chat user_id=A5C0DE5E12A00001 app_id=fls_backend\n");
+    };
+    const result = await publishMapChat({ commandTimeoutMs: 1000 }, {
+      mapName: "HaggaBasin",
+      dimension: 0,
+      senderFuncomId: "Server#0001",
+      senderHexFlsId: "A5C0DE5E12A00001",
+      message: "Event starts soon"
+    });
+    assert.equal(result.amqp.exchange, "chat.map");
+    assert.equal(result.amqp.routingKey, "HaggaBasin.0");
+    assert.equal(result.amqp.userId, "A5C0DE5E12A00001");
+    assert.match(calls[0].args.join(" "), /rabbitmqctl eval/);
+  } finally {
+    globalThis.__testSpawn = originalSpawn;
+  }
+});
+
+test("publishes map chat directly to a player queue", async () => {
+  const originalSpawn = globalThis.__testSpawn;
+  try {
+    globalThis.__testSpawn = () => fakeSpawn("publish=ok exchange=default routing=254A06043E9F0B16_queue type=text_chat user_id=A5C0DE5E12A00001 app_id=fls_backend\n");
+    const result = await publishMapChat({ commandTimeoutMs: 1000 }, {
+      mapName: "HaggaBasin",
+      dimension: 0,
+      recipientQueue: "254A06043E9F0B16_queue",
+      senderFuncomId: "Server#0001",
+      senderHexFlsId: "A5C0DE5E12A00001",
+      message: "Event starts soon"
+    });
+    assert.equal(result.amqp.exchange, "default");
+    assert.equal(result.amqp.routingKey, "254A06043E9F0B16_queue");
+    assert.equal(result.amqp.userId, "A5C0DE5E12A00001");
+  } finally {
+    globalThis.__testSpawn = originalSpawn;
+  }
 });
 
 test("publishes Care Package whisper to direct player queue when available", async () => {

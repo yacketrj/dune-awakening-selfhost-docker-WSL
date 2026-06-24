@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 [ -f .env ] && . ./.env
-[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 source runtime/scripts/runtime-env.sh
 
 fail=0
@@ -67,7 +67,7 @@ udp_listener_addresses_for_port() {
 
   awk -v port="$port" '
     $0 ~ "[:.]" port "[[:space:]]" {
-      local = $5
+      local = $4
       gsub(/^\[/, "", local)
       gsub(/\]$/, "", local)
       sub(":" port "$", "", local)

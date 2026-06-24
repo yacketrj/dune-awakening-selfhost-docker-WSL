@@ -13,19 +13,23 @@ import { createDb } from "./db.js";
 import * as duneDb from "./duneDb.js";
 import { audit, recordAdminHistory } from "./audit.js";
 import { redact } from "./redact.js";
-import { listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
-import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishServerCommand } from "./rmq.js";
-import { clearCarePackageHistory, enableCarePackage, grantEligibleCarePackages, grantCarePackage, retryCarePackageGrant, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory } from "./carePackage.js";
+import { itemRequiresDatabaseGrant, listCatalogItems, resolveCatalogItem } from "./adminCatalog.js";
+import { buildBroadcastCommand, buildShutdownBroadcastCommand, publishMapChat, publishServerCommand } from "./rmq.js";
+import { clearCarePackageHistory, enableCarePackage, ensureCarePackageServerPersona, grantEligibleCarePackages, grantCarePackage, retryCarePackageGrant, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory } from "./carePackage.js";
 import { readJsonBody, readMultipartForm } from "./httpSafety.js";
 import { parseBackupAutoStatus, parseBackupListRows } from "./statusParsers.js";
-import { assertInstalledAddonPermission, fetchCommunityAddons, installCommunityAddon, installedAddonContentPath, listInstalledAddons, removeInstalledAddon, setInstalledAddonEnabled } from "./addons.js";
+import { assertInstalledAddonPermission, fetchCommunityAddons, installCommunityAddon, installedAddonContentPath, listInstalledAddons, removeInstalledAddon, setInstalledAddonEnabled, syncInstalledAddonLifecycle } from "./addons.js";
 import { performanceSnapshot as collectPerformanceSnapshot } from "./services/performance.js";
 import { serveStatic, contentTypeForPath } from "./http/staticFiles.js";
 import { discoverServices } from "./services/serviceDiscovery.js";
 import { createBackupDownloadArchive, enrichBackupRows, nextImportedBackupName, normalizeImportedBackupMetadata, validBackupDownloadName } from "./services/backups.js";
 import { createMemoryBalancer } from "./services/memoryBalancer.js";
-import { quoteEnv as quoteEnvValue, updateEnvFileValue as updateEnvValue } from "./services/envFile.js";
+import { updateEnvFileValue as updateEnvValue } from "./services/envFile.js";
 import { funcomAuthMismatchDetected, matchingFuncomAuthLines, saveFuncomTokenValue as writeFuncomToken, validDockerSince } from "./services/funcomAuth.js";
+import { readCharacterTransferSettings, saveCharacterTransferSettings } from "./services/characterTransferSettings.js";
+import { handleDiscordAdapterRoute, isDiscordAdapterRoute } from "./services/discordAdapter.js";
+import { primeMessageOfTheDayOnlineState, readMessageOfTheDay, restoreMessageOfTheDay, runMessageOfTheDayScan, saveMessageOfTheDay } from "./services/messageOfTheDay.js";
+import { primePlayerAnnouncementOnlineState, readPlayerAnnouncements, restorePlayerAnnouncements, runPlayerAnnouncementScan, savePlayerAnnouncements } from "./services/playerAnnouncements.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
@@ -34,8 +38,17 @@ const tasks = new TaskManager(config);
 let db = createDb(config);
 let carePackageAutoRunning = false;
 let carePackageAutoLastRun = 0;
+let messageOfTheDayAutoRunning = false;
+let messageOfTheDayAutoLastRun = 0;
+let playerAnnouncementsAutoRunning = false;
+let playerAnnouncementsAutoLastRun = 0;
 const journeyTagsData = loadJourneyTagsData();
 const memoryBalancer = createMemoryBalancer(config);
+const POSTGRES_UNAVAILABLE_MESSAGE = "Postgres is not running or is restarting. Wait for the database service to come back online, then refresh.";
+
+process.on("unhandledRejection", (error) => {
+  console.error(`Unhandled background rejection: ${redact(error?.message || error)}`);
+});
 
 createServer(async (req, res) => {
   try {
@@ -45,7 +58,8 @@ createServer(async (req, res) => {
     }
     serveStatic(config, req, res);
   } catch (error) {
-    json(res, error.statusCode || 500, { error: redact(error.message || error) });
+    const payload = apiErrorPayload(error);
+    json(res, payload.status, payload.body);
   }
 }).listen(config.port, config.host, () => {
   console.log(`${config.appName} API listening on http://${config.host}:${config.port}`);
@@ -56,13 +70,25 @@ createServer(async (req, res) => {
 });
 
 setInterval(() => {
-  void carePackageAutoTick();
+  runBackgroundTick("Care Package auto-grant", carePackageAutoTick);
+  runBackgroundTick("Message of the Day", messageOfTheDayAutoTick);
+  runBackgroundTick("Player announcements", playerAnnouncementsAutoTick);
 }, 10000).unref?.();
 
 setInterval(() => {
   if (!memoryBalancer.publicState().enabled) return;
-  void memoryBalancer.tick();
+  runBackgroundTick("Memory balancer", () => memoryBalancer.tick());
 }, memoryBalancer.intervalMs).unref?.();
+
+function runBackgroundTick(label, fn) {
+  Promise.resolve()
+    .then(fn)
+    .catch((error) => {
+      const message = String(error?.message || error);
+      if (/connect|database|relation|container|rabbitmq|docker|ECONNREFUSED|ECONNRESET|Connection terminated/i.test(message)) return;
+      console.error(`${label} background task failed: ${redact(message)}`);
+    });
+}
 
 function scheduleBootAutoStart() {
   if (config.mockMode || process.env.ADMIN_AUTO_START_STACK_ON_BOOT === "0") return;
@@ -204,6 +230,9 @@ async function handleApi(req, res) {
     audit(config, req, "auth.logout");
     return json(res, 200, { ok: true });
   }
+  if (isDiscordAdapterRoute(path)) {
+    return handleDiscordAdapterRoute({ req, res, path, config, readJson, json });
+  }
 
   const session = auth.requireAuth(req, res);
   if (!session) return;
@@ -235,8 +264,21 @@ async function handleApi(req, res) {
     const body = await readJson(req);
     return task(req, res, "server", "serverTitle", { title: body.title });
   }
+  if (path === "/api/server/config" && req.method === "POST") {
+    const body = await readJson(req);
+    const payload = {};
+    if (body.title !== undefined) payload.title = body.title;
+    if (body.mode !== undefined) payload.mode = body.mode;
+    return task(req, res, "server", "serverConfig", payload);
+  }
   if (path === "/api/server/restart-schedule" && req.method === "POST") return restartScheduleRoute(req, res);
   if (path === "/api/server/restart-schedule") return safeCommandJson(res, "restartScheduleStatus");
+  if (path === "/api/server/ip-change-restart" && req.method === "POST") return ipChangeRestartRoute(req, res);
+  if (path === "/api/server/ip-change-restart/check" && req.method === "POST") return task(req, res, "server", "ipChangeRestartCheckNow", {});
+  if (path === "/api/server/ip-change-restart") return safeCommandJson(res, "ipChangeRestartStatus");
+  if (path === "/api/server/shutdown-protection" && req.method === "POST") return shutdownProtectionRoute(req, res);
+  if (path === "/api/server/shutdown-protection/remove" && req.method === "POST") return task(req, res, "server", "shutdownProtectionRemove", {});
+  if (path === "/api/server/shutdown-protection") return safeCommandJson(res, "shutdownProtectionStatus");
 
   if (path === "/api/logs/services") return json(res, 200, { services: await discoverServices(config) });
   if (path.startsWith("/api/logs/")) return logsRoute(req, res, path);
@@ -247,9 +289,7 @@ async function handleApi(req, res) {
   if (path === "/api/updates/check-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateCheck", {});
   if (path === "/api/updates/apply-stack" && req.method === "POST") return task(req, res, "updates", "selfUpdateApply", {});
   if (path === "/api/updates/auto-game" && req.method === "POST") return autoGameUpdateRoute(req, res);
-  if (path === "/api/updates/restore-previous-stack" && req.method === "POST") return previousStackRestoreRoute(req, res);
   if (path === "/api/updates/auto-game") return safeCommandJson(res, "updateAutoStatus");
-  if (path === "/api/updates/previous-stack") return safeCommandJson(res, "selfUpdateList");
   if (path === "/api/updates/repair-runtime" && req.method === "POST") return task(req, res, "updates", "readiness", {});
 
   if (path === "/api/backups") return backupsListRoute(res);
@@ -299,10 +339,14 @@ async function handleApi(req, res) {
   if (path === "/api/admin/skill-modules") return commandJson(res, url.searchParams.get("q") ? "adminSkillModulesSearch" : "adminSkillModules", { q: url.searchParams.get("q") || "" });
   if (path === "/api/admin/history") return commandJson(res, "adminHistory");
   if (path === "/api/admin/history/clear" && req.method === "POST") return clearAdminHistoryRoute(req, res);
+  if (path === "/api/admin/character-transfer-settings") return characterTransferSettingsRoute(req, res);
+  if (path === "/api/admin/message-of-the-day") return messageOfTheDayRoute(req, res);
+  if (path === "/api/admin/player-announcements") return playerAnnouncementsRoute(req, res);
   if (path === "/api/admin/broadcast" && req.method === "POST") return broadcastRoute(req, res);
+  if (path === "/api/admin/map-chat" && req.method === "POST") return mapChatRoute(req, res);
   if (path === "/api/admin/broadcast-shutdown" && req.method === "POST") return shutdownBroadcastRoute(req, res);
   if (path === "/api/addons/community") return json(res, 200, await fetchCommunityAddons());
-  if (path === "/api/addons/installed") return json(res, 200, listInstalledAddons(config));
+  if (path === "/api/addons/installed") return json(res, 200, await installedAddonsRoute());
   if (path === "/api/addons/community/install" && req.method === "POST") {
     const body = await readJson(req);
     const result = await installCommunityAddon(config, body.id, { approvedPermissions: body.approvedPermissions || [] });
@@ -311,6 +355,7 @@ async function handleApi(req, res) {
   }
   if (path.match(/^\/api\/addons\/installed\/[^/]+\/enable$/) && req.method === "POST") {
     const id = decodeURIComponent(path.split("/").at(-2));
+    await syncInstalledAddonLifecycleFromCommunity();
     const result = setInstalledAddonEnabled(config, id, true);
     audit(config, req, "addons.enable", { id: result.addon.id, version: result.addon.version, ok: true });
     return json(res, 200, result);
@@ -411,8 +456,8 @@ async function handleApi(req, res) {
   if (path === "/api/maps/autoscaler" && req.method === "POST") return confirmedTask(req, res, "maps", "autoscalerAction", {}, "AUTOSCALER CHANGE");
   if (path === "/api/maps/autoscaler") return commandJson(res, "autoscalerStatus");
   if (path === "/api/maps/memory" && req.method === "POST") return memoryRoute(req, res);
-  if (path === "/api/maps/memory/swap" && req.method === "POST") return swapMemoryRoute(req, res);
-  if (path === "/api/maps/memory/swap") return json(res, 200, memoryBalancer.publicState());
+  if (path === "/api/maps/memory/balancer" && req.method === "POST") return memoryBalancerRoute(req, res);
+  if (path === "/api/maps/memory/balancer") return json(res, 200, memoryBalancer.publicState());
   if (path === "/api/maps/memory/live") return liveMapMemoryRoute(res);
   if (path === "/api/maps/memory") return commandJson(res, "memoryStatus");
   if (path === "/api/maps/user-settings/schema") return userSettingsSchemaRoute(res);
@@ -465,6 +510,19 @@ async function addonBridgeRoute(req, res, path) {
   return json(res, 400, { error: `Unsupported addon action: ${action || "unknown"}` });
 }
 
+async function installedAddonsRoute() {
+  await syncInstalledAddonLifecycleFromCommunity();
+  return listInstalledAddons(config);
+}
+
+async function syncInstalledAddonLifecycleFromCommunity() {
+  try {
+    syncInstalledAddonLifecycle(config, await fetchCommunityAddons());
+  } catch {
+    // Keep the last known local lifecycle state when the community catalog is unreachable.
+  }
+}
+
 function addonContentRoute(req, res, path) {
   const parts = path.split("/");
   const id = decodeURIComponent(parts[4] || "");
@@ -479,15 +537,17 @@ function addonContentRoute(req, res, path) {
 }
 
 async function liveMapMarkersRoute(res, url) {
-  const configPayload = duneDb.liveMapConfigPayload(url.searchParams.get("map") || "");
-  const [markers, partitions] = await Promise.all([
-    duneDb.liveMapMarkers(db, configPayload.map.actorMap || configPayload.map.key),
-    duneDb.liveMapPartitions(db).catch(() => ({ rows: [] }))
-  ]);
-  return json(res, 200, {
-    ...markers,
-    ...configPayload,
-    partitions: partitions.rows || []
+  return dbJson(res, async () => {
+    const configPayload = duneDb.liveMapConfigPayload(url.searchParams.get("map") || "");
+    const [markers, partitions] = await Promise.all([
+      duneDb.liveMapMarkers(db, configPayload.map.actorMap || configPayload.map.key),
+      duneDb.liveMapPartitions(db).catch(() => ({ rows: [] }))
+    ]);
+    return {
+      ...markers,
+      ...configPayload,
+      partitions: partitions.rows || []
+    };
   });
 }
 
@@ -520,7 +580,8 @@ async function liveMapTeleportPlayerRoute(req, res) {
     return json(res, 200, { path: "offline", ...result });
   } catch (error) {
     audit(config, req, "live-map.teleport.offline", { playerId, supported: false, error: redact(error.message || error) });
-    return json(res, 400, { error: redact(error.message || error) });
+    const payload = apiErrorPayload(error, 400);
+    return json(res, payload.status, payload.body);
   }
 }
 
@@ -791,6 +852,7 @@ function scheduleConsoleRestart(port) {
     const script = [
       "set -eu",
       "mkdir -p runtime/generated",
+      "export DOCKER_SOCKET_GID=\"${DOCKER_SOCKET_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 0)}\"",
       `echo "[$(date -Is)] Restarting Dune Docker Console on port ${port}" >> runtime/generated/console-restart.log`,
       "docker compose -f docker-compose.web.yml build redblink-dune-docker-console >> runtime/generated/console-restart.log 2>&1",
       "docker rm -f redblink-dune-docker-console >> runtime/generated/console-restart.log 2>&1 || true",
@@ -809,6 +871,7 @@ function scheduleConsoleRestart(port) {
       "-e", `DUNE_HOST_REPO_ROOT=${hostRepoRoot}`,
       "-e", `COMPOSE_PROJECT_NAME=${composeProjectName}`,
       "-e", `DUNE_COMPOSE_PROJECT_NAME=${composeProjectName}`,
+      "-e", `DOCKER_SOCKET_GID=${process.env.DOCKER_SOCKET_GID || ""}`,
       "-w", "/repo",
       "redblink-dune-docker-console:dev",
       "sh", "-lc", script
@@ -870,9 +933,37 @@ async function dbJson(res, fn) {
   try {
     return json(res, 200, await fn());
   } catch (error) {
-    const status = error.unsupported ? 501 : 500;
-    return json(res, status, { supported: false, error: redact(error.message || error), reason: redact(error.message || error), details: error.details || undefined });
+    const payload = apiErrorPayload(error, error.unsupported ? 501 : 500);
+    return json(res, payload.status, { supported: false, ...payload.body });
   }
+}
+
+function apiErrorPayload(error, fallbackStatus = 500) {
+  const rawMessage = String(error?.message || error || "");
+  if (isPostgresUnavailableError(error, rawMessage)) {
+    return {
+      status: 503,
+      body: { error: POSTGRES_UNAVAILABLE_MESSAGE, reason: POSTGRES_UNAVAILABLE_MESSAGE }
+    };
+  }
+  const message = redact(friendlyJsonError(rawMessage));
+  return {
+    status: error?.statusCode || fallbackStatus,
+    body: { error: message, reason: message, details: error?.details || undefined }
+  };
+}
+
+function isPostgresUnavailableError(error, rawMessage = "") {
+  return error?.code === "ECONNREFUSED"
+    || /ECONNREFUSED.*127\.0\.0\.1:15432/i.test(rawMessage)
+    || /connect\s+ECONNREFUSED/i.test(rawMessage);
+}
+
+function friendlyJsonError(rawMessage) {
+  if (/Unexpected token|Unexpected end of JSON|is not valid JSON|invalid json/i.test(rawMessage)) {
+    return "The console found invalid saved data for this page. Refresh the page and try again.";
+  }
+  return rawMessage || "Request failed.";
 }
 
 async function exportJson(res, filename, fn) {
@@ -918,6 +1009,72 @@ async function task(req, res, type, operation, payload) {
   return json(res, 202, { task: tasks.create(type, operation, payload) });
 }
 
+async function characterTransferSettingsRoute(req, res) {
+  if (req.method === "GET") return json(res, 200, readCharacterTransferSettings(config));
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+  const body = await readJson(req);
+  try {
+    const result = saveCharacterTransferSettings(config, body.settings || {}, { defaults: Boolean(body.restoreDefaults) });
+    const payload = { service: "director" };
+    audit(config, req, "admin.character-transfer-settings.save", { restoreDefaults: Boolean(body.restoreDefaults), settings: result.settings });
+    return json(res, 202, { ok: true, settings: result.settings, path: result.path, task: tasks.create("server", "restartService", payload) });
+  } catch (error) {
+    return json(res, error.statusCode || 500, { error: redact(error.message || error) });
+  }
+}
+
+async function messageOfTheDayRoute(req, res) {
+  if (req.method === "GET") return json(res, 200, readMessageOfTheDay(config));
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+  const body = await readJson(req);
+  try {
+    const result = body.restoreDefaults ? restoreMessageOfTheDay(config) : saveMessageOfTheDay(config, body.settings || body);
+    if (result.settings.enabled) {
+      const players = await duneDb.listPlayers(db, { online: true }).catch(() => ({ rows: [] }));
+      primeMessageOfTheDayOnlineState(config, players.rows || []);
+    }
+    audit(config, req, "admin.message-of-the-day.save", { restoreDefaults: Boolean(body.restoreDefaults), enabled: result.settings.enabled });
+    recordAdminHistory(config, {
+      command: "web-message-of-the-day",
+      target: "login",
+      friendly: "Message of the Day",
+      path: "runtime/generated/message-of-the-day.json",
+      result: "saved",
+      message: result.settings.enabled ? result.settings.message : "disabled"
+    });
+    return json(res, 200, { ok: true, ...result });
+  } catch (error) {
+    audit(config, req, "admin.message-of-the-day.save", { supported: false, error: redact(error.message || error) });
+    return json(res, error.statusCode || 400, { error: redact(error.message || error) });
+  }
+}
+
+async function playerAnnouncementsRoute(req, res) {
+  if (req.method === "GET") return json(res, 200, readPlayerAnnouncements(config));
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+  const body = await readJson(req);
+  try {
+    const result = body.restoreDefaults ? restorePlayerAnnouncements(config) : savePlayerAnnouncements(config, body.settings || body);
+    if (result.settings.joinEnabled || result.settings.leaveEnabled) {
+      const players = await duneDb.listPlayers(db, { online: true }).catch(() => ({ rows: [] }));
+      primePlayerAnnouncementOnlineState(config, players.rows || []);
+    }
+    audit(config, req, "admin.player-announcements.save", { restoreDefaults: Boolean(body.restoreDefaults), joinEnabled: result.settings.joinEnabled, leaveEnabled: result.settings.leaveEnabled });
+    recordAdminHistory(config, {
+      command: "web-player-announcements",
+      target: "online-status",
+      friendly: "Join Leave Announcements",
+      path: "runtime/generated/player-announcements.json",
+      result: "saved",
+      message: result.settings.joinEnabled || result.settings.leaveEnabled ? "enabled" : "disabled"
+    });
+    return json(res, 200, { ok: true, ...result });
+  } catch (error) {
+    audit(config, req, "admin.player-announcements.save", { supported: false, error: redact(error.message || error) });
+    return json(res, error.statusCode || 400, { error: redact(error.message || error) });
+  }
+}
+
 async function confirmedTask(req, res, type, operation, payload, phrase) {
   const body = await readJson(req);
   if (phrase && body.confirmation !== phrase) {
@@ -934,13 +1091,13 @@ async function memoryRoute(req, res) {
   return task(req, res, "maps", operation, body);
 }
 
-async function swapMemoryRoute(req, res) {
+async function memoryBalancerRoute(req, res) {
   const body = await readJson(req);
   const enabled = Boolean(body.enabled);
   if (enabled === memoryBalancer.publicState().enabled) return json(res, 200, memoryBalancer.publicState());
 
   const state = await memoryBalancer.setEnabled(enabled);
-  audit(config, req, "maps.memory.swap", { enabled });
+  audit(config, req, "maps.memory.balancer", { enabled });
   return json(res, 200, state);
 }
 
@@ -953,7 +1110,7 @@ async function mapSettingsRoute(req, res) {
   const modeChanged = Boolean(body.modeChanged);
   if (!map) return json(res, 400, { error: "Map is required." });
   if (!memoryChanged && !modeChanged) return json(res, 400, { error: "No map setting changes were submitted." });
-  const restart = modeChanged && Boolean(body.running);
+  const restart = false;
   const payload = {
     map,
     partitionId,
@@ -982,7 +1139,7 @@ async function userSettingsRawRoute(res, url) {
   const partitionId = url.searchParams.get("partitionId") || "";
   const operation = kind === "profile" ? "userSettingsProfileRaw" : kind === "engine" ? "userSettingsRawEngine" : "userSettingsRawGame";
   try {
-    const result = await runDune(config, buildDuneArgs(operation, { map, partitionId }), { timeoutMs: 8000 });
+    const result = await runDune(config, buildDuneArgs(operation, { map, partitionId }), { timeoutMs: 8000, redactOutput: false });
     return json(res, 200, { content: result.stdout || "" });
   } catch (error) {
     return json(res, 500, { error: redact(error.message || error) });
@@ -1065,6 +1222,18 @@ async function restartScheduleRoute(req, res) {
   return task(req, res, "server", operation, body);
 }
 
+async function ipChangeRestartRoute(req, res) {
+  const body = await readJson(req);
+  const operation = body.enabled ? "ipChangeRestartEnable" : "ipChangeRestartDisable";
+  return task(req, res, "server", operation, body);
+}
+
+async function shutdownProtectionRoute(req, res) {
+  const body = await readJson(req);
+  const operation = body.enabled ? "shutdownProtectionEnable" : "shutdownProtectionDisable";
+  return task(req, res, "server", operation, body);
+}
+
 async function autoGameUpdateRoute(req, res) {
   const body = await readJson(req);
   if (body.confirmation !== "SAVE AUTO GAME UPDATES") {
@@ -1072,14 +1241,6 @@ async function autoGameUpdateRoute(req, res) {
   }
   const operation = body.enabled ? "updateAutoEnable" : "updateAutoDisable";
   return task(req, res, "updates", operation, body);
-}
-
-async function previousStackRestoreRoute(req, res) {
-  const body = await readJson(req);
-  if (body.confirmation !== "RESTORE PREVIOUS STACK") {
-    return json(res, 400, { error: "Confirmation phrase required: RESTORE PREVIOUS STACK" });
-  }
-  return task(req, res, "updates", "selfUpdatePrevious", body);
 }
 
 async function sietchesUpdateRoute(req, res) {
@@ -1152,7 +1313,8 @@ async function carePackageGrantRoute(req, res, path) {
     return json(res, result.ok ? 200 : 207, result);
   } catch (error) {
     audit(config, req, "care-package.grant", { supported: false, playerId, error: redact(error.message || error) });
-    return json(res, 400, { error: redact(error.message || error) });
+    const payload = apiErrorPayload(error, 400);
+    return json(res, payload.status, payload.body);
   }
 }
 
@@ -1166,7 +1328,8 @@ async function carePackageEligibleRoute(req, res) {
       onlyEligible: params.get("onlyEligible") === "1"
     }));
   } catch (error) {
-    return json(res, 500, { supported: false, error: redact(error.message || error), reason: redact(error.message || error) });
+    const payload = apiErrorPayload(error);
+    return json(res, payload.status, { supported: false, ...payload.body });
   }
 }
 
@@ -1179,7 +1342,8 @@ async function carePackageGrantEligibleRoute(req, res) {
     return json(res, result.failed ? 207 : 200, result);
   } catch (error) {
     audit(config, req, "care-package.grant-eligible", { supported: false, error: redact(error.message || error) });
-    return json(res, 400, { error: redact(error.message || error), reason: redact(error.message || error) });
+    const payload = apiErrorPayload(error, 400);
+    return json(res, payload.status, payload.body);
   }
 }
 
@@ -1194,7 +1358,8 @@ async function carePackageRunRoute(req, res) {
     return json(res, result.failed ? 207 : 200, result);
   } catch (error) {
     audit(config, req, "care-package.run", { supported: false, error: redact(error.message || error) });
-    return json(res, 400, { error: redact(error.message || error), reason: redact(error.message || error) });
+    const payload = apiErrorPayload(error, 400);
+    return json(res, payload.status, payload.body);
   }
 }
 
@@ -1206,7 +1371,8 @@ async function carePackageRetryRoute(req, res, path) {
     return json(res, result.ok ? 200 : 207, result);
   } catch (error) {
     audit(config, req, "care-package.retry", { supported: false, grantId, error: redact(error.message || error) });
-    return json(res, 400, { error: redact(error.message || error) });
+    const payload = apiErrorPayload(error, 400);
+    return json(res, payload.status, payload.body);
   }
 }
 
@@ -1326,7 +1492,12 @@ async function giveSingleItemRoute(req, res, path, operation) {
   const body = await readJson(req);
   const playerId = decodeURIComponent(path.split("/")[3]);
   if (body.quality === undefined && body.grade === undefined) {
-    return task(req, res, "admin", operation, { ...body, playerId });
+    const resolved = operation === "adminGiveItemId"
+      ? resolveCatalogItem(config.repoRoot, { itemId: body.itemId })
+      : resolveCatalogItem(config.repoRoot, { itemName: body.itemName });
+    if (!itemRequiresDatabaseGrant(resolved)) {
+      return task(req, res, "admin", operation, { ...body, playerId });
+    }
   }
   const item = operation === "adminGiveItemId"
     ? { itemId: body.itemId, quantity: body.quantity, quality: body.quality, grade: body.grade, durability: body.durability }
@@ -1347,7 +1518,8 @@ async function grantPlayerItem(playerId, item, target) {
   const operation = resolved.itemId ? "adminGiveItemId" : "adminGiveItem";
   const hasExplicitGrade = item.quality !== undefined || item.grade !== undefined;
   const selectedGrade = hasExplicitGrade ? validateGrantGrade(item.quality ?? item.grade) : undefined;
-  const usesDatabaseGrade = selectedGrade !== undefined && selectedGrade > 0;
+  const usesDatabaseGrant = (selectedGrade !== undefined && selectedGrade > 0) || itemRequiresDatabaseGrant(resolved);
+  const databaseGrade = hasExplicitGrade ? selectedGrade : 0;
   const payload = {
     playerId: target.actionId || playerId,
     itemId: resolved.itemId,
@@ -1356,17 +1528,17 @@ async function grantPlayerItem(playerId, item, target) {
     quality: hasExplicitGrade ? selectedGrade : undefined,
     durability: 1
   };
-  if (usesDatabaseGrade) {
-    if (!config.mockMode && !target.actorId) throw new Error("A database actor ID is required to grant graded items");
+  if (usesDatabaseGrant) {
+    if (!config.mockMode && !target.actorId) throw new Error("A database actor ID is required to grant graded items, schematics, and augments");
     const result = config.mockMode
-      ? { ok: true, inserted: { template_id: resolved.itemId || payload.itemName, stack_size: payload.quantity, quality_level: payload.quality } }
+      ? { ok: true, inserted: { template_id: resolved.itemId || payload.itemName, stack_size: payload.quantity, quality_level: databaseGrade } }
       : await duneDb.giveItemToPlayer(db, target.actorId, {
           templateId: resolved.itemId || "",
           itemName: payload.itemName,
           quantity: payload.quantity,
-          quality: payload.quality
+          quality: databaseGrade
         });
-    return { ok: true, operation: "dbGiveItemToPlayer", item: payload, result };
+    return { ok: true, operation: "dbGiveItemToPlayer", item: { ...payload, quality: databaseGrade }, result };
   }
   const command = buildDuneArgs(operation, payload);
   if (config.mockMode) return { ok: true, operation, command };
@@ -1394,6 +1566,70 @@ async function broadcastRoute(req, res) {
     recordAdminHistory(config, { command: "web-broadcast", target: "all", friendly: body.title || "Broadcast", path: "rmq:heartbeats/notifications", result: "blocked", message });
     return json(res, 400, { supported: false, error: redact(error.message || error), reason: redact(error.message || error) });
   }
+}
+
+async function mapChatRoute(req, res) {
+  const body = await readJson(req);
+  const message = body.body ?? body.message;
+  const mapName = body.mapName || body.region || "HaggaBasin";
+  const dimension = body.dimension ?? 0;
+  try {
+    const persona = await ensureCarePackageServerPersona(db);
+    const recipients = config.mockMode ? [{ queue: "mock-player_queue" }] : await mapChatRecipients(mapName, dimension);
+    if (!recipients.length) throw new Error("No online players are currently subscribed to that map.");
+    const results = [];
+    for (const recipient of recipients) {
+      results.push(config.mockMode
+        ? { code: 0, stdout: "mock map chat\n", stderr: "", args: [] }
+        : await publishMapChat(config, {
+            mapName,
+            dimension,
+            message,
+            senderFuncomId: persona.funcomId,
+            senderHexFlsId: persona.hexFlsId,
+            recipientQueue: recipient.queue
+          }));
+    }
+    const target = `${mapName}.${dimension}`;
+    audit(config, req, "admin.map-chat", { supported: true, target, recipients: recipients.length });
+    recordAdminHistory(config, { command: "web-map-chat", target, friendly: "Map Chat", path: "rmq:chat.map/direct", result: "published", message });
+    return json(res, 200, { supported: true, ok: true, stdout: results.map((result) => result.stdout).join("\n"), stderr: results.map((result) => result.stderr).filter(Boolean).join("\n"), note: `Map chat message was sent to ${recipients.length} online player${recipients.length === 1 ? "" : "s"}.`, recipients: recipients.length });
+  } catch (error) {
+    const reason = redact(String(error.message || error).replaceAll("Care Package message whisper", "Map chat"));
+    audit(config, req, "admin.map-chat", { supported: false, error: reason });
+    recordAdminHistory(config, { command: "web-map-chat", target: `${mapName}.${dimension}`, friendly: "Map Chat", path: "rmq:chat.map", result: "blocked", message });
+    return json(res, 400, { supported: false, error: reason, reason });
+  }
+}
+
+async function mapChatRecipients(mapName, dimension) {
+  const maps = mapChatServerMaps(mapName);
+  const dim = Number(dimension || 0);
+  const values = [...maps, dim];
+  const mapPlaceholders = maps.map((_, index) => `$${index + 1}`).join(",");
+  const result = await db.query(`
+    select distinct concat(ac."user", '_queue') as queue
+    from dune.player_state ps
+    join dune.accounts ac on ac.id = ps.account_id
+    join dune.world_partition wp on wp.server_id = ps.server_id
+    where ps.online_status <> 'Offline'
+      and coalesce(ac."user", '') <> ''
+      and wp.map in (${mapPlaceholders})
+      and coalesce(wp.dimension_index, 0) = $${maps.length + 1}
+    order by queue`, values);
+  return (result.rows || []).map((row) => ({ queue: String(row.queue || "").trim() })).filter((row) => row.queue);
+}
+
+function mapChatServerMaps(mapName) {
+  const value = String(mapName || "").trim();
+  const aliases = {
+    HaggaBasin: ["Survival_1"],
+    Overland: ["Overmap"],
+    DeepDesert: ["DeepDesert_1"],
+    Arrakeen: ["SH_Arrakeen"],
+    HarkoVillage: ["SH_HarkoVillage"]
+  };
+  return aliases[value] || [value];
 }
 
 async function shutdownBroadcastRoute(req, res) {
@@ -1530,14 +1766,56 @@ async function carePackageAutoTick() {
   }
 }
 
+async function messageOfTheDayAutoTick() {
+  if (messageOfTheDayAutoRunning) return;
+  if (Date.now() - messageOfTheDayAutoLastRun < 10000) return;
+  messageOfTheDayAutoRunning = true;
+  messageOfTheDayAutoLastRun = Date.now();
+  try {
+    const players = await duneDb.listPlayers(db, { online: true });
+    if (players.capabilities?.players === false) return;
+    const result = await runMessageOfTheDayScan(config, players.rows || [], { db });
+    if (result.sent || result.failed) {
+      console.log(`Message of the Day scan: sent=${result.sent || 0} failed=${result.failed || 0}`);
+      audit(config, null, "message-of-the-day.auto-scan", { supported: true, sent: result.sent || 0, failed: result.failed || 0 });
+    }
+  } catch (error) {
+    const message = String(error.message || error);
+    if (/connect|database|relation|container|rabbitmq|docker|ECONNREFUSED/i.test(message)) return;
+    console.error(`Message of the Day scan failed: ${redact(message)}`);
+  } finally {
+    messageOfTheDayAutoRunning = false;
+  }
+}
+
+async function playerAnnouncementsAutoTick() {
+  if (playerAnnouncementsAutoRunning) return;
+  if (Date.now() - playerAnnouncementsAutoLastRun < 10000) return;
+  playerAnnouncementsAutoRunning = true;
+  playerAnnouncementsAutoLastRun = Date.now();
+  try {
+    const players = await duneDb.listPlayers(db, { online: true });
+    if (players.capabilities?.players === false) return;
+    const result = await runPlayerAnnouncementScan(config, players.rows || [], { db });
+    if (result.joined || result.left || result.sent || result.failed) {
+      console.log(`Player announcement scan: joined=${result.joined || 0} left=${result.left || 0} sent=${result.sent || 0} failed=${result.failed || 0} skipped_no_recipients=${result.skippedNoRecipients || 0}`);
+      audit(config, null, "player-announcements.auto-scan", { supported: true, joined: result.joined || 0, left: result.left || 0, sent: result.sent || 0, failed: result.failed || 0, skippedNoRecipients: result.skippedNoRecipients || 0 });
+    }
+  } catch (error) {
+    const message = String(error.message || error);
+    if (/connect|database|relation|container|rabbitmq|docker|ECONNREFUSED/i.test(message)) return;
+    console.error(`Player announcement scan failed: ${redact(message)}`);
+  } finally {
+    playerAnnouncementsAutoRunning = false;
+  }
+}
+
 async function writeConfig(req, res) {
   const body = await readJson(req);
   const allowed = ["SERVER_IP", "SERVER_IP_MODE", "SERVER_TITLE", "SERVER_REGION", "SERVER_PROVIDER", "STEAM_APP_ID", "BATTLEGROUP_ID"];
-  const lines = [];
   for (const key of allowed) {
-      if (body[key] !== undefined) lines.push(`${key}=${quoteEnvValue(String(body[key]))}`);
+    if (body[key] !== undefined) updateEnvFileValue(key, String(body[key]));
   }
-  writeFileSync(resolve(config.repoRoot, ".env"), `${lines.join("\n")}\n`, { mode: 0o644 });
   audit(config, req, "setup.write-config", { keys: Object.keys(body).filter((key) => allowed.includes(key)) });
   return json(res, 200, { ok: true });
 }

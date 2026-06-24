@@ -3,8 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 [ -f .env ] && . ./.env
-[ -f runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 source runtime/scripts/runtime-env.sh
 
 psql_exec() {
@@ -49,6 +49,9 @@ create table if not exists dune.network_address_config (
   updated_at timestamptz not null default now()
 );
 
+alter table dune.network_address_config owner to dune;
+grant select, insert, update, delete on dune.network_address_config to dune;
+
 insert into dune.network_address_config (key, value, updated_at)
 values
   ('game_addr_ip', '$advertised_ip', now()),
@@ -84,6 +87,9 @@ begin
   return new;
 end;
 \$\$;
+
+alter function dune.normalize_farm_state_addresses() owner to dune;
+grant execute on function dune.normalize_farm_state_addresses() to dune;
 
 drop trigger if exists normalize_farm_state_addresses on dune.farm_state;
 create trigger normalize_farm_state_addresses

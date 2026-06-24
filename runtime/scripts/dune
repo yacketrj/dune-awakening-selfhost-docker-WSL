@@ -74,6 +74,42 @@ print_web_console_url() {
   echo "  http://$(detect_web_console_ip):$port"
 }
 
+prepare_docker_socket_gid() {
+  if [ -z "${DOCKER_SOCKET_GID:-}" ] && [ -S /var/run/docker.sock ] && command -v stat >/dev/null 2>&1; then
+    DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+  fi
+  export DOCKER_SOCKET_GID="${DOCKER_SOCKET_GID:-0}"
+}
+
+command_can_sudo_reexec_safely() {
+  case "$cmd" in
+    status|ps|servers|ports|ping|ping-diagnostics|ready|logs|doctor)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_docker_access_or_reexec() {
+  [ "${DUNE_SUDO_REEXEC:-0}" != "1" ] || return 0
+  [ "$(id -u)" -ne 0 ] || return 0
+  command_can_sudo_reexec_safely || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  docker info >/dev/null 2>&1 && return 0
+  command -v sudo >/dev/null 2>&1 || return 0
+  sudo -v || return 0
+  if sudo docker info >/dev/null 2>&1; then
+    echo "Docker access for this shell is not active yet; running this dune command with sudo."
+    exec sudo env \
+      "DUNE_SUDO_REEXEC=1" \
+      "DUNE_HOST_REPO_ROOT=${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" \
+      "DUNE_COMPOSE_PROJECT_NAME=${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" \
+      "$0" "$@"
+  fi
+}
+
 start_compose_service_if_available() {
   local compose_file="$1"
   local service="$2"
@@ -97,7 +133,8 @@ start_compose_service_if_available() {
   echo "Starting $service..."
   case "$env_prefix" in
     web)
-      COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" docker compose -f "$compose_file" up -d --build "$service"
+      prepare_docker_socket_gid
+      COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}" DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}" docker compose -f "$compose_file" up -d --build "$service"
       ;;
     *)
       docker compose -f "$compose_file" up -d --build "$service"
@@ -107,8 +144,10 @@ start_compose_service_if_available() {
 
 case "$cmd" in
   init|help|--help|-h) ;;
-  *) auto_repair_stack_git_state ;;
+  *) [ "${DUNE_SUDO_REEXEC:-0}" = "1" ] || auto_repair_stack_git_state ;;
 esac
+
+ensure_docker_access_or_reexec "$@"
 
 case "$cmd" in
   init)
@@ -122,6 +161,7 @@ The interactive CLI manager has moved to Dune Docker Console.
 Use dune --help to see available CLI commands for automation and troubleshooting.
 EOF
     if [ -f docker-compose.web.yml ] && command -v docker >/dev/null 2>&1; then
+      prepare_docker_socket_gid
       service="$(docker compose -f docker-compose.web.yml config --services 2>/dev/null | grep -E '^redblink-dune-docker-console$' | head -n1 || true)"
       if [ -n "$service" ]; then
         echo
@@ -130,7 +170,7 @@ EOF
           print_web_console_url
         else
           echo "Starting Dune Docker Console..."
-          if COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" docker compose -f docker-compose.web.yml up -d --build "$service"; then
+          if COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="${DUNE_HOST_REPO_ROOT:-$(pwd -P)}" DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}" DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}" docker compose -f docker-compose.web.yml up -d --build "$service"; then
             echo "Dune Docker Console is running."
             print_web_console_url
           else
@@ -279,6 +319,16 @@ EOF
     runtime/scripts/restart-schedule.sh "$@"
     ;;
 
+  ip-change-restart)
+    shift || true
+    runtime/scripts/ip-change-restart.sh "$@"
+    ;;
+
+  shutdown-protection)
+    shift || true
+    runtime/scripts/shutdown-protection.sh "$@"
+    ;;
+
   version)
     runtime/scripts/version.sh
     ;;
@@ -349,8 +399,10 @@ Usage:
   dune restart <service>
   dune console restart
   dune update [check|auto enable|auto disable|auto status|--yes]
-  dune self-update [check|list|install [latest|previous|<tag>]]
+  dune self-update [check|list|install [latest|<tag>]]
   dune restart-schedule [enable <HH:MM> [notify-minutes]|disable|status]
+  dune ip-change-restart [enable [interval-minutes] [notify-minutes]|disable|status|check-now]
+  dune shutdown-protection [enable|disable|remove|status]
   dune db backup [output-dir]
   dune db list
   dune db status

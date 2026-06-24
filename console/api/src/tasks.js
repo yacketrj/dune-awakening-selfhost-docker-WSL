@@ -89,32 +89,25 @@ export class TaskManager {
     const helperName = `dune-web-self-update-${Date.now()}`;
     const composeProjectName = process.env.DUNE_COMPOSE_PROJECT_NAME || process.env.COMPOSE_PROJECT_NAME || "dune-awakening-selfhost-docker";
     const helperImage = process.env.DUNE_SYSTEMD_HELPER_IMAGE || "redblink-dune-docker-console:dev";
+    const hostRepoRoot = process.env.DUNE_HOST_REPO_ROOT || this.config.hostRepoRoot || this.config.repoRoot;
     const logFile = "runtime/generated/web-self-update.log";
     const command = [
       "set -eu",
       "mkdir -p runtime/generated",
       `echo "[$(date -Is)] Starting Web UI stack update: runtime/scripts/dune ${args.map(shellQuote).join(" ")}" > ${shellQuote(logFile)}`,
-      `runtime/scripts/dune ${args.map(shellQuote).join(" ")} >> ${shellQuote(logFile)} 2>&1`,
+      `DUNE_WEB_SELF_UPDATE_HELPER=1 runtime/scripts/dune ${args.map(shellQuote).join(" ")} >> ${shellQuote(logFile)} 2>&1`,
       `echo "[$(date -Is)] Web UI stack update finished" >> ${shellQuote(logFile)}`
     ].join("\n");
 
     task.currentStep = "Starting update helper";
     this.emit(task, "Starting detached update helper");
-    const result = await runDockerCommand([
-      "run",
-      "--rm",
-      "-d",
-      "--name", helperName,
-      "--network", "host",
-      "-v", `${this.config.repoRoot}:/repo`,
-      "-v", "/var/run/docker.sock:/var/run/docker.sock",
-      "-e", `DUNE_HOST_REPO_ROOT=${this.config.repoRoot}`,
-      "-e", `COMPOSE_PROJECT_NAME=${composeProjectName}`,
-      "-e", `DUNE_COMPOSE_PROJECT_NAME=${composeProjectName}`,
-      "-w", "/repo",
+    const result = await runDockerCommand(buildSelfUpdateHelperDockerArgs({
+      helperName,
+      hostRepoRoot,
+      composeProjectName,
       helperImage,
-      "sh", "-lc", command
-    ], this.config.repoRoot);
+      command
+    }), this.config.repoRoot);
 
     this.append(task, `Update helper started: ${result.stdout.trim() || helperName}`, "stdout");
     this.append(task, `Update log: ${logFile}`, "stdout");
@@ -144,8 +137,26 @@ export class TaskManager {
   }
 }
 
+export function buildSelfUpdateHelperDockerArgs({ helperName, hostRepoRoot, composeProjectName, helperImage, command }) {
+  return [
+      "run",
+      "--rm",
+      "-d",
+      "--name", helperName,
+      "--network", "host",
+      "-v", `${hostRepoRoot}:/repo`,
+      "-v", "/var/run/docker.sock:/var/run/docker.sock",
+      "-e", `DUNE_HOST_REPO_ROOT=${hostRepoRoot}`,
+      "-e", `COMPOSE_PROJECT_NAME=${composeProjectName}`,
+      "-e", `DUNE_COMPOSE_PROJECT_NAME=${composeProjectName}`,
+      "-w", "/repo",
+      helperImage,
+      "sh", "-lc", command
+    ];
+}
+
 function isSelfUpdateApplyOperation(operation) {
-  return operation === "selfUpdateApply" || operation === "selfUpdatePrevious";
+  return operation === "selfUpdateApply";
 }
 
 function runDockerCommand(args, cwd) {
@@ -172,7 +183,7 @@ function shellQuote(value) {
 }
 
 export function taskTimeoutMs(config, operation) {
-  if (["start", "stop", "restartAll", "restartService", "serverTitle", "init", "updateApply", "updateFixSteamcmd", "selfUpdateApply", "selfUpdatePrevious", "backupRestore", "userSettingsSaveAndRestart", "userSettingsResetAndRestart", "userSettingsRawAndRestart", "mapsApplySettings"].includes(operation)) {
+  if (["start", "stop", "restartAll", "restartService", "serverTitle", "serverConfig", "init", "updateApply", "updateFixSteamcmd", "selfUpdateApply", "backupRestore", "userSettingsSaveAndRestart", "userSettingsResetAndRestart", "userSettingsRawAndRestart", "mapsApplySettings"].includes(operation)) {
     return Math.max(config.commandTimeoutMs, 30 * 60 * 1000);
   }
   return config.commandTimeoutMs;

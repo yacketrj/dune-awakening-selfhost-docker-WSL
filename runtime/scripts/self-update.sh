@@ -182,36 +182,12 @@ for release in data:
 raise SystemExit(1)'
 }
 
-previous_release_tag_from_releases_list() {
-  local json
-  json="$(releases_json 2>/dev/null)" || return 1
-  [ -n "$json" ] || return 1
-  printf '%s' "$json" | python3 -c 'import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-seen = 0
-for release in data:
-    if not isinstance(release, dict):
-        continue
-    if release.get("draft") or release.get("prerelease"):
-        continue
-    tag = release.get("tag_name") or ""
-    if not tag:
-        continue
-    if seen == 0:
-        seen = 1
-        continue
-    print(tag)
-    raise SystemExit(0)
-raise SystemExit(1)'
-}
-
 cache_latest_release_tag() {
   local tag="$1"
-  mkdir -p runtime/generated
-  printf '%s\n' "$tag" > "$LATEST_TAG_CACHE_FILE"
+  (
+    mkdir -p runtime/generated
+    printf '%s\n' "$tag" > "$LATEST_TAG_CACHE_FILE"
+  ) 2>/dev/null || true
 }
 
 read_cached_latest_release_tag() {
@@ -232,10 +208,6 @@ latest_release_tag() {
   fi
 
   latest_release_tag_from_releases_list
-}
-
-previous_release_tag() {
-  previous_release_tag_from_releases_list
 }
 
 list_release_rows() {
@@ -307,6 +279,81 @@ check_dirty_git_tree() {
       echo
     fi
   fi
+}
+
+self_update_repair_command() {
+  printf 'sudo chown -R "$USER:$USER" %q\n' "$HOST_ROOT_DIR"
+}
+
+print_repo_not_writable() {
+  echo "Self-update cannot continue because the install folder is not writable by the current user."
+  echo "Install folder:"
+  echo "  $HOST_ROOT_DIR"
+  echo
+  echo "This usually happens when earlier install or update commands were run with sudo."
+  echo "Run this once, then retry the update:"
+  echo "  $(self_update_repair_command)"
+}
+
+ensure_path_writable() {
+  local path="$1"
+  [ -e "$path" ] || return 0
+  [ -w "$path" ] || {
+    print_repo_not_writable
+    echo
+    echo "Blocked path:"
+    echo "  $path"
+    exit 13
+  }
+}
+
+ensure_self_update_writable() {
+  local test_file
+
+  ensure_path_writable "$ROOT_DIR"
+  ensure_path_writable "VERSION"
+  ensure_path_writable "runtime"
+  ensure_path_writable "runtime/scripts"
+  ensure_path_writable "runtime/scripts/self-update.sh"
+
+  if ! mkdir -p runtime/generated runtime/backups/self-update 2>/dev/null; then
+    print_repo_not_writable
+    exit 13
+  fi
+
+  for test_file in runtime/generated/.self-update-write-test runtime/backups/self-update/.self-update-write-test; do
+    if ! : > "$test_file" 2>/dev/null; then
+      print_repo_not_writable
+      echo
+      echo "Blocked path:"
+      echo "  $test_file"
+      exit 13
+    fi
+    rm -f "$test_file" 2>/dev/null || true
+  done
+}
+
+ensure_docker_access_for_console_rebuild() {
+  [ -f docker-compose.web.yml ] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  if docker ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Self-update cannot continue because the current user cannot access Docker."
+  echo
+  echo "The update needs Docker access to rebuild and restart the Dune Docker Console."
+  echo "Run this once, then fully log out and back in before retrying:"
+  echo "  sudo usermod -aG docker \"\$USER\""
+  echo
+  echo "After reconnecting, verify Docker access with:"
+  echo "  docker ps"
+  exit 13
+}
+
+ensure_self_update_preflight() {
+  ensure_self_update_writable
+  ensure_docker_access_for_console_rebuild
 }
 
 download_release_archive() {
@@ -405,8 +452,68 @@ web_console_service_name() {
   printf '%s\n' "$service"
 }
 
+read_env_file_value() {
+  local key="$1"
+  [ -f .env ] || return 1
+  awk -F= -v key="$key" '$1 == key {print $2; exit}' .env | tr -d '[:space:]"'\'''
+}
+
+persist_env_file_value() {
+  local key="$1"
+  local value="$2"
+  [ -n "$value" ] || return 0
+  if [ -f .env ] && grep -q "^${key}=" .env; then
+    sed -i "s/^${key}=.*/${key}=${value}/" .env
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+
+running_console_env_value() {
+  local key="$1"
+  command -v docker >/dev/null 2>&1 || return 1
+  docker inspect redblink-dune-docker-console \
+    --format "{{range .Config.Env}}{{println .}}{{end}}" \
+    2>/dev/null | awk -F= -v key="$key" '$1 == key {print $2; exit}'
+}
+
+prepare_docker_socket_gid() {
+  if [ -z "${DOCKER_SOCKET_GID:-}" ]; then
+    DOCKER_SOCKET_GID="$(read_env_file_value DOCKER_SOCKET_GID 2>/dev/null || true)"
+  fi
+  if [ -z "${DOCKER_SOCKET_GID:-}" ]; then
+    DOCKER_SOCKET_GID="$(running_console_env_value DOCKER_SOCKET_GID 2>/dev/null || true)"
+  fi
+  if [ -z "${DOCKER_SOCKET_GID:-}" ] && [ -S /var/run/docker.sock ] && command -v stat >/dev/null 2>&1; then
+    DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+  fi
+  export DOCKER_SOCKET_GID="${DOCKER_SOCKET_GID:-0}"
+  persist_env_file_value DOCKER_SOCKET_GID "$DOCKER_SOCKET_GID"
+}
+
+prepare_web_console_rebuild_env() {
+  local port
+  port="${ADMIN_BIND_PORT:-}"
+  if [ -z "$port" ]; then
+    port="$(read_env_file_value ADMIN_BIND_PORT 2>/dev/null || true)"
+  fi
+  if [ -z "$port" ]; then
+    port="$(running_console_env_value ADMIN_BIND_PORT 2>/dev/null || true)"
+  fi
+  if [ -n "$port" ]; then
+    export ADMIN_BIND_PORT="$port"
+    persist_env_file_value ADMIN_BIND_PORT "$port"
+  fi
+  prepare_docker_socket_gid
+  export DUNE_HOST_UID="${DUNE_HOST_UID:-$(id -u)}"
+  export DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}"
+  persist_env_file_value DUNE_HOST_UID "$DUNE_HOST_UID"
+  persist_env_file_value DUNE_HOST_GID "$DUNE_HOST_GID"
+}
+
 rebuild_web_console_now() {
   local service="$1"
+  prepare_web_console_rebuild_env
   COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="$HOST_ROOT_DIR" docker compose -f docker-compose.web.yml build "$service"
   docker rm -f "$service" >/dev/null 2>&1 || true
   COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}" DUNE_HOST_REPO_ROOT="$HOST_ROOT_DIR" docker compose -f docker-compose.web.yml up -d --force-recreate "$service"
@@ -418,6 +525,8 @@ rebuild_web_console_with_helper() {
   local compose_project="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}"
   local helper_image="${DUNE_SYSTEMD_HELPER_IMAGE:-redblink-dune-docker-console:dev}"
 
+  prepare_web_console_rebuild_env
+
   docker run --rm -d \
     --name "$helper_name" \
     --network host \
@@ -426,6 +535,7 @@ rebuild_web_console_with_helper() {
     -e "DUNE_HOST_REPO_ROOT=$HOST_ROOT_DIR" \
     -e "COMPOSE_PROJECT_NAME=$compose_project" \
     -e "DUNE_COMPOSE_PROJECT_NAME=$compose_project" \
+    -e "DOCKER_SOCKET_GID=${DOCKER_SOCKET_GID:-0}" \
     -w /repo \
     "$helper_image" \
     sh -lc "sleep 2; runtime/scripts/self-update.sh rebuild-web-console '$service' >> runtime/generated/web-console-rebuild.log 2>&1"
@@ -446,7 +556,7 @@ rebuild_web_console_after_update() {
   log_file="runtime/generated/web-console-rebuild.log"
   echo
   echo "Rebuilding Dune Docker Console container: $service"
-  if [ -n "${DUNE_CONTAINER_REPO_ROOT:-}" ] || [ -f /.dockerenv ]; then
+  if { [ -n "${DUNE_CONTAINER_REPO_ROOT:-}" ] || [ -f /.dockerenv ]; } && [ "${DUNE_WEB_SELF_UPDATE_HELPER:-0}" != "1" ]; then
     echo "The rebuild will continue in a helper container because this update is running from the web console."
     echo "Rebuild log: $log_file"
     rebuild_web_console_with_helper "$service" >"$log_file" 2>&1 || {
@@ -586,6 +696,7 @@ case "$cmd" in
       echo "Dune Docker Console service was not found in docker-compose.web.yml."
       exit 2
     fi
+    ensure_docker_access_for_console_rebuild
     rebuild_web_console_now "$service"
     echo "Dune Docker Console was rebuilt successfully."
     ;;
@@ -645,19 +756,10 @@ case "$cmd" in
         esac
         exit 2
       fi
-    elif [ "$tag" = "previous" ]; then
-      set +e
-      tag="$(previous_release_tag)"
-      rc=$?
-      set -e
-      if [ "$rc" -ne 0 ] || [ -z "$tag" ]; then
-        echo "Could not resolve the previous stack release."
-        echo "Make sure the GitHub repo has at least two published non-prerelease releases."
-        exit 2
-      fi
     fi
 
     cache_latest_release_tag "$tag"
+    ensure_self_update_preflight
     install_release_tag "$tag"
     install_cli_command_after_update
     rebuild_web_console_after_update
@@ -667,7 +769,7 @@ case "$cmd" in
     echo "Usage:"
     echo "  runtime/scripts/self-update.sh check"
     echo "  runtime/scripts/self-update.sh list"
-    echo "  runtime/scripts/self-update.sh install [latest|previous|<tag>]"
+    echo "  runtime/scripts/self-update.sh install [latest|<tag>]"
     exit 2
     ;;
 esac

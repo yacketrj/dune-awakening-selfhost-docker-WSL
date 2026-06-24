@@ -29,7 +29,7 @@ pkill -f "publish-deepdesert-overrides.sh loop" 2>/dev/null || true
 
 echo
 echo "=== Stopping game servers first ==="
-docker rm -f dune-server-overmap dune-server-survival-1 2>/dev/null || true
+runtime/scripts/recycle-world-game-servers.sh stop-all || true
 
 echo
 echo "=== Stopping gateway/director/router ==="

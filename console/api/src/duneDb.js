@@ -1,5 +1,8 @@
 import { assertIdentifier, intParam, isReadOnlySql, quoteIdentifier, quoteQualified, rowsResult } from "./db.js";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+  craftingRecipeCatalogRows,
   factionDisplayName,
   factionIdByName,
   factionTierBumps,
@@ -25,6 +28,7 @@ import {
 
 const MAX_INTEL_POINTS = 2779;
 const MAX_TABLE_PREVIEW_ROWS = 10000;
+let craftingRecipeCatalogCache = null;
 
 export class UnsupportedCapabilityError extends Error {
   constructor(message, details = {}) {
@@ -591,11 +595,36 @@ async function playerFactionSnapshot(db) {
   }]));
 }
 
+async function pledgeGuildAdminFactionIfNeeded(db, actorId, factionId) {
+  if (Number(factionId) === 3) return;
+  try {
+    if (!(await tableExists(db, "guild_members")) ||
+        !(await tableExists(db, "guilds")) ||
+        !(await functionExists(db, "dune.pledge_guild_allegiance(bigint,bigint,smallint)"))) {
+      return;
+    }
+    const result = await db.query(`
+      select gm.guild_id::text as guild_id,
+             coalesce(g.guild_faction, 3)::int as guild_faction
+      from dune.guild_members gm
+      join dune.guilds g on g.guild_id = gm.guild_id
+      where gm.player_id = $1::bigint
+        and gm.role_id = 100`, [actorId]);
+    for (const row of result.rows) {
+      if (Number(row.guild_faction) === Number(factionId)) continue;
+      await db.query("select dune.pledge_guild_allegiance($1::bigint, $2::bigint, 3::smallint)", [row.guild_id, actorId]);
+    }
+  } catch {
+    // Older schemas can still refresh faction membership without guild allegiance support.
+  }
+}
+
 async function syncChangedPlayerFaction(db, before, after) {
   for (const [actorId, next] of after) {
     const previous = before.get(actorId);
     if (previous && previous.factionId === next.factionId && previous.changedAt === next.changedAt) continue;
     await db.query("select dune.change_player_faction($1::bigint, $2::smallint, 3::smallint, coalesce($3::timestamp, now()::timestamp))", [next.actorId, next.factionId, next.changedAt || null]);
+    await pledgeGuildAdminFactionIfNeeded(db, next.actorId, next.factionId);
   }
   for (const [actorId, previous] of before) {
     if (after.has(actorId)) continue;
@@ -800,8 +829,11 @@ export async function listPlayers(db, { online = false, q = "" } = {}) {
   const values = [];
   let where = "a.class ilike '%PlayerCharacter%'";
   where += " and coalesce(ac.\"user\", '') <> 'A5C0DE5E12A00001'";
+  where += " and coalesce(ac.\"user\", '') <> 'A5C0DE5E12A00002'";
   where += " and coalesce(ac.funcom_id, '') <> 'Server#0001'";
+  where += " and coalesce(ac.funcom_id, '') <> 'MessageOfTheDay#0001'";
   where += " and coalesce(ps.character_name, '') <> 'Server'";
+  where += " and coalesce(ps.character_name, '') <> 'Message of the Day'";
   if (online) where += " and coalesce(ps.online_status::text, '') = 'Online'";
   if (q) {
     values.push(`%${q}%`);
@@ -837,22 +869,24 @@ export async function addonLeadershipPlayers(db) {
   const result = await listPlayers(db, {});
   if (!result?.capabilities?.players) return result;
   const rows = result.rows || [];
-  const [levels, factions] = await Promise.all([
+  const [levels, factions, guilds] = await Promise.all([
     leadershipLevels(db).catch(() => new Map()),
-    leadershipFactions(db).catch(() => new Map())
+    leadershipFactions(db).catch(() => new Map()),
+    leadershipGuilds(db).catch(() => new Map())
   ]);
   return {
     capabilities: { players: true, leadership: true },
     rows: rows.map((row) => {
       const controllerId = String(row.player_controller_id || "");
       const actorId = String(row.actor_id || "");
+      const accountId = String(row.account_id || "");
       return {
         actorId,
         controllerId,
         name: row.character_name || `Player ${actorId}`,
         level: levels.get(controllerId) || levels.get(actorId) || 0,
         faction: factions.get(controllerId) || factions.get(actorId) || "Unassigned",
-        guild: "Unavailable",
+        guild: guilds.get(controllerId) || guilds.get(actorId) || guilds.get(accountId) || "Unavailable",
         status: row.online_status || "Offline",
         map: row.map || "",
         lastSeen: row.last_seen || ""
@@ -926,6 +960,32 @@ async function leadershipReputationFactions(db) {
     order by pfr.actor_id, coalesce(pfr.reputation_amount, 0) desc, pfr.faction_id`);
   for (const row of result.rows) factions.set(String(row.actor_id), factionDisplayName(row));
   return factions;
+}
+
+async function leadershipGuilds(db) {
+  const guilds = new Map();
+  if (!(await tableExists(db, "guild_members")) || !(await tableExists(db, "guilds"))) return guilds;
+  const memberColumns = await columnsFor(db, "guild_members");
+  const guildColumns = await columnsFor(db, "guilds");
+  const memberPlayerColumn = firstExistingColumn(memberColumns, ["player_id", "player_controller_id", "actor_id", "account_id", "player_pawn_id"]);
+  const memberGuildColumn = firstExistingColumn(memberColumns, ["guild_id", "id"]);
+  const guildIdColumn = firstExistingColumn(guildColumns, ["guild_id", "id"]);
+  const guildNameColumn = firstExistingColumn(guildColumns, ["guild_name", "name", "display_name"]);
+  if (!memberPlayerColumn || !memberGuildColumn || !guildIdColumn || !guildNameColumn) return guilds;
+  const result = await db.query(`
+    select gm.${quoteIdentifier(memberPlayerColumn)}::text as player_id,
+           coalesce(g.${quoteIdentifier(guildNameColumn)}, '') as guild_name
+    from dune.guild_members gm
+    join dune.guilds g on g.${quoteIdentifier(guildIdColumn)} = gm.${quoteIdentifier(memberGuildColumn)}
+    where nullif(g.${quoteIdentifier(guildNameColumn)}, '') is not null`);
+  for (const row of result.rows) {
+    if (row.player_id && row.guild_name) guilds.set(String(row.player_id), String(row.guild_name));
+  }
+  return guilds;
+}
+
+function firstExistingColumn(columns, names) {
+  return names.find((name) => columns.has(name)) || "";
 }
 
 async function playerLastSeenSelect(db) {
@@ -1609,40 +1669,30 @@ export async function playerCraftingRecipes(db, id) {
   await requireCapability(await supportsCraftingRecipes(db), "Crafting recipes require dune.actors.properties with CraftingRecipesLibraryActorComponent.");
   const player = await resolvePlayerMutationTarget(db, id);
   const result = await db.query(`
-    with all_recipes as (
-      select distinct on (recipe->'BaseRecipeId'->>'Name')
-             recipe->'BaseRecipeId'->>'Name' as recipe_id,
-             coalesce(nullif(recipe->>'m_Source', ''), 'Unknown') as source,
-             case when recipe->>'m_QualityLevel' ~ '^-?[0-9]+$' then (recipe->>'m_QualityLevel')::int else 0 end as quality_level
-      from dune.actors a
-      cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
-      where recipe->'BaseRecipeId'->>'Name' is not null
-      order by recipe->'BaseRecipeId'->>'Name', coalesce(nullif(recipe->>'m_Source', ''), 'Unknown')
-    ),
-    player_recipes as (
+    with player_recipes as (
       select recipe->'BaseRecipeId'->>'Name' as recipe_id
       from dune.actors a
       cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
       where a.id = $1 and recipe->'BaseRecipeId'->>'Name' is not null
     )
-    select all_recipes.recipe_id,
-           all_recipes.source,
-           all_recipes.quality_level,
-           (player_recipes.recipe_id is not null) as unlocked
-    from all_recipes
-    left join player_recipes on player_recipes.recipe_id = all_recipes.recipe_id
-    order by all_recipes.recipe_id`, [player.actorId]);
+    select recipe_id from player_recipes
+    order by recipe_id`, [player.actorId]);
+  const unlocked = new Set(result.rows.map((row) => String(row.recipe_id || "")).filter(Boolean));
+  const catalog = craftingRecipeCatalog();
+  const rows = catalog.length
+    ? catalog.map((row) => ({ ...row, unlocked: unlocked.has(row.recipeId) }))
+    : [...unlocked].map((recipeId) => ({
+      recipeId,
+      displayName: recipeDisplayName(recipeId),
+      category: recipeCategory(recipeId),
+      source: "Known Recipes",
+      qualityLevel: 0,
+      unlocked: true
+    }));
   return {
     capabilities: { craftingRecipes: true },
     player,
-    rows: result.rows.map((row) => ({
-      recipeId: row.recipe_id,
-      displayName: recipeDisplayName(row.recipe_id),
-      category: recipeCategory(row.recipe_id),
-      source: row.source || "Unknown",
-      qualityLevel: Number(row.quality_level || 0),
-      unlocked: Boolean(row.unlocked)
-    }))
+    rows
   };
 }
 
@@ -1652,14 +1702,17 @@ export async function unlockCraftingRecipe(db, id, { recipeId }) {
   return db.transaction(async (tx) => {
     const player = await resolvePlayerMutationTarget(tx, id);
     requireOfflinePlayer(player, "Crafting recipe unlocks");
-    const known = await tx.query(`
-      select exists (
-        select 1
-        from dune.actors a
-        cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
-        where recipe->'BaseRecipeId'->>'Name' = $1
-      ) as exists`, [safeRecipeId]);
-    if (!known.rows[0]?.exists) throw new Error(`Crafting recipe ${safeRecipeId} was not found in the game database.`);
+    const catalogHasRecipe = craftingRecipeCatalog().some((row) => row.recipeId === safeRecipeId);
+    if (!catalogHasRecipe) {
+      const known = await tx.query(`
+        select exists (
+          select 1
+          from dune.actors a
+          cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes', '[]'::jsonb)) recipe
+          where recipe->'BaseRecipeId'->>'Name' = $1
+        ) as exists`, [safeRecipeId]);
+      if (!known.rows[0]?.exists) throw new Error(`Crafting recipe ${safeRecipeId} was not found in the game database.`);
+    }
     const current = await tx.query(`
       select properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes' as recipes
       from dune.actors
@@ -1684,6 +1737,20 @@ export async function unlockCraftingRecipe(db, id, { recipeId }) {
       where id = $1 and properties ? 'CraftingRecipesLibraryActorComponent'`, [player.actorId, JSON.stringify(nextRecipes)]);
     return { ok: true, player, recipeId: safeRecipeId, alreadyUnlocked: false };
   });
+}
+
+function craftingRecipeCatalog() {
+  if (craftingRecipeCatalogCache) return craftingRecipeCatalogCache;
+  try {
+    const path = [
+      resolve(process.cwd(), "runtime/data/admin-items.json"),
+      resolve(process.cwd(), "../../runtime/data/admin-items.json")
+    ].find((candidate) => existsSync(candidate)) || resolve(process.cwd(), "runtime/data/admin-items.json");
+    craftingRecipeCatalogCache = craftingRecipeCatalogRows(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    craftingRecipeCatalogCache = [];
+  }
+  return craftingRecipeCatalogCache;
 }
 
 export async function playerResearchItems(db, id) {

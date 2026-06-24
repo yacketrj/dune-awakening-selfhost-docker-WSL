@@ -3,13 +3,13 @@ import { buildDuneArgs, runDune } from "../runner.js";
 import { parseMemoryStatusRows } from "../statusParsers.js";
 import { redact } from "../redact.js";
 
-const SWAP_MEMORY_INTERVAL_MS = 10000;
-const SWAP_MEMORY_HIGH_WATERMARK = 90;
-const SWAP_MEMORY_DONOR_MAX_PERCENT = 55;
-const SWAP_MEMORY_EMERGENCY_DONOR_MAX_PERCENT = 70;
-const SWAP_MEMORY_DONOR_POST_TRANSFER_MAX_PERCENT = 80;
-const SWAP_MEMORY_CHUNK_BYTES = 1024 ** 3;
-const SWAP_MEMORY_MIN_HEADROOM_BYTES = 1024 ** 3;
+const MEMORY_BALANCER_INTERVAL_MS = 10000;
+const MEMORY_BALANCER_HIGH_WATERMARK = 90;
+const MEMORY_BALANCER_DONOR_MAX_PERCENT = 55;
+const MEMORY_BALANCER_EMERGENCY_DONOR_MAX_PERCENT = 70;
+const MEMORY_BALANCER_DONOR_POST_TRANSFER_MAX_PERCENT = 80;
+const MEMORY_BALANCER_CHUNK_BYTES = 1024 ** 3;
+const MEMORY_BALANCER_MIN_HEADROOM_BYTES = 1024 ** 3;
 
 export function createMemoryBalancer(config) {
   const state = {
@@ -60,7 +60,7 @@ export function createMemoryBalancer(config) {
       for (const row of rows) {
         if (!state.baselineLimits.has(row.container)) state.baselineLimits.set(row.container, row.limitBytes);
       }
-      const target = rows.filter((row) => row.percent >= SWAP_MEMORY_HIGH_WATERMARK).sort((a, b) => b.percent - a.percent)[0];
+      const target = rows.filter((row) => row.percent >= MEMORY_BALANCER_HIGH_WATERMARK).sort((a, b) => b.percent - a.percent)[0];
       if (!target) {
         state.lastMessage = "Memory Balancer is monitoring running maps";
         state.lastAction = "";
@@ -69,18 +69,18 @@ export function createMemoryBalancer(config) {
         return;
       }
 
-      const donor = selectSwapMemoryDonor(rows, target);
+      const donor = selectMemoryBalancerDonor(rows, target);
 
       if (!donor) {
-        state.lastMessage = `${target.map} is above ${SWAP_MEMORY_HIGH_WATERMARK}% memory, but no running map has enough spare memory to donate safely`;
+        state.lastMessage = `${target.map} is above ${MEMORY_BALANCER_HIGH_WATERMARK}% memory, but no running map has enough spare memory to donate safely`;
         state.lastAction = "";
         state.lastError = "";
         state.updatedAt = new Date().toISOString();
         return;
       }
 
-      const donorLimit = donor.limitBytes - SWAP_MEMORY_CHUNK_BYTES;
-      const targetLimit = target.limitBytes + SWAP_MEMORY_CHUNK_BYTES;
+      const donorLimit = donor.limitBytes - MEMORY_BALANCER_CHUNK_BYTES;
+      const targetLimit = target.limitBytes + MEMORY_BALANCER_CHUNK_BYTES;
       await dockerUpdateMemoryLimit(config, target.container, targetLimit);
       await dockerUpdateMemoryLimit(config, donor.container, donorLimit);
       state.lastMessage = `Moved 1 GB from ${donor.map} to ${target.map}`;
@@ -128,7 +128,7 @@ export function createMemoryBalancer(config) {
   }
 
   return {
-    intervalMs: SWAP_MEMORY_INTERVAL_MS,
+    intervalMs: MEMORY_BALANCER_INTERVAL_MS,
     publicState,
     readLiveRows,
     setEnabled,
@@ -179,31 +179,36 @@ function parseMemorySettingBytes(value) {
   return match ? parseDockerBytes(`${match[1]}${match[2]}`) : 0;
 }
 
-function selectSwapMemoryDonor(rows, target) {
+function selectMemoryBalancerDonor(rows, target) {
   const candidates = rows
     .filter((row) => row.container !== target.container)
-    .filter((row) => row.limitBytes - SWAP_MEMORY_CHUNK_BYTES >= minimumSwapLimit(row))
-    .filter((row) => percentAfterMemoryDonation(row) <= SWAP_MEMORY_DONOR_POST_TRANSFER_MAX_PERCENT);
+    .filter((row) => row.limitBytes - MEMORY_BALANCER_CHUNK_BYTES >= minimumBalancerLimit(row))
+    .filter((row) => percentAfterMemoryDonation(row) <= MEMORY_BALANCER_DONOR_POST_TRANSFER_MAX_PERCENT);
   const normal = candidates
-    .filter((row) => row.percent <= SWAP_MEMORY_DONOR_MAX_PERCENT)
+    .filter((row) => row.percent <= MEMORY_BALANCER_DONOR_MAX_PERCENT)
     .sort((a, b) => a.percent - b.percent || b.limitBytes - a.limitBytes)[0];
   if (normal) return normal;
   return candidates
-    .filter((row) => row.percent <= SWAP_MEMORY_EMERGENCY_DONOR_MAX_PERCENT)
+    .filter((row) => row.percent <= MEMORY_BALANCER_EMERGENCY_DONOR_MAX_PERCENT)
     .sort((a, b) => a.percent - b.percent || b.limitBytes - a.limitBytes)[0] || null;
 }
 
 function percentAfterMemoryDonation(row) {
-  const nextLimit = row.limitBytes - SWAP_MEMORY_CHUNK_BYTES;
+  const nextLimit = row.limitBytes - MEMORY_BALANCER_CHUNK_BYTES;
   return nextLimit > 0 ? (row.usedBytes / nextLimit) * 100 : 100;
 }
 
-function minimumSwapLimit(row) {
-  return Math.max(row.usedBytes + SWAP_MEMORY_MIN_HEADROOM_BYTES, Math.ceil(row.usedBytes * 1.25), SWAP_MEMORY_CHUNK_BYTES);
+function minimumBalancerLimit(row) {
+  return Math.max(row.usedBytes + MEMORY_BALANCER_MIN_HEADROOM_BYTES, Math.ceil(row.usedBytes * 1.25), MEMORY_BALANCER_CHUNK_BYTES);
 }
 
 async function dockerUpdateMemoryLimit(config, container, limitBytes) {
-  await runProcessText(config, "docker", ["update", "--memory", dockerMemoryArg(limitBytes), "--memory-reservation", dockerMemoryArg(limitBytes), container], 15000);
+  await runProcessText(config, "docker", dockerMemoryUpdateArgs(container, limitBytes), 15000);
+}
+
+export function dockerMemoryUpdateArgs(container, limitBytes) {
+  const memory = dockerMemoryArg(limitBytes);
+  return ["update", "--memory", memory, "--memory-swap", memory, "--memory-reservation", memory, container];
 }
 
 function dockerMemoryArg(bytes) {
@@ -221,7 +226,7 @@ export function parseDockerStatsRow(line) {
       map: mapFromContainerName(name),
       usedBytes: memory.usedBytes,
       limitBytes: memory.limitBytes,
-      percent: Number.parseFloat(String(row.MemPerc || "").replace("%", "")) || memory.percent || 0,
+      percent: Number.parseFloat(String(row.MemPerc || "").replace(/%/g, "")) || memory.percent || 0,
       raw: String(row.MemUsage || "")
     };
   } catch {
@@ -241,10 +246,10 @@ function parseMemoryUsage(value) {
 }
 
 export function parseDockerBytes(value) {
-  const match = String(value || "").match(/^([\d.]+)\s*([KMGTPE]?i?B)?$/i);
+  const match = String(value || "").match(/^[\d.]+\s*([KMGTPE]?i?B)?$/i);
   if (!match) return 0;
-  const amount = Number.parseFloat(match[1]) || 0;
-  const unit = String(match[2] || "B").toLowerCase();
+  const amount = Number.parseFloat(String(value).replace(/[^\d.]/g, "")) || 0;
+  const unit = String(match[1] || "B").toLowerCase();
   const multipliers = { b: 1, kb: 1000, kib: 1024, mb: 1000 ** 2, mib: 1024 ** 2, gb: 1000 ** 3, gib: 1024 ** 3, tb: 1000 ** 4, tib: 1024 ** 4 };
   return Math.round(amount * (multipliers[unit] || 1));
 }
@@ -258,21 +263,27 @@ function mapFromContainerName(name) {
 
 function runProcessText(config, command, args, timeoutMs = 10000) {
   return new Promise((resolveText, rejectText) => {
-    const child = spawn(command, args, { cwd: config.repoRoot, shell: false });
+    const child = spawn(command, args, {
+      cwd: config.repoRoot,
+      env: process.env,
+      shell: false
+    });
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectText(new Error(`${command} timed out`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      rejectText(error);
     });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", rejectText);
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       if (code === 0) resolveText(stdout);
-      else rejectText(new Error(stderr.trim() || `${command} ${args.join(" ")} failed with exit ${code}`));
+      else rejectText(new Error(stderr || stdout || `${command} exited ${code}`));
     });
   });
 }

@@ -8,6 +8,12 @@ Dune Docker Console is a Docker-based self-hosting package for Dune: Awakening w
 
 This project is unofficial. It is not affiliated with, endorsed by, sponsored by, or supported by Funcom.
 
+## Community & Support
+
+Need help, want to follow updates, or want to discuss features, addons, and self-hosting?
+
+Join our fast growing Discord: [Dune: Awakening Docker](https://discord.gg/9pQqytu6BU)
+
 ## Features
 
 - Browser setup wizard for fresh self-hosted servers
@@ -134,6 +140,18 @@ dune doctor
 ```
 
 The doctor command checks containers, ports, Steam server files, database state, RabbitMQ, hosting mode, and WSL-specific conditions.
+
+## Docker Socket Access
+
+The Web UI uses the local Docker socket so it can start, stop, update, and inspect the server containers. This is powerful host-level access, so only expose the Web UI to trusted admins.
+
+If setup says the Docker socket is permission denied, run this from the repo root:
+
+```bash
+DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)" dune console restart
+```
+
+On a normal Linux install this is usually detected automatically. The command above is mainly for custom Docker setups where the socket group differs from the default container groups.
 
 ## Community Addons
 

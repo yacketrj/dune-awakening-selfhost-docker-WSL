@@ -330,13 +330,13 @@ export function App() {
   if (!auth) {
     return (
       <main className="login-screen">
-        <section className="login-panel">
+        <form className="login-panel" onSubmit={(event) => { event.preventDefault(); void safe(login); }}>
           <h1>Dune Docker Console</h1>
           <p>Spice Clearance Required</p>
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Admin Password" />
-          <button onClick={() => safe(login)}>Sign In</button>
+          <button type="submit">Sign In</button>
           {error && <p className="error">{error}</p>}
-        </section>
+        </form>
       </main>
     );
   }
@@ -503,7 +503,11 @@ async function waitForTask(task: Task, setTask: (task: Task) => void) {
   setTask(current);
   for (let i = 0; i < 180 && !["succeeded", "failed", "cancelled"].includes(current.status); i += 1) {
     await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
-    current = (await setupApi.task(current.id)).task;
+    try {
+      current = (await setupApi.task(current.id)).task;
+    } catch (error) {
+      throw normalizeTaskPollError(error);
+    }
     setTask(current);
   }
   return current;
@@ -513,7 +517,11 @@ async function waitForTaskSilently(task: Task) {
   let current = task;
   for (let i = 0; i < 180 && !["succeeded", "failed", "cancelled"].includes(current.status); i += 1) {
     await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
-    current = (await setupApi.task(current.id)).task;
+    try {
+      current = (await setupApi.task(current.id)).task;
+    } catch (error) {
+      throw normalizeTaskPollError(error);
+    }
   }
   return current;
 }
@@ -523,10 +531,22 @@ async function waitForTaskWithUpdates(task: Task, onUpdate: (task: Task) => void
   onUpdate(current);
   for (let i = 0; i < 3600 && !isTerminalTask(current.status); i += 1) {
     await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 1000));
-    current = (await setupApi.task(current.id)).task;
+    try {
+      current = (await setupApi.task(current.id)).task;
+    } catch (error) {
+      throw normalizeTaskPollError(error);
+    }
     onUpdate(current);
   }
   return current;
+}
+
+function normalizeTaskPollError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/session expired|console restarted|failed to fetch|networkerror|load failed/i.test(message)) {
+    return new Error("The console connection was interrupted while the operation was running. Refresh the page and check the latest status before trying again.");
+  }
+  return error instanceof Error ? error : new Error(message);
 }
 
 

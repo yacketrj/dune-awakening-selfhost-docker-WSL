@@ -29,6 +29,22 @@ require_docker_prereqs() {
   fi
 }
 
+run_timed_step() {
+  local label="$1"
+  shift
+  local start
+  local end
+  local elapsed
+
+  start="$(date +%s)"
+  echo
+  echo "=== $label ==="
+  "$@"
+  end="$(date +%s)"
+  elapsed=$((end - start))
+  echo "Finished: $label (${elapsed}s)"
+}
+
 prompt_default() {
   local prompt="$1"
   local default="$2"
@@ -265,7 +281,7 @@ if [ "${DUNE_INIT_ASSUME_YES:-0}" = "1" ]; then
     exit 1
   fi
 
-  if [ -f runtime/generated/battlegroup.env ]; then
+  if [ -r runtime/generated/battlegroup.env ]; then
     set -a
     # shellcheck disable=SC1091
     . runtime/generated/battlegroup.env
@@ -416,7 +432,7 @@ EOF
 printf '%s' "$FUNCOM_TOKEN" > runtime/secrets/funcom-token.txt
 
 chmod 644 .env
-chmod 600 runtime/generated/battlegroup.env
+chmod 664 runtime/generated/battlegroup.env
 chmod 600 runtime/secrets/funcom-token.txt
 
 export SERVER_IP SERVER_IP_MODE SERVER_TITLE SERVER_REGION STEAM_APP_ID BATTLEGROUP_ID
@@ -434,13 +450,9 @@ echo
 echo "Starting orchestrator container..."
 docker compose up -d --build orchestrator
 
-echo
-echo "Downloading/loading assets and running database setup/update..."
-runtime/scripts/update.sh install
+run_timed_step "Downloading/loading assets and running database setup/update" runtime/scripts/update.sh install
 
-echo
-echo "Starting Dune stack..."
-runtime/scripts/start-all.sh
+DUNE_START_SKIP_POSTGRES_START=1 DUNE_START_SKIP_DB_UPDATE=1 run_timed_step "Starting Dune stack" runtime/scripts/start-all.sh
 
 echo
 echo "Init complete."

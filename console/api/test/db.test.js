@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertIdentifier, discoverDbConfig, isReadOnlySql, quoteQualified, redactDbError } from "../src/db.js";
+import { assertIdentifier, discoverDbConfig, isReadOnlySql, quoteQualified, redactDbError, rowsResult } from "../src/db.js";
 import { addCurrency, addFactionReputation, addIntel, addonLeadershipPlayers, completeJourneyNode, completeTutorial, deleteInventoryItem, giveItemToPlayer, giveItemToStorage, listPlayers, listTables, liveMapPlayers, liveMapServices, playerCraftingRecipes, playerJourney, playerResearchItems, resetJourneyNode, resetTutorial, runSql, tablePreview, unlockCraftingRecipe, unlockResearchItem, updateTableRow, UnsupportedCapabilityError } from "../src/duneDb.js";
 
 test("discovers RedBlink Postgres defaults and env overrides", () => {
@@ -28,6 +28,39 @@ test("detects destructive SQL and redacts connection strings", () => {
   assert.equal(isReadOnlySql("with x as (select 1) select * from x"), true);
   assert.equal(isReadOnlySql("delete from dune.items"), false);
   assert.doesNotMatch(redactDbError("postgres://dune:secret@127.0.0.1:15432/dune password=secret"), /secret/);
+});
+
+test("formats single database query results", () => {
+  assert.deepEqual(rowsResult({
+    fields: [{ name: "status", dataTypeID: 25 }],
+    rows: [{ status: "ok" }],
+    rowCount: 1,
+    command: "SELECT"
+  }), {
+    columns: [{ name: "status", dataTypeId: 25 }],
+    rows: [{ status: "ok" }],
+    rowCount: 1,
+    command: "SELECT"
+  });
+});
+
+test("formats multi-statement database query results using the final row result", () => {
+  assert.deepEqual(rowsResult([
+    { fields: [], rows: [], rowCount: null, command: "BEGIN" },
+    { fields: [], rows: [], rowCount: null, command: "DO" },
+    {
+      fields: [{ name: "status", dataTypeID: 25 }],
+      rows: [{ status: "seeded" }],
+      rowCount: 1,
+      command: "SELECT"
+    },
+    { fields: [], rows: [], rowCount: null, command: "COMMIT" }
+  ]), {
+    columns: [{ name: "status", dataTypeId: 25 }],
+    rows: [{ status: "seeded" }],
+    rowCount: 1,
+    command: "SELECT"
+  });
 });
 
 test("builds table preview query with quoted identifiers and parameters", async () => {
@@ -161,6 +194,30 @@ test("database faction writes sync reputation component", async () => {
   assert.ok(calls.some((call) => String(call.text).includes("FactionPlayerComponent")));
 });
 
+test("database player faction writes pledge guild admin allegiance", async () => {
+  const calls = [];
+  let factionSnapshot = 0;
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("to_regclass")) return { rows: [{ exists: true }] };
+      if (text.includes("to_regprocedure")) return { rows: [{ exists: true }] };
+      if (text.includes("from dune.player_faction") && text.includes("order by actor_id")) {
+        factionSnapshot += 1;
+        return { rows: [{ actor_id: "4", faction_id: factionSnapshot === 1 ? "3" : "1", utc_time_faction_change: "2026-06-19 15:00:00" }] };
+      }
+      if (text.includes("from dune.guild_members gm") && text.includes("join dune.guilds")) {
+        return { rows: [{ guild_id: "1", guild_faction: 3 }] };
+      }
+      return { fields: [], rows: [], rowCount: 1, command: "UPDATE" };
+    }
+  };
+  const result = await runSql(db, "update dune.player_faction set faction_id = 1 where actor_id = 4", true);
+  assert.equal(result.rowCount, 1);
+  assert.ok(calls.some((call) => String(call.text).includes("dune.change_player_faction") && call.values[0] === "4" && call.values[1] === 1));
+  assert.ok(calls.some((call) => String(call.text).includes("dune.pledge_guild_allegiance") && call.values[0] === "1" && call.values[1] === "4"));
+});
+
 test("database writes replay known tutorial journey tag and item functions", async () => {
   const calls = [];
   let tutorialSnapshot = 0;
@@ -243,9 +300,14 @@ test("addon leadership players include level and faction summaries", async () =>
     query: async (text, values = []) => {
       if (text.includes("to_regclass")) {
         const name = String(values[0] || "");
-        return { rows: [{ exists: ["dune.actors", "dune.player_state", "dune.specialization_tracks", "dune.player_faction", "dune.factions"].includes(name) }] };
+        return { rows: [{ exists: ["dune.actors", "dune.player_state", "dune.specialization_tracks", "dune.player_faction", "dune.factions", "dune.guild_members", "dune.guilds"].includes(name) }] };
       }
-      if (text.includes("information_schema.columns")) return { rows: [] };
+      if (text.includes("information_schema.columns")) {
+        const table = String(values[1] || "");
+        if (table === "guild_members") return { rows: ["player_id", "guild_id", "role_id"].map((column_name) => ({ column_name })) };
+        if (table === "guilds") return { rows: ["guild_id", "guild_name", "guild_description"].map((column_name) => ({ column_name })) };
+        return { rows: [] };
+      }
       if (text.includes("from dune.actors a")) {
         return { rows: [
           { actor_id: 101, player_pawn_id: 101, account_id: 201, character_name: "Test One", player_controller_id: 301, map: "Survival_1", online_status: "Online", last_seen: "" },
@@ -264,6 +326,12 @@ test("addon leadership players include level and faction summaries", async () =>
           { actor_id: "302", faction_id: "2", faction_name: "Harkonnen" }
         ] };
       }
+      if (text.includes("from dune.guild_members gm")) {
+        return { rows: [
+          { player_id: "301", guild_name: "Water Sellers" },
+          { player_id: "302", guild_name: "Spice Guild" }
+        ] };
+      }
       return { rows: [] };
     }
   };
@@ -273,7 +341,7 @@ test("addon leadership players include level and faction summaries", async () =>
     ["Test One", 18, "Atreides"],
     ["Test Two", 7, "Harkonnen"]
   ]);
-  assert.equal(result.rows[0].guild, "Unavailable");
+  assert.deepEqual(result.rows.map((row) => row.guild), ["Water Sellers", "Spice Guild"]);
 });
 
 test("addon leadership players derive character level from level component XP", async () => {
@@ -457,21 +525,22 @@ test("intel mutation clamps grants to the spendable cap", async () => {
   assert.ok(calls.some((call) => call.text.includes("TechKnowledgePlayerComponent") && call.text.includes("jsonb_set") && call.values[1] === 2779));
 });
 
-test("crafting recipe listing uses verified BaseRecipeId names and player unlock status", async () => {
+test("crafting recipe listing uses catalog schematics and player unlock status", async () => {
   const calls = [];
   const db = fakeMutationDb(calls, {
     craftingListRows: [
-      { recipe_id: "T2_Material_Silicone_Recipe", source: "SchematicPickup", quality_level: 0, unlocked: true },
-      { recipe_id: "BuggyEngine_4_Recipe", source: "SchematicPickup", quality_level: 0, unlocked: false }
+      { recipe_id: "HealthPackRecipe" }
     ]
   });
   const result = await playerCraftingRecipes(db, 123);
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.rows[0].recipeId, "T2_Material_Silicone_Recipe");
-  assert.equal(result.rows[0].displayName, "T2 Material Silicone");
-  assert.equal(result.rows[0].unlocked, true);
-  assert.equal(result.rows[1].category, "Vehicles");
-  assert.ok(calls.some((call) => call.text.includes("CraftingRecipesLibraryActorComponent") && call.text.includes("all_recipes")));
+  assert.ok(result.rows.length > 500);
+  const healthPack = result.rows.find((row) => row.recipeId === "HealthPackRecipe");
+  const buggyBoost = result.rows.find((row) => row.recipeId === "UniqueBuggyBoostRecipe");
+  assert.equal(healthPack.displayName, "Healkit");
+  assert.equal(healthPack.unlocked, true);
+  assert.equal(buggyBoost.category, "Vehicles");
+  assert.equal(buggyBoost.unlocked, false);
+  assert.ok(calls.some((call) => call.text.includes("CraftingRecipesLibraryActorComponent") && call.text.includes("player_recipes")));
 });
 
 test("crafting recipe unlock appends exact recipe object without dropping existing recipes", async () => {
@@ -697,7 +766,7 @@ function fakeMutationDb(calls, fixtures = {}) {
       if (text.includes("TechKnowledgePlayerComponent") && text.includes("select exists")) return { rows: [{ exists: Boolean(fixtures.researchExists) }] };
       if (text.includes("TechKnowledgePlayerComponent") && text.includes("m_TechKnowledgeData") && text.includes("for update")) return { rows: fixtures.currentResearchItems === null ? [] : [{ items: fixtures.currentResearchItems || [] }] };
       if (text.includes("TechKnowledgePlayerComponent,m_TechKnowledge,m_TechKnowledgeData") && text.includes("update dune.actors")) return { rows: [{ ok: true }] };
-      if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("all_recipes")) return { rows: fixtures.craftingListRows || [] };
+      if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("player_recipes")) return { rows: fixtures.craftingListRows || [] };
       if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("select exists")) return { rows: [{ exists: Boolean(fixtures.recipeExists) }] };
       if (text.includes("CraftingRecipesLibraryActorComponent") && text.includes("for update")) return { rows: fixtures.currentCraftingRecipes === null ? [] : [{ recipes: fixtures.currentCraftingRecipes || [] }] };
       if (text.includes("CraftingRecipesLibraryActorComponent,m_KnownItemRecipes") && text.includes("update dune.actors")) return { rows: [{ ok: true }] };

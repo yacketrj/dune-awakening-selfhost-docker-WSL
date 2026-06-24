@@ -105,6 +105,43 @@ export function buildCarePackageWhisperPayload({ recipientFuncomId, recipientCha
   };
 }
 
+export function buildMapChatPayload({ senderFuncomId, message, now = new Date(), messageId } = {}) {
+  const senderId = validateWhisperIdentity(senderFuncomId, "sender Funcom ID");
+  const text = validateBroadcastMessage(message);
+  const id = validateMessageId(messageId || randomUUID());
+  const timestamp = formatMapChatTimestamp(now);
+  const inner = {
+    m_Id: id,
+    m_ChannelType: "Map",
+    m_bUseSpoofedUserName: false,
+    m_SpoofedUserNameFrom: {
+      m_TableId: "",
+      m_Key: "",
+      m_UnlocalizedName: ""
+    },
+    m_FuncomIdFrom: senderId,
+    m_UserNameTo: "",
+    m_Message: {
+      m_UnlocalizedMessage: text,
+      m_LocalizedMessage: {
+        m_TableId: "",
+        m_Key: "",
+        m_FormatArgs: []
+      }
+    },
+    m_Timestamp: timestamp,
+    m_OriginLocation: { X: 0, Y: 0, Z: 0 },
+    m_HasSeenMessage: false
+  };
+  return {
+    inner,
+    outer: {
+      content: JSON.stringify(inner),
+      Type: "TextChat"
+    }
+  };
+}
+
 export async function publishCarePackageWhisper(config, fields) {
   const senderHexFlsId = validateHexFlsId(fields?.senderHexFlsId);
   const amqpUserId = validateHexFlsId(fields?.amqpUserId || senderHexFlsId);
@@ -130,6 +167,38 @@ export async function publishCarePackageWhisper(config, fields) {
       routingKey,
       type: "text_chat",
       userId: amqpUserId,
+      senderHexFlsId,
+      appId: "fls_backend"
+    }
+  };
+}
+
+export async function publishMapChat(config, fields) {
+  const senderHexFlsId = validateHexFlsId(fields?.senderHexFlsId);
+  const mapName = validateMapChatMap(fields?.mapName || fields?.region || "HaggaBasin");
+  const dimension = validateInteger(fields?.dimension ?? 0, 0, 9999, "dimension");
+  const directQueue = fields?.recipientQueue ? validateQueueName(fields.recipientQueue, "recipient queue") : "";
+  const routingKey = directQueue || `${mapName}.${dimension}`;
+  const exchange = directQueue ? "" : "chat.map";
+  const exchangeLabel = directQueue ? "default" : "chat.map";
+  const payload = buildMapChatPayload(fields);
+  const outerB64 = Buffer.from(JSON.stringify(payload.outer), "utf8").toString("base64");
+  const routingB64 = Buffer.from(routingKey, "utf8").toString("base64");
+  const senderB64 = Buffer.from(senderHexFlsId, "utf8").toString("base64");
+  const exchangeB64 = Buffer.from(exchange, "utf8").toString("base64");
+  const exchangeLabelB64 = Buffer.from(exchangeLabel, "utf8").toString("base64");
+  const evalCode = `Outer = base64:decode(<<"${outerB64}">>), Routing = base64:decode(<<"${routingB64}">>), Sender = base64:decode(<<"${senderB64}">>), Exchange = base64:decode(<<"${exchangeB64}">>), ExchangeLabel = base64:decode(<<"${exchangeLabelB64}">>), XName = rabbit_misc:r(<<"/">>, exchange, Exchange), X = rabbit_exchange:lookup_or_die(XName), MsgId = list_to_binary("web-map-chat-" ++ integer_to_list(erlang:system_time(millisecond))), P = {list_to_atom("P_basic"), <<"Content">>, undefined, [], undefined, undefined, undefined, undefined, undefined, MsgId, undefined, <<"text_chat">>, Sender, <<"fls_backend">>, undefined}, Content = rabbit_basic:build_content(P, Outer), {ok, Msg} = rabbit_basic:message(XName, Routing, Content), Result = rabbit_queue_type:publish_at_most_once(X, Msg), io:format("publish=~p exchange=~s routing=~s type=text_chat user_id=~s app_id=fls_backend~n", [Result, ExchangeLabel, Routing, Sender]).`;
+  const output = await dockerExec(["exec", RMQ_CONTAINER, "rabbitmqctl", "eval", evalCode], config.commandTimeoutMs);
+  if (!/publish=ok/.test(output.stdout)) throw new Error("RabbitMQ map chat publish did not report publish=ok");
+  return {
+    ...output,
+    stdout: `${output.stdout}outer=${JSON.stringify(payload.outer)}\ninner=${payload.outer.content}\n`,
+    payload,
+    amqp: {
+      exchange: exchangeLabel,
+      routingKey,
+      type: "text_chat",
+      userId: senderHexFlsId,
       senderHexFlsId,
       appId: "fls_backend"
     }
@@ -236,8 +305,21 @@ function validateQueueName(value, label) {
   throw new Error(`Care Package message whisper cannot be sent: ${label} is unavailable or invalid`);
 }
 
+function validateMapChatMap(value) {
+  const raw = String(value || "").trim();
+  if (/^[A-Za-z0-9_]{1,80}$/.test(raw)) return raw;
+  throw new Error("Map chat region must be a map key like HaggaBasin, Overmap, or DeepDesert");
+}
+
 function validateMessageId(value) {
   const raw = String(value || "").trim();
   if (/^[A-Za-z0-9_.:-]{1,120}$/.test(raw)) return raw;
   throw new Error("Invalid whisper message id");
+}
+
+function formatMapChatTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid map chat timestamp");
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}.${pad(date.getUTCMonth() + 1)}.${pad(date.getUTCDate())}-${pad(date.getUTCHours())}.${pad(date.getUTCMinutes())}.${pad(date.getUTCSeconds())}`;
 }
