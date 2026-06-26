@@ -15,6 +15,43 @@ FAILURE_MARKER_REGEX='Traceback \(most recent call last\)|ERROR|CRITICAL|FATAL'
 QUIESCENT_SUCCESS_AFTER_SECONDS="${DUNE_DB_UPDATE_QUIESCENT_SUCCESS_AFTER_SECONDS:-20}"
 ORPHAN_AUDIT_DIR="runtime/generated/db-orphan-audits"
 ORPHAN_BACKUP_ON_DETECT="${DUNE_DB_BACKUP_ON_ORPHAN_DETECT:-1}"
+DB_UPDATE_LOG_DIR="${DUNE_DB_UPDATE_LOG_DIR:-runtime/generated/db-update-logs}"
+
+read_db_update_log() {
+  local tmp
+  tmp="$(mktemp)"
+
+  if docker exec "$CONTAINER_NAME" sh -lc 'cat /tmp/dune-db-update.log 2>/dev/null || true' > "$tmp" 2>/dev/null; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+
+  if docker cp "$CONTAINER_NAME:/tmp/dune-db-update.log" "$tmp" >/dev/null 2>&1; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+
+  rm -f "$tmp"
+  return 0
+}
+
+preserve_db_update_log() {
+  local reason="${1:-unknown}"
+  local ts log_file
+  mkdir -p "$DB_UPDATE_LOG_DIR"
+  ts="$(date +%Y%m%d-%H%M%S)"
+  log_file="$DB_UPDATE_LOG_DIR/db-update-${ts}-${reason}.log"
+
+  read_db_update_log > "$log_file" || true
+  if [ -s "$log_file" ]; then
+    echo "Database updater log preserved: $log_file"
+  else
+    rm -f "$log_file"
+    echo "Database updater log was not available from $CONTAINER_NAME."
+  fi
+}
 
 audit_db_orphans() {
   local summary detailed ts report_file total
@@ -117,10 +154,11 @@ while true; do
   elapsed="$((now_ts - start_ts))"
   running="$(docker inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false)"
   exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$CONTAINER_NAME" 2>/dev/null || echo 1)"
-  last_logs="$(docker exec "$CONTAINER_NAME" sh -lc 'cat /tmp/dune-db-update.log 2>/dev/null || true' 2>/dev/null || true)"
+  last_logs="$(read_db_update_log)"
 
   if printf '%s\n' "$last_logs" | grep -Eq "$FAILURE_MARKER_REGEX"; then
     echo "$last_logs"
+    preserve_db_update_log "failure"
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     echo "Database update failed."
     exit 1
@@ -128,10 +166,12 @@ while true; do
 
   if [ "$running" != "true" ]; then
     echo "$last_logs"
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     if [ "$exit_code" = "0" ]; then
+      docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
       exit 0
     fi
+    preserve_db_update_log "exit-${exit_code}"
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     echo "Database update exited with status $exit_code."
     exit 1
   fi
@@ -154,6 +194,7 @@ while true; do
 
   if [ "$elapsed" -ge "$TIMEOUT_SECONDS" ]; then
     echo "$last_logs"
+    preserve_db_update_log "timeout"
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     echo "Database update timed out after ${TIMEOUT_SECONDS}s."
     exit 1
