@@ -228,17 +228,41 @@ next_available_port() {
 
 existing_web_port() {
   if [ -f .env ]; then
-    awk -F= '/^ADMIN_BIND_PORT=/ {print $2; exit}' .env | sed 's/[[:space:]"'\'']//g'
+    awk -F= '/^ADMIN_BIND_PORT=/ {print $2; exit}' .env | sed 's/[[:space:]"'\''']//g'
   fi
 }
 
+persist_env_var() {
+  local key="$1"
+  local value="$2"
+  local env_file="${3:-.env}"
+  local tmp_file
+
+  touch "$env_file"
+  tmp_file="$(mktemp "${env_file}.XXXXXX")"
+
+  awk -v key="$key" -v value="$value" '
+    BEGIN { found = 0 }
+    $0 ~ "^" key "=" {
+      if (!found) {
+        print key "=" value
+        found = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!found) {
+        print key "=" value
+      }
+    }
+  ' "$env_file" > "$tmp_file"
+
+  mv "$tmp_file" "$env_file"
+}
+
 persist_web_port() {
-  local env_file=".env"
-  if [ -f "$env_file" ] && grep -q '^ADMIN_BIND_PORT=' "$env_file"; then
-    sed -i "s/^ADMIN_BIND_PORT=.*/ADMIN_BIND_PORT=$WEB_PORT/" "$env_file"
-  else
-    printf '\nADMIN_BIND_PORT=%s\n' "$WEB_PORT" >> "$env_file"
-  fi
+  persist_env_var "ADMIN_BIND_PORT" "$WEB_PORT" ".env"
 }
 
 prepare_docker_socket_gid() {
@@ -246,6 +270,14 @@ prepare_docker_socket_gid() {
     DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
   fi
   export DOCKER_SOCKET_GID="${DOCKER_SOCKET_GID:-0}"
+}
+
+persist_compose_environment() {
+  persist_env_var "ADMIN_BIND_PORT" "$ADMIN_BIND_PORT" ".env"
+  persist_env_var "DUNE_HOST_REPO_ROOT" "$DUNE_HOST_REPO_ROOT" ".env"
+  persist_env_var "DUNE_HOST_UID" "$DUNE_HOST_UID" ".env"
+  persist_env_var "DUNE_HOST_GID" "$DUNE_HOST_GID" ".env"
+  persist_env_var "DOCKER_SOCKET_GID" "$DOCKER_SOCKET_GID" ".env"
 }
 
 choose_web_port() {
@@ -319,6 +351,7 @@ start_console() {
   export DUNE_HOST_GID="${DUNE_HOST_GID:-$(id -g)}"
   export COMPOSE_PROJECT_NAME="${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}"
   prepare_docker_socket_gid
+  persist_compose_environment
   if [ "${DOCKER[0]}" = "sudo" ]; then
     need_sudo env \
       "ADMIN_BIND_PORT=$ADMIN_BIND_PORT" \
