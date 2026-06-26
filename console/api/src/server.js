@@ -739,8 +739,7 @@ async function databaseQuery(req, res) {
   if (!config.mockMode && safety.destructive) {
     await runDune(config, buildDuneArgs("backupCreate"), { env: { DB_BACKUP_ORIGIN: "destructive-sql" } });
   }
-  safety.destructive) {
-    await runDune(config, buildDuneArgs("backupCreate"), { env: { DB_BACKUP_ORIGIN: " audit(config, req, "database.query", { readOnly: safety.readOnly, destructive: safety.destructive, confirmed: safety.allowDestructive });
+  audit(config, req, "database.query", { readOnly: safety.readOnly, destructive: safety.destructive, confirmed: safety.allowDestructive });
   return dbJson(res, () => duneDb.runSql(db, query, safety.allowDestructive));
 }
 
