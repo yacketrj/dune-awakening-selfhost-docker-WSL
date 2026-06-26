@@ -35,7 +35,8 @@ RUN chmod +x /usr/local/bin/dune
 
 # The orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
 # nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
-USER root #trivy:ignore:AVD-DS-0002
+#trivy:ignore:AVD-DS-0002
+USER root
 # nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
 ENTRYPOINT ["/usr/local/bin/dune"]
 # nosemgrep: dockerfile.security.missing-user.missing-user - Orchestrator starts as root to chown mounted volumes, then uses runuser for SteamCMD.
