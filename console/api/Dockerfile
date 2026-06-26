@@ -24,6 +24,7 @@ RUN apt-get update \
         unzip \
         procps \
         netcat-openbsd \
+        python3-minimal \
     && rm -rf /var/lib/apt/lists/* \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
