@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 
+runtime_secret_repair_hint() {
+  local secret_dir="${1:-runtime/secrets}"
+
+  cat >&2 <<EOF
+Repair ownership or permissions before starting the Dune stack.
+Run from the repository root:
+  sudo install -d -o \$(id -u) -g \$(id -g) -m 700 $secret_dir
+  sudo chown -R \$(id -u):\$(id -g) $secret_dir
+  sudo chmod 700 $secret_dir
+  sudo find $secret_dir -type f -exec chmod 600 {} \\;
+EOF
+}
+
 ensure_runtime_secrets_dir() {
   local secret_dir="$1"
 
@@ -12,6 +25,7 @@ ensure_runtime_secrets_dir() {
     umask 077
     if ! mkdir -p "$secret_dir"; then
       echo "Could not create runtime secret directory: $secret_dir" >&2
+      runtime_secret_repair_hint "$secret_dir"
       return 1
     fi
     chmod 700 "$secret_dir" 2>/dev/null || true
@@ -19,7 +33,7 @@ ensure_runtime_secrets_dir() {
 
   if [ ! -w "$secret_dir" ]; then
     echo "Runtime secret directory is not writable: $secret_dir" >&2
-    echo "Repair ownership or permissions before starting the Dune stack." >&2
+    runtime_secret_repair_hint "$secret_dir"
     return 1
   fi
 }
@@ -36,6 +50,7 @@ ensure_runtime_secret_file() {
   if [ -s "$secret_file" ]; then
     if [ ! -r "$secret_file" ]; then
       echo "Runtime secret file is not readable: $secret_file" >&2
+      runtime_secret_repair_hint "$(dirname "$secret_file")"
       return 1
     fi
     return 0
@@ -49,7 +64,7 @@ ensure_runtime_secret_file() {
 
   if [ -e "$secret_file" ] && [ ! -w "$secret_file" ]; then
     echo "Runtime secret file exists but is not writable: $secret_file" >&2
-    echo "Repair ownership or permissions before starting the Dune stack." >&2
+    runtime_secret_repair_hint "$secret_dir"
     return 1
   fi
 
@@ -77,12 +92,14 @@ ensure_runtime_secret_file() {
   if [ -e "$secret_file" ] && [ ! -w "$secret_file" ]; then
     rm -f "$tmp_file"
     echo "Runtime secret file exists but is not writable: $secret_file" >&2
+    runtime_secret_repair_hint "$secret_dir"
     return 1
   fi
 
   if ! mv -f "$tmp_file" "$secret_file"; then
     rm -f "$tmp_file"
     echo "Could not write runtime secret: $secret_file" >&2
+    runtime_secret_repair_hint "$secret_dir"
     return 1
   fi
 
@@ -94,6 +111,7 @@ read_runtime_secret_file() {
 
   if [ ! -r "$secret_file" ] || [ ! -s "$secret_file" ]; then
     echo "Runtime secret file is missing, empty, or not readable: $secret_file" >&2
+    runtime_secret_repair_hint "$(dirname "$secret_file")"
     return 1
   fi
 
