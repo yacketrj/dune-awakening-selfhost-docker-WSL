@@ -14,6 +14,13 @@ SERVER_IP="$(resolve_server_ip)"
 export SERVER_REGION SERVER_IP
 catalog_extract_timeout_seconds="${DUNE_CATALOG_EXTRACT_TIMEOUT_SECONDS:-120}"
 
+orchestrator_container="${DUNE_ORCHESTRATOR_CONTAINER:-dune-orchestrator}"
+
+if ! docker inspect -f '{{.State.Running}}' "$orchestrator_container" 2>/dev/null | grep -qx true; then
+  echo "Orchestrator container is not running: $orchestrator_container" >&2
+  exit 1
+fi
+
 echo "Extracting partition catalog from world-template.yaml..."
 
 timeout --kill-after=2s "${catalog_extract_timeout_seconds}s" docker compose exec -T orchestrator python3 - <<'PY'
@@ -68,7 +75,8 @@ for r in rows:
     )
 PY
 
-timeout --kill-after=2s "${catalog_extract_timeout_seconds}s" docker compose exec -T orchestrator cat /work/partition-catalog.json > runtime/generated/partition-catalog.json
+echo "Copying partition catalog from $orchestrator_container..."
+timeout --kill-after=2s "${catalog_extract_timeout_seconds}s" docker cp "$orchestrator_container:/work/partition-catalog.json" runtime/generated/partition-catalog.json
 
 echo
 echo "Wrote runtime/generated/partition-catalog.json"
