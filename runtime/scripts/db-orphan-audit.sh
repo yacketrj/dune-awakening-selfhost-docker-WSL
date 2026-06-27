@@ -3,6 +3,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+[ -f .env ] && . ./.env
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
+source runtime/scripts/db-passwords.sh
+
+if docker volume inspect dune-postgres-data >/dev/null 2>&1 &&
+  [ -z "${DUNE_DB_PASSWORD:-}" ] &&
+  [ -z "${POSTGRES_PASSWORD:-}" ] &&
+  [ ! -s runtime/secrets/dune-db-password.txt ] &&
+  [ ! -s runtime/secrets/postgres-password.txt ]; then
+  export DUNE_DB_SECRET_LEGACY_DEFAULTS=1
+fi
+
+postgres_password="$(resolve_postgres_password)"
+
 mode="${1:-summary}"
 out_file="${2:-}"
 
@@ -11,6 +25,19 @@ require_postgres() {
     echo "dune-postgres is not running." >&2
     exit 1
   fi
+}
+
+audit_tables_exist() {
+  local ready
+  ready="$(docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -U postgres -d dune -Atc "
+    select (
+      to_regclass('dune.accounts') is not null
+      and to_regclass('dune.encrypted_accounts') is not null
+      and to_regclass('dune.player_state') is not null
+      and to_regclass('dune.encrypted_player_state') is not null
+    )::text;
+  " 2>/dev/null | tr -d '[:space:]')"
+  [ "$ready" = "true" ] || [ "$ready" = "t" ]
 }
 
 summary_sql() {
@@ -114,12 +141,29 @@ SQL
 
 require_postgres
 
+if ! audit_tables_exist; then
+  case "$mode" in
+    summary|detail)
+      exit 0
+      ;;
+    export)
+      if [ -z "$out_file" ]; then
+        echo "Usage: db-orphan-audit.sh export <output.tsv>" >&2
+        exit 1
+      fi
+      mkdir -p "$(dirname "$out_file")"
+      printf 'orphan_type\taccount_id\tfls_id\tfuncom_id\tcharacter_name\n' >"$out_file"
+      exit 0
+      ;;
+  esac
+fi
+
 case "$mode" in
   summary)
-    docker exec dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(summary_sql)"
+    docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(summary_sql)"
     ;;
   detail)
-    docker exec dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(detail_sql)"
+    docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(detail_sql)"
     ;;
   export)
     if [ -z "$out_file" ]; then
@@ -129,7 +173,7 @@ case "$mode" in
     mkdir -p "$(dirname "$out_file")"
     {
       printf 'orphan_type\taccount_id\tfls_id\tfuncom_id\tcharacter_name\n'
-      docker exec dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(detail_sql)"
+      docker exec -e PGPASSWORD="$postgres_password" dune-postgres psql -U postgres -d dune -At -F $'\t' -c "$(detail_sql)"
     } >"$out_file"
     ;;
   *)
