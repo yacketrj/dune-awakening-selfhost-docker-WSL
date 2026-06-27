@@ -3,8 +3,47 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+[ -f .env ] && . ./.env
+[ -r runtime/generated/battlegroup.env ] && . runtime/generated/battlegroup.env
 [ -r runtime/generated/image-tags.env ] && . runtime/generated/image-tags.env
+source runtime/scripts/host-paths.sh
 source runtime/scripts/image-tags.sh
+source runtime/scripts/db-passwords.sh
+
+if docker volume inspect dune-postgres-data >/dev/null 2>&1 &&
+  [ -z "${DUNE_DB_PASSWORD:-}" ] &&
+  [ -z "${POSTGRES_PASSWORD:-}" ] &&
+  [ ! -s runtime/secrets/dune-db-password.txt ] &&
+  [ ! -s runtime/secrets/postgres-password.txt ]; then
+  export DUNE_DB_SECRET_LEGACY_DEFAULTS=1
+fi
+
+ensure_db_update_secret_file() {
+  local env_name="$1"
+  local secret_file="$2"
+  local resolver="$3"
+  local env_value="${!env_name:-}"
+
+  mkdir -p "$(dirname "$secret_file")"
+
+  if [ -n "$env_value" ]; then
+    umask 077
+    printf '%s' "$env_value" > "$secret_file"
+    chmod 600 "$secret_file" 2>/dev/null || true
+    return 0
+  fi
+
+  "$resolver" >/dev/null
+
+  if [ ! -s "$secret_file" ]; then
+    echo "Required database secret file is missing or empty: $secret_file" >&2
+    exit 1
+  fi
+}
+
+ensure_db_update_secret_file DUNE_DB_PASSWORD runtime/secrets/dune-db-password.txt resolve_dune_db_password
+ensure_db_update_secret_file POSTGRES_PASSWORD runtime/secrets/postgres-password.txt resolve_postgres_password
+
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
 
 IMAGE="registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${WORLD_IMAGE_TAG}"
@@ -91,9 +130,19 @@ docker run -d \
   --name "$CONTAINER_NAME" \
   --network dune-net \
   --entrypoint sh \
+  -v "$(host_path "$PWD/runtime/secrets"):/run/dune-secrets:ro" \
   "$IMAGE" \
   -lc '
 set -e
+
+read_secret() {
+  local secret_path="$1"
+  if [ ! -s "$secret_path" ]; then
+    echo "Required database secret file is missing or empty: $secret_path" >&2
+    exit 1
+  fi
+  tr -d "\r\n" < "$secret_path"
+}
 
 mkdir -p /tmp/pg17/bin
 ln -sf /usr/bin/psql /tmp/pg17/bin/psql
@@ -105,9 +154,9 @@ python -u /root/PSQL/updatedb.py \
   --host dune-postgres:5432 \
   --project-database dune \
   --project-user dune \
-  --project-password dune \
+  --project-password "$(read_secret /run/dune-secrets/dune-db-password.txt)" \
   --admin-user postgres \
-  --admin-password postgres \
+  --admin-password "$(read_secret /run/dune-secrets/postgres-password.txt)" \
   --admin-database postgres \
   --postgres-installation /tmp/pg17 \
   --ignore-backup-failure \
