@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { clearCarePackageHistory, enableCarePackage, grantEligibleCarePackages, grantCarePackage, runCarePackageAutoScan, saveCarePackageConfig, carePackageCapabilities, carePackageConfig, carePackageEligiblePlayers, carePackageHistory, validateCarePackageConfig } from "../src/carePackage.js";
@@ -262,6 +262,131 @@ test("care package first-online does not repeat after many skipped scans", async
     assert.equal(repeat.granted, 0);
     assert.equal(repeat.skipped, 1);
     assert.match(repeat.results[0].reason, /Already received first-online Care Package/);
+  } finally {
+    rmSync(config.repoRoot, { recursive: true, force: true });
+  }
+});
+
+
+test("care package manual grant satisfies first-online claim even after visible history is cleared", async () => {
+  const config = tempConfig();
+  try {
+    saveCarePackageConfig(config, {
+      enabled: true,
+      activeKitId: "starter-kit",
+      autoGrantKitId: "starter-kit",
+      kits: [{ id: "starter-kit", name: "Starter Kit", xp: 10, items: [] }],
+      autoGrantRules: [{ id: "first-online-rule", enabled: true, kitId: "starter-kit", grantWhen: "first_online" }]
+    });
+
+    const manual = await grantCarePackage(config, "Player#1", {
+      confirmation: "GRANT CARE PACKAGE",
+      kitId: "starter-kit",
+      accountId: "account-1",
+      funcomId: "Player#1",
+      flsId: "Player#1",
+      characterName: "Player",
+      onlineStatus: "Online"
+    });
+
+    assert.equal(manual.status, "granted");
+    const claimsFile = resolve(config.generatedDir, "care-package-first-online-claims.json");
+    assert.equal(existsSync(claimsFile), true);
+
+    clearCarePackageHistory(config);
+    assert.deepEqual(carePackageHistory(config).rows, []);
+
+    const repeat = await runCarePackageAutoScan(config, [{
+      actor_id: 2,
+      account_id: "account-1",
+      funcom_id: "Player#1",
+      fls_id: "Player#1",
+      character_name: "Player Again",
+      action_player_id: "Player#1",
+      online_status: "Online"
+    }]);
+
+    assert.equal(repeat.granted, 0);
+    assert.equal(repeat.skipped, 1);
+    assert.match(repeat.results[0].reason, /Already received first-online Care Package/);
+  } finally {
+    rmSync(config.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("care package first-online manual and auto race is blocked by pre-delivery claim", async () => {
+  const config = tempConfig();
+  config.mockMode = false;
+  try {
+    writeCatalog(config);
+    saveCarePackageConfig(config, {
+      enabled: true,
+      activeKitId: "starter-kit",
+      autoGrantKitId: "starter-kit",
+      kits: [{
+        id: "starter-kit",
+        name: "Starter Kit",
+        xp: 0,
+        items: [{ itemName: "Plant Fiber", quantity: 1, quality: 1 }]
+      }],
+      autoGrantRules: [{ id: "first-online-rule", enabled: true, kitId: "starter-kit", grantWhen: "first_online" }]
+    });
+
+    let releaseGrant;
+    const grantStarted = new Promise((resolveStarted) => {
+      releaseGrant = resolveStarted;
+    });
+    let itemGrantEntered;
+    const itemGrantStarted = new Promise((resolveStarted) => {
+      itemGrantEntered = resolveStarted;
+    });
+
+    const manualGrant = grantCarePackage(config, "Player#1", {
+      confirmation: "GRANT CARE PACKAGE",
+      kitId: "starter-kit",
+      actorId: 1,
+      accountId: "account-1",
+      funcomId: "Player#1",
+      flsId: "Player#1",
+      characterName: "Player",
+      onlineStatus: "Online"
+    }, {
+      db: {},
+      dbGiveItemToPlayer: async (_actorId, item) => {
+        itemGrantEntered();
+        await grantStarted;
+        return { ok: true, inserted: { template_id: item.templateId, stack_size: item.quantity, quality_level: item.quality } };
+      }
+    });
+
+    await itemGrantStarted;
+
+    const auto = await runCarePackageAutoScan(config, [{
+      actor_id: 2,
+      account_id: "account-1",
+      funcom_id: "Player#1",
+      fls_id: "Player#1",
+      character_name: "Player Again",
+      action_player_id: "Player#1",
+      online_status: "Online"
+    }], "auto", {
+      db: {},
+      dbGiveItemToPlayer: async () => {
+        throw new Error("auto path should not deliver package content");
+      }
+    });
+
+    assert.equal(auto.granted, 0);
+    assert.equal(auto.skipped, 1);
+    assert.match(auto.results[0].reason, /Already received first-online Care Package/);
+
+    releaseGrant();
+    const manual = await manualGrant;
+    assert.equal(manual.status, "granted");
+
+    const claimsFile = resolve(config.generatedDir, "care-package-first-online-claims.json");
+    const claims = JSON.parse(readFileSync(claimsFile, "utf8"));
+    assert.ok(claims.players["account_id:account-1"]);
   } finally {
     rmSync(config.repoRoot, { recursive: true, force: true });
   }
