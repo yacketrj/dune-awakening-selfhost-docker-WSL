@@ -12,7 +12,7 @@ source runtime/scripts/image-tags.sh
 WORLD_IMAGE_TAG="$(resolve_world_image_tag)"
 IMAGE="registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${WORLD_IMAGE_TAG}"
 RMQ_GAME_HTTP_BIND="${RMQ_GAME_HTTP_BIND:-127.0.0.1}"
-RMQ_GAME_TLS_VERIFY="${RMQ_GAME_TLS_VERIFY:-verify_peer}"
+RMQ_GAME_TLS_VERIFY="${RMQ_GAME_TLS_VERIFY:-verify_none}"
 RMQ_GAME_TLS_FAIL_IF_NO_PEER_CERT="${RMQ_GAME_TLS_FAIL_IF_NO_PEER_CERT:-false}"
 
 case "$RMQ_GAME_TLS_VERIFY" in

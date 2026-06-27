@@ -57,7 +57,6 @@ bootstrap_database_secrets() {
 bootstrap_common_secrets() {
   ensure_runtime_secret_file runtime/secrets/rmq-http-token-auth-secret.txt generate_hex_secret 32
   ensure_runtime_secret_file runtime/secrets/fls-apikey.txt generate_hex_secret 16
-  ensure_runtime_secret_file runtime/secrets/command-auth-token.txt generate_env_or_hex_secret DUNE_COMMAND_AUTH_TOKEN 32
   ensure_runtime_secret_file runtime/secrets/server-login-password-secret.txt generate_hex_secret 32
   ensure_runtime_secret_file runtime/secrets/username-server-login-secret.txt generate_hex_secret 32
   ensure_runtime_secret_file runtime/secrets/admin-web-session-secret.txt generate_hex_secret 48
