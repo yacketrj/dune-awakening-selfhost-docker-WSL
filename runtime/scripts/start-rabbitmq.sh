@@ -86,7 +86,10 @@ if [ ! -f runtime/rabbitmq-game/certs/key.pem ]; then
 fi
 
 chmod 755 runtime/rabbitmq-game runtime/rabbitmq-game/certs runtime/rabbitmq-game/config
-chmod 600 runtime/rabbitmq-game/certs/key.pem
+# The key is bind-mounted from the host into the RabbitMQ container. The broker
+# runs as a non-root user in some images, so a host-owned 0600 file can be
+# reported as "ssl_options.keyfile invalid" even when the mount path exists.
+chmod 644 runtime/rabbitmq-game/certs/key.pem
 chmod 644 runtime/rabbitmq-game/certs/cert.pem runtime/rabbitmq-game/certs/cacert.pem
 cat > runtime/rabbitmq-admin/config/enabled_plugins <<'EOF'
 [rabbitmq_management,rabbitmq_prometheus,rabbitmq_auth_backend_http,rabbitmq_auth_backend_cache].
