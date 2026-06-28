@@ -16,6 +16,8 @@ The Windows path is:
 
 The repository's Linux installer remains the source of truth for starting Dune Docker Console. The PowerShell script only prepares Windows/WSL and then delegates to `install.sh`.
 
+For exact steps to launch PowerShell with admin rights, see [ADMIN-POWERSHELL.md](ADMIN-POWERSHELL.md).
+
 ---
 
 ## What this installs
@@ -61,7 +63,16 @@ Use this option if you want Windows to prepare WSL, Ubuntu, Docker, and then han
 
 ### 1. Open PowerShell as Administrator
 
-Click **Start**, type `PowerShell`, right-click it, and select **Run as administrator**.
+The Windows / WSL installer must be run from an **Administrative PowerShell** window.
+
+To open PowerShell as Administrator:
+
+1. Press the **Windows** key.
+2. Type `PowerShell`.
+3. Right-click **Windows PowerShell**.
+4. Select **Run as administrator**.
+5. Click **Yes** on the Windows security prompt.
+6. Confirm the window title starts with **Administrator:**.
 
 ### 2. Go to the repository folder
 
@@ -107,7 +118,7 @@ Use this path if you prefer to see each step or if the PowerShell helper stops a
 
 ### 1. Install WSL
 
-Open **PowerShell as Administrator**:
+Open **PowerShell as Administrator** using the steps above, then run:
 
 ```powershell
 wsl --install
@@ -115,7 +126,7 @@ wsl --install
 
 Restart Windows if asked.
 
-After restart:
+After restart, open **PowerShell as Administrator** again and run:
 
 ```powershell
 wsl --update
