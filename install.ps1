@@ -210,26 +210,26 @@ function Install-DockerEngineInUbuntu {
     Write-Step "Installing Docker Engine inside Ubuntu"
 
     $escapedUser = $LinuxUser.Replace("'", "'\''")
-    $script = @"
+    $script = @'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl gnupg lsb-release git nano iproute2 apt-transport-https
 for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-  apt-get remove -y "\$pkg" >/dev/null 2>&1 || true
+  apt-get remove -y "$pkg" >/dev/null 2>&1 || true
 done
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 . /etc/os-release
-codename="\${UBUNTU_CODENAME:-\$VERSION_CODENAME}"
-arch="\$(dpkg --print-architecture)"
+codename="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
+arch="$(dpkg --print-architecture)"
 cat >/etc/apt/sources.list.d/docker.sources <<EOFDOCKER
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: \$codename
+Suites: $codename
 Components: stable
-Architectures: \$arch
+Architectures: $arch
 Signed-By: /etc/apt/keyrings/docker.asc
 EOFDOCKER
 apt-get update
@@ -239,11 +239,12 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 else
   service docker start || true
 fi
-usermod -aG docker '$escapedUser' || true
+usermod -aG docker '__LINUX_USER__' || true
 docker version >/dev/null
 docker compose version >/dev/null
-"@
+'@
 
+    $script = $script.Replace("__LINUX_USER__", $escapedUser)
     Invoke-WslScript -ScriptText $script -Root
     Write-Info "Docker Engine and Docker Compose plugin are installed."
 }
@@ -262,26 +263,32 @@ function Install-RepositoryAndRunInstaller {
     $safeAdminPort = [string]$AdminPort
     $startFlag = if ($NoStart) { "1" } else { "0" }
 
-    $script = @"
+    $script = @'
 set -euo pipefail
-cd "\$HOME"
-if [ -d '$safeInstallDir/.git' ]; then
+cd "$HOME"
+if [ -d '__INSTALL_DIR__/.git' ]; then
   echo "Repository already exists. Updating it."
-  git -C '$safeInstallDir' fetch --all --tags
-  git -C '$safeInstallDir' checkout '$safeRepoRef'
-  git -C '$safeInstallDir' pull --ff-only || true
+  git -C '__INSTALL_DIR__' fetch --all --tags
+  git -C '__INSTALL_DIR__' checkout '__REPO_REF__'
+  git -C '__INSTALL_DIR__' pull --ff-only || true
 else
-  git clone '$safeRepoUrl' '$safeInstallDir'
-  git -C '$safeInstallDir' checkout '$safeRepoRef' || true
+  git clone '__REPO_URL__' '__INSTALL_DIR__'
+  git -C '__INSTALL_DIR__' checkout '__REPO_REF__' || true
 fi
-cd '$safeInstallDir'
+cd '__INSTALL_DIR__'
 chmod +x install.sh
-if [ '$startFlag' = '1' ]; then
-  echo "Repository is ready at \$(pwd). -NoStart was used, so install.sh was not run."
+if [ '__START_FLAG__' = '1' ]; then
+  echo "Repository is ready at $(pwd). -NoStart was used, so install.sh was not run."
 else
-  ADMIN_BIND_PORT='$safeAdminPort' ./install.sh
+  ADMIN_BIND_PORT='__ADMIN_PORT__' ./install.sh
 fi
-"@
+'@
+
+    $script = $script.Replace("__REPO_URL__", $safeRepoUrl)
+    $script = $script.Replace("__REPO_REF__", $safeRepoRef)
+    $script = $script.Replace("__INSTALL_DIR__", $safeInstallDir)
+    $script = $script.Replace("__START_FLAG__", $startFlag)
+    $script = $script.Replace("__ADMIN_PORT__", $safeAdminPort)
 
     Invoke-WslScript -ScriptText $script -User $LinuxUser
 }
