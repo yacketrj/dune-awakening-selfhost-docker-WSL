@@ -99,7 +99,7 @@ Then open the Web UI from Windows:
 http://localhost:8088
 ```
 
-Full Windows documentation is available in [docs/WINDOWS-WSL-INSTALL.md](docs/WINDOWS-WSL-INSTALL.md). Maintainer security checks for this path are in [docs/WINDOWS-WSL-SECURITY-REGRESSION.md](docs/WINDOWS-WSL-SECURITY-REGRESSION.md).
+The Windows quick install command is also documented in [docs/WINDOWS-WSL-QUICKSTART.md](docs/WINDOWS-WSL-QUICKSTART.md). Full Windows documentation is available in [docs/WINDOWS-WSL-INSTALL.md](docs/WINDOWS-WSL-INSTALL.md). Maintainer security checks for this path are in [docs/WINDOWS-WSL-SECURITY-REGRESSION.md](docs/WINDOWS-WSL-SECURITY-REGRESSION.md).
 
 ## Community Addons
 
