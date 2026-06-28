@@ -73,7 +73,7 @@ function Invoke-WslScript {
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "dune-wsl-install"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     $scriptPath = Join-Path $tempDir ("script-{0}.sh" -f ([guid]::NewGuid().ToString("N")))
-    Set-Content -LiteralPath $scriptPath -Value $ScriptText -Encoding UTF8 -NoNewline
+    Set-Content -LiteralPath $scriptPath -Value $ScriptText -Encoding ASCII -NoNewline
     $wslScriptPath = ConvertTo-WslPathLiteral -WindowsPath $scriptPath
 
     try {
