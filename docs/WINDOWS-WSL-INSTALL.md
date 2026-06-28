@@ -6,15 +6,17 @@ Windows 11 Home can run WSL2. Windows Pro is not required.
 
 The Windows path is:
 
-1. Install WSL2 on Windows.
-2. Install Ubuntu 26.04 as the WSL distribution.
-3. Enable `systemd` in Ubuntu.
-4. Install Docker Engine and Docker Compose inside Ubuntu.
-5. Clone this repository inside Ubuntu.
-6. Run the existing Linux `install.sh` from inside Ubuntu.
-7. Open the Web UI from Windows at `http://localhost:8088`.
+1. Confirm virtualization is enabled.
+2. Install WSL2 on Windows.
+3. Install Ubuntu 26.04 as the WSL distribution.
+4. Launch Ubuntu once and create the Linux username/password.
+5. Enable `systemd` in Ubuntu.
+6. Install Docker Engine and Docker Compose inside Ubuntu.
+7. Clone this repository inside Ubuntu.
+8. Run the existing Linux `install.sh` from inside Ubuntu.
+9. Open the Web UI from Windows at `http://localhost:8088`.
 
-The repository's Linux installer remains the source of truth for starting Dune Docker Console. The PowerShell script only prepares Windows/WSL and then delegates to `install.sh`.
+The repository's Linux installer remains the source of truth for starting Dune Docker Console. The PowerShell script prepares Windows/WSL and then delegates to `install.sh`.
 
 For exact steps to launch PowerShell with admin rights, see [ADMIN-POWERSHELL.md](ADMIN-POWERSHELL.md).
 
@@ -39,7 +41,7 @@ This guide intentionally avoids Docker Desktop as the default path. Docker is in
 | Requirement | Plain explanation |
 |---|---|
 | Windows 11 Home | Supported for WSL2 |
-| Virtualization enabled | Usually enabled by default; if WSL fails, enable virtualization in BIOS/UEFI |
+| Virtualization enabled | Required for WSL2; check Task Manager > Performance > CPU |
 | 200 GB+ free disk space | Recommended for game server files, images, generated data, and backups |
 | 20 GB+ RAM | Minimum starting point; more maps require more memory |
 | AVX/AVX2 CPU support | Required by the game server |
@@ -57,11 +59,20 @@ Recommended WSL memory allocation:
 
 ---
 
-## Installation option A: PowerShell helper
+## Installation option A: Windows quick path
 
-Use this option if you want Windows to prepare WSL, Ubuntu, Docker, and then hand off to `install.sh`.
+Use this option if you want the script to prepare Docker and the repository after you install WSL2 and Ubuntu.
 
-### 1. Open PowerShell as Administrator
+### 1. Confirm virtualization is enabled
+
+1. Press `Ctrl` + `Shift` + `Esc` to open **Task Manager**.
+2. Select **Performance**.
+3. Select **CPU**.
+4. Confirm **Virtualization: Enabled**.
+
+If virtualization is disabled, enable it in BIOS/UEFI first, then return to this guide.
+
+### 2. Open PowerShell as Administrator
 
 The Windows / WSL installer must be run from an **Administrative PowerShell** window.
 
@@ -74,7 +85,58 @@ To open PowerShell as Administrator:
 5. Click **Yes** on the Windows security prompt.
 6. Confirm the window title starts with **Administrator:**.
 
-### 2. Go to the repository folder
+### 3. Install WSL2
+
+In Administrator PowerShell:
+
+```powershell
+wsl --install --no-distribution
+```
+
+If Windows asks you to restart, restart the PC. After the restart, open **PowerShell as Administrator** again and run:
+
+```powershell
+wsl --update
+wsl --set-default-version 2
+wsl --status
+```
+
+### 4. Install Ubuntu 26.04
+
+List available WSL distributions:
+
+```powershell
+wsl --list --online
+```
+
+Install Ubuntu 26.04:
+
+```powershell
+wsl --install --distribution Ubuntu-26.04
+```
+
+If `Ubuntu-26.04` is not listed, install the closest available official Ubuntu 26.04 entry shown by `wsl --list --online`, then pass that exact distribution name to `install.ps1` with `-WslDistro`.
+
+### 5. Launch Ubuntu once and create the Linux user
+
+Start Ubuntu:
+
+```powershell
+wsl -d Ubuntu-26.04
+```
+
+Ubuntu may ask you to create a Linux username and password. Complete that setup. The password will not show characters while you type; that is normal.
+
+Inside Ubuntu, verify the user exists:
+
+```bash
+whoami
+exit
+```
+
+If `whoami` prints your Linux username, continue.
+
+### 6. Run the Windows installer
 
 If you cloned the repository on Windows, go to that folder:
 
@@ -82,7 +144,7 @@ If you cloned the repository on Windows, go to that folder:
 cd C:\path\to\dune-awakening-selfhost-docker
 ```
 
-### 3. Run the Windows installer
+Run:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
@@ -91,8 +153,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 
 The script will:
 
-- check that WSL is available;
-- install or validate `Ubuntu-26.04`;
+- validate WSL and the Ubuntu distribution;
 - enable `systemd`;
 - install Docker Engine inside Ubuntu using Docker's official apt repository;
 - install the Docker Compose plugin;
@@ -100,7 +161,7 @@ The script will:
 - run `install.sh` inside Ubuntu;
 - print the Web UI address.
 
-### 4. Open the Web UI
+### 7. Open the Web UI
 
 From Windows, open:
 
@@ -121,7 +182,7 @@ Use this path if you prefer to see each step or if the PowerShell helper stops a
 Open **PowerShell as Administrator** using the steps above, then run:
 
 ```powershell
-wsl --install
+wsl --install --no-distribution
 ```
 
 Restart Windows if asked.
@@ -148,7 +209,7 @@ If `Ubuntu-26.04` is listed:
 wsl --install --distribution Ubuntu-26.04
 ```
 
-If it is not listed, install Ubuntu 26.04 from Canonical's official `.wsl` image, then re-run this guide from the Ubuntu configuration step.
+If it is not listed, install the closest available official Ubuntu 26.04 entry shown by `wsl --list --online`, then use that exact distribution name when running the installer.
 
 ### 3. Open Ubuntu and create your Linux user
 
@@ -422,7 +483,25 @@ Run:
 wsl --list --online
 ```
 
-Use the exact name that Microsoft lists. If Ubuntu 26.04 is not listed, install Canonical's official Ubuntu 26.04 `.wsl` image manually, then re-run this guide.
+Use the exact Ubuntu 26.04 name that Microsoft lists. If Ubuntu 26.04 is not listed, install the closest available official Ubuntu 26.04 entry, then pass that exact name to `install.ps1` with `-WslDistro`.
+
+### Could not determine the default Linux user
+
+Open Ubuntu once and finish first-run setup:
+
+```powershell
+wsl --shutdown
+wsl -d Ubuntu-26.04
+```
+
+Create the Linux username/password if prompted, then run:
+
+```bash
+whoami
+exit
+```
+
+After `whoami` prints your Linux username, re-run the installer.
 
 ### `docker: permission denied`
 
