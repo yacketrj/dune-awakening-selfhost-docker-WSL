@@ -2,14 +2,30 @@
 
 This path is for **Windows 11 Home** users who want to run the Linux server through **WSL2** and **Ubuntu 26.04**.
 
-## 1. Confirm virtualization is enabled
+## 1. Confirm firmware virtualization is enabled
 
-Before installing WSL, confirm virtualization is enabled:
+Before installing WSL, confirm CPU virtualization is enabled in firmware. This is usually shown as **Virtualization**, **Intel VT-x**, **Intel Virtualization Technology**, **AMD-V**, or **SVM Mode** in BIOS/UEFI.
+
+This is **not** the same thing as installing the Hyper-V management feature. Windows 11 Home can use WSL2 through the Windows Subsystem for Linux and Virtual Machine Platform components installed by `wsl --install`. Do not follow unofficial Hyper-V-on-Home workarounds for this installer.
+
+Check from Task Manager:
 
 1. Press `Ctrl` + `Shift` + `Esc` to open **Task Manager**.
 2. Select **Performance**.
 3. Select **CPU**.
 4. Confirm **Virtualization: Enabled**.
+
+You can also check from PowerShell:
+
+```powershell
+Get-CimInstance Win32_Processor | Select-Object Name, VirtualizationFirmwareEnabled
+```
+
+Expected result:
+
+```text
+VirtualizationFirmwareEnabled : True
+```
 
 If virtualization is disabled, enable it in BIOS/UEFI first, then return to this guide.
 
