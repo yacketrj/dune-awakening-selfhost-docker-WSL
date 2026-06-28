@@ -141,6 +141,23 @@ function Ensure-UbuntuDistro {
     }
 }
 
+function Get-UbuntuDefaultUser {
+    param([int]$Retries = 5)
+
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        $user = (& wsl.exe -d $WslDistro -- sh -lc "id -un 2>/dev/null || whoami 2>/dev/null" 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($user)) {
+            return $user.Trim()
+        }
+
+        if ($attempt -lt $Retries) {
+            Start-Sleep -Seconds 3
+        }
+    }
+
+    throw "Could not determine the default Linux user for $WslDistro. Open Ubuntu once with 'wsl -d $WslDistro', create the Linux username/password if prompted, verify with 'whoami', then re-run this script."
+}
+
 function Enable-Systemd {
     Write-Step "Ensuring systemd is enabled in $WslDistro"
 
@@ -157,15 +174,7 @@ fi
     Invoke-WslScript -ScriptText $script -Root
     Write-Info "Restarting WSL so systemd settings apply."
     & wsl.exe --shutdown
-    Start-Sleep -Seconds 3
-}
-
-function Get-UbuntuDefaultUser {
-    $user = (& wsl.exe -d $WslDistro -- bash -lc "id -un" 2>$null | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($user)) {
-        throw "Could not determine the default Linux user for $WslDistro. Open Ubuntu once, finish first-run setup, then re-run this script."
-    }
-    return $user.Trim()
+    Start-Sleep -Seconds 5
 }
 
 function Resolve-RepoUrl {
@@ -309,11 +318,11 @@ try {
 
     Ensure-WslInstalled
     Ensure-UbuntuDistro
-    Enable-Systemd
 
-    $linuxUser = Get-UbuntuDefaultUser
+    $linuxUser = Get-UbuntuDefaultUser -Retries 5
     Write-Step "Using Ubuntu user '$linuxUser'"
 
+    Enable-Systemd
     Install-DockerEngineInUbuntu -LinuxUser $linuxUser
 
     $resolvedRepoUrl = Resolve-RepoUrl
