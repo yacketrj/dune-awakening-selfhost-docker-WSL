@@ -80,7 +80,13 @@ The installer downloads the latest release, prepares the server, starts the Web 
 
 Windows users can install through WSL2 without replacing the Linux installer. The PowerShell helper prepares Windows/WSL, installs Ubuntu 26.04, installs Docker Engine inside Ubuntu, and then runs the existing `install.sh` inside Ubuntu.
 
-From a trusted local checkout of this repository, open **PowerShell as Administrator** and run:
+Copy and paste this into **PowerShell as Administrator** to download the latest release and run `install.ps1`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $root=Join-Path $env:USERPROFILE 'dune-awakening-selfhost-docker'; New-Item -ItemType Directory -Force -Path $root | Out-Null; Set-Location $root; $latest=(Invoke-WebRequest -UseBasicParsing -Method Head -Uri 'https://github.com/Red-Blink/dune-awakening-selfhost-docker/releases/latest').BaseResponse.ResponseUri.AbsoluteUri; $version=Split-Path -Leaf $latest; $zip=Join-Path $root 'dune-awakening-selfhost-docker.zip'; $extract=Join-Path $root 'release'; Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue; Invoke-WebRequest -UseBasicParsing -Uri ('https://github.com/Red-Blink/dune-awakening-selfhost-docker/archive/refs/tags/' + $version + '.zip') -OutFile $zip; Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force; $repo=(Get-ChildItem -LiteralPath $extract -Directory | Select-Object -First 1).FullName; Set-Location $repo; .\install.ps1"
+```
+
+If you already cloned this repository locally, you can run the helper directly instead:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
