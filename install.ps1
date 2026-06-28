@@ -145,9 +145,10 @@ function Get-UbuntuDefaultUser {
     param([int]$Retries = 5)
 
     for ($attempt = 1; $attempt -le $Retries; $attempt++) {
-        $user = (& wsl.exe -d $WslDistro -- sh -lc "id -un 2>/dev/null || whoami 2>/dev/null" 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($user)) {
-            return $user.Trim()
+        $userOutput = @(& wsl.exe -d $WslDistro -- sh -lc "id -un 2>/dev/null || whoami 2>/dev/null" 2>$null)
+        $user = ($userOutput | ForEach-Object { ($_ -replace "`0", "").Trim() } | Where-Object { $_ } | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($user)) {
+            return $user
         }
 
         if ($attempt -lt $Retries) {
