@@ -344,9 +344,18 @@ start_console() {
       "DUNE_HOST_GID=$DUNE_HOST_GID" \
       "DOCKER_SOCKET_GID=$DOCKER_SOCKET_GID" \
       "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME" \
-      docker compose -f "$WEB_COMPOSE" up -d --build "$WEB_SERVICE"
+      docker compose -f "$WEB_COMPOSE" down --remove-orphans || true
+    need_sudo env \
+      "ADMIN_BIND_PORT=$ADMIN_BIND_PORT" \
+      "DUNE_HOST_REPO_ROOT=$DUNE_HOST_REPO_ROOT" \
+      "DUNE_HOST_UID=$DUNE_HOST_UID" \
+      "DUNE_HOST_GID=$DUNE_HOST_GID" \
+      "DOCKER_SOCKET_GID=$DOCKER_SOCKET_GID" \
+      "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME" \
+      docker compose -f "$WEB_COMPOSE" up -d --force-recreate --build "$WEB_SERVICE"
   else
-    "${DOCKER[@]}" compose -f "$WEB_COMPOSE" up -d --build "$WEB_SERVICE"
+    "${DOCKER[@]}" compose -f "$WEB_COMPOSE" down --remove-orphans || true
+    "${DOCKER[@]}" compose -f "$WEB_COMPOSE" up -d --force-recreate --build "$WEB_SERVICE"
   fi
 }
 
