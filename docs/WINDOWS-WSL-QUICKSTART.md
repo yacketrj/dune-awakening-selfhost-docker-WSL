@@ -44,7 +44,7 @@ wsl --status
 
 ## 4. Apply recommended WSL settings
 
-These settings are recommended for hosting from Windows / WSL because they reserve enough memory for the game server and enable WSL networking behavior that is easier to reach from Windows and the LAN.
+These settings are recommended for the first install and same-PC Web UI access. They keep WSL in the default localhost-forwarding path so `http://localhost:8088` works from Windows after the Web console starts.
 
 Recommended memory values:
 
@@ -61,25 +61,24 @@ Open the WSL config file:
 notepad "$env:USERPROFILE\.wslconfig"
 ```
 
-Paste this example, then adjust `memory` for your machine:
+Paste this example, then adjust `memory` and `processors` for your machine:
 
 ```ini
 [wsl2]
-networkingMode=mirrored
-dnsTunneling=true
-autoProxy=true
-firewall=true
+localhostForwarding=true
 memory=32GB
 processors=8
 ```
 
-Save the file, close Notepad, then restart WSL:
+Save the file, close Notepad, then fully restart WSL:
 
 ```powershell
 wsl --shutdown
 ```
 
 If your PC has less than 48 GB RAM, lower `memory` before continuing. Do not allocate all system memory to WSL; leave enough RAM for Windows.
+
+Do not add `networkingMode=mirrored` for the first end-to-end install test. Mirrored networking is useful for some LAN setups, but it changes how Windows reaches WSL services and can make `localhost:8088` troubleshooting harder.
 
 ## 5. Install Ubuntu 26.04
 
@@ -133,4 +132,35 @@ This command:
 3. Runs the downloaded `install.ps1`.
 4. The installer prepares WSL2, Ubuntu 26.04, Docker Engine inside Ubuntu, and delegates final server startup to the existing Linux `install.sh`.
 
-For the full guide, see [WINDOWS-WSL-INSTALL.md](WINDOWS-WSL-INSTALL.md).
+## 8. If `localhost:8088` does not open
+
+First verify the Web console is running inside Ubuntu:
+
+```powershell
+wsl -d Ubuntu-26.04 -- bash -lc 'ss -ltnp | grep 8088 || true'
+wsl -d Ubuntu-26.04 -- bash -lc 'curl -I http://127.0.0.1:8088 || true'
+```
+
+If Ubuntu returns `HTTP/1.1 200 OK` but Windows cannot connect to `localhost:8088`, check your WSL config:
+
+```powershell
+Get-Content "$env:USERPROFILE\.wslconfig" -ErrorAction SilentlyContinue
+```
+
+For the default same-PC setup, use this config:
+
+```ini
+[wsl2]
+localhostForwarding=true
+memory=32GB
+processors=8
+```
+
+Then restart WSL and start the console again:
+
+```powershell
+wsl --shutdown
+wsl -d Ubuntu-26.04 -- bash -lc 'cd ~/dune-awakening-selfhost-docker && docker compose -f docker-compose.web.yml up -d redblink-dune-docker-console'
+```
+
+For the full guide and advanced LAN notes, see [WINDOWS-WSL-INSTALL.md](WINDOWS-WSL-INSTALL.md).
