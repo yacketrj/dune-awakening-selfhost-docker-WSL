@@ -39,10 +39,10 @@ add('install.ps1 avoids dynamic-expression execution', 'invoke-expression' not i
 add('install.ps1 avoids direct remote-download-to-shell pattern', not re.search(r'(curl|irm|iwr|wget).{0,80}\|.{0,40}(bash|sh|pwsh|powershell)', lower_install, re.S))
 add('install.ps1 keeps admin authentication enabled by default', 'admin_auth_disabled=1' not in lower_install)
 add('install.ps1 does not embed Funcom token values', 'funcom-token' not in lower_install and 'funcom_token=' not in lower_install)
-add('install.ps1 removes only temporary helper scripts', 'Remove-Item -LiteralPath $scriptPath -Force' in install)
+add('install.ps1 transports WSL scripts with base64 instead of temp files', 'ToBase64String' in install and "base64 -d | bash" in install)
 add('install.ps1 calls wsl.exe with explicit distro flag arrays', '@("-d", $WslDistro' in install)
-add('install.ps1 converts Windows temp paths to WSL /mnt paths', 'return "/mnt/$drive/$rest"' in install and "-replace '\\\\', '/'" in install)
-add('install.ps1 writes temp shell scripts without UTF-8 BOM', 'Set-Content -LiteralPath $scriptPath -Value $ScriptText -Encoding ASCII -NoNewline' in install)
+add('install.ps1 shell-quotes user controlled Bash literals', 'function ConvertTo-ShellSingleQuotedString' in install and 'install_dir="$HOME"/__INSTALL_DIR__' in install)
+add('install.ps1 avoids double-quoted user controlled install dir interpolation', 'install_dir="$HOME/__INSTALL_DIR__"' not in install)
 add('README preserves Linux install.sh path', './install.sh' in readme and 'Copy and paste this on a fresh Linux server' in readme)
 add('README adds Windows WSL option', 'Windows 11 Home / WSL2 / Ubuntu 26.04' in readme)
 add('README links Windows quickstart', 'WINDOWS-WSL-QUICKSTART.md' in readme)
@@ -76,14 +76,37 @@ Expected result: all checks pass.
 - Confirm Windows users can either use the direct `install.ps1` bootstrap command or run the helper from a trusted local checkout.
 - Confirm the direct bootstrap downloads `install.ps1` and runs it as a file, not through a nested command string.
 - Confirm WSL subprocess calls include `-d <distro>` and do not rely on PowerShell argument passthrough.
-- Confirm Windows temporary script paths are converted to `/mnt/<drive>/...` paths before WSL execution.
-- Confirm temporary shell scripts are written without a UTF-8 BOM so Bash reads the first command correctly.
+- Confirm WSL script bodies are base64 transported through `bash -lc` without temporary helper files.
+- Confirm user-controlled Bash literals such as repository archive URL, Linux user, and install directory are shell-quoted before interpolation.
 - Confirm Windows documentation tells users how to launch Administrator PowerShell.
 - Confirm the helper delegates to `install.sh` after preparing WSL and Docker.
 - Confirm the helper does not store Windows, Ubuntu, Funcom, or Web UI passwords.
 - Confirm public port guidance distinguishes game ports from the admin Web UI.
 - Confirm documentation tells users to keep database and internal admin ports private.
 - Confirm the Web UI remains protected by the generated admin password unless the user explicitly changes configuration.
+
+## Security review findings
+
+Latest review result for PR #42:
+
+| Finding | Resolution |
+|---|---|
+| The checklist still expected the older temporary WSL helper script implementation. | Updated the static checks and manual review checklist for the current base64-to-`bash` transport. |
+| `-InstallDir` was interpolated inside a double-quoted Bash string, allowing command substitution if a malicious install directory was supplied. | Added `ConvertTo-ShellSingleQuotedString` and now inject repository URL, Linux user, and install directory as shell-quoted literals. |
+| `safeStaticTarget` used `/` string-prefix checks, which do not behave correctly under Windows path separators during regression tests. | Switched to `path.relative` and `path.isAbsolute` containment checks so static file traversal protection is cross-platform. |
+
+Validation completed:
+
+```text
+PASS security regression checklist: 22 checks
+PASS npm audit --prefix console/api --audit-level=moderate: 0 vulnerabilities
+PASS npm audit --prefix console/web --audit-level=moderate: 0 vulnerabilities
+PASS install.ps1 PowerShell parser syntax check
+PASS bash -n install.sh
+PASS python3 -m py_compile orchestrator/dune_orchestrator.py
+PASS npm test --prefix console/api: 189 passed, 0 failed
+PASS npm run build --prefix console/web
+```
 
 ## Runtime smoke checks
 

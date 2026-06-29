@@ -69,6 +69,11 @@ function Invoke-WslScript {
     }
 }
 
+function ConvertTo-ShellSingleQuotedString {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "'\''") + "'"
+}
+
 function Get-RegisteredWslDistros {
     if (-not (Test-CommandAvailable "wsl.exe")) {
         return @()
@@ -230,7 +235,7 @@ function Install-DockerEngineInUbuntu {
 
     Write-Step "Installing Docker Engine inside Ubuntu"
 
-    $escapedUser = $LinuxUser.Replace("'", "'\''")
+    $escapedUser = ConvertTo-ShellSingleQuotedString -Value $LinuxUser
     $script = @'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -260,7 +265,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 else
   service docker start || true
 fi
-usermod -aG docker '__LINUX_USER__' || true
+usermod -aG docker __LINUX_USER__ || true
 docker version >/dev/null
 docker compose version >/dev/null
 '@
@@ -278,16 +283,16 @@ function Install-RepositoryAndRunInstaller {
 
     Write-Step "Installing Dune Docker Console source archive inside Ubuntu"
 
-    $safeArchiveUrl = $SourceArchiveUrl.Replace("'", "'\''")
-    $safeInstallDir = $InstallDir.Replace("'", "'\''")
+    $safeArchiveUrl = ConvertTo-ShellSingleQuotedString -Value $SourceArchiveUrl
+    $safeInstallDir = ConvertTo-ShellSingleQuotedString -Value $InstallDir
     $safeAdminPort = [string]$AdminPort
     $startFlag = if ($NoStart) { "1" } else { "0" }
 
     $script = @'
 set -euo pipefail
 cd "$HOME"
-archive_url='__SOURCE_ARCHIVE_URL__'
-install_dir="$HOME/__INSTALL_DIR__"
+archive_url=__SOURCE_ARCHIVE_URL__
+install_dir="$HOME"/__INSTALL_DIR__
 
 case "$install_dir" in
   "$HOME"/*) ;;
