@@ -6,6 +6,17 @@ Issue #74 tracks vehicle stutter / rubber-banding after a migration from the off
 
 This document defines the clean working environment and the evidence that must be captured before any code fix, validator change, or upstream report is accepted.
 
+## Target maintainer environment
+
+The active clean repro checkout is:
+
+```text
+WSL distro: Ubuntu 26.04
+WSL path:   /home/darkdante/dune-clean-repro
+```
+
+Run the clean-baseline commands from that directory unless a PR explicitly documents a different disposable checkout.
+
 ## Working branch and PR trail
 
 Use a dedicated branch for Issue #74 work:
@@ -24,16 +35,18 @@ All Issue #74 changes must be proposed through pull requests. Do not push invest
 
 ## Clean working directory
 
-Create a fresh checkout outside any migrated runtime directory:
+Use the active clean checkout:
 
 ```bash
-mkdir -p ~/dune-issue-74-clean
-cd ~/dune-issue-74-clean
-git clone https://github.com/yacketrj/dune-awakening-selfhost-docker-WSL.git .
-git checkout test/issue-74-clean-repro
+cd /home/darkdante/dune-clean-repro
 git fetch origin
-git status --short
+git checkout test/issue-74-clean-repro
+git pull --ff-only origin test/issue-74-clean-repro
+pwd
+git remote -v
+git branch --show-current
 git rev-parse HEAD
+git status --short
 git log -1 --oneline
 ```
 
@@ -45,6 +58,18 @@ git status --short
 ```
 
 If the working tree is not clean, stop and record the output before testing.
+
+### Creating the clean checkout from scratch
+
+Use this only if `/home/darkdante/dune-clean-repro` does not already exist:
+
+```bash
+mkdir -p /home/darkdante/dune-clean-repro
+cd /home/darkdante/dune-clean-repro
+git clone https://github.com/yacketrj/dune-awakening-selfhost-docker-WSL.git .
+git checkout test/issue-74-clean-repro
+git status --short
+```
 
 ### Optional hard reset for a disposable clean checkout
 
