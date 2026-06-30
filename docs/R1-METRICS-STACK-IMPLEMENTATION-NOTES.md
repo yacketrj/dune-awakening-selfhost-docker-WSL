@@ -49,6 +49,14 @@ Prometheus binds to localhost only by default:
 
 Exporters are attached to the existing internal `dune-net` network and are not published publicly by default.
 
+Metrics compose now uses a separate project name by default:
+
+```text
+${DUNE_COMPOSE_PROJECT_NAME:-dune-awakening-selfhost-docker}-metrics
+```
+
+This prevents metrics compose operations from warning that the main game/web containers are orphaned.
+
 ## Metrics Stack Components
 
 ```text
@@ -102,7 +110,7 @@ Security posture for R1:
 - postgres_exporter uses environment-derived credentials, not Git-tracked literal secrets.
 - No player identifiers or gameplay labels are emitted in R1.
 
-## Validation Result: 2026-06-30
+## Validation Result: 2026-06-30, initial run
 
 Local validation was run from:
 
@@ -155,9 +163,51 @@ Fix applied:
 
 The node exporter host root mount is still read-only, but no longer requires `rslave` propagation by default.
 
+## Validation Result: 2026-06-30, retest after mount fix
+
+Command run:
+
+```bash
+bash runtime/scripts/metrics-stack.sh start
+```
+
+Observed results:
+
+- Metrics compose started all four containers.
+- Prometheus started and exposed `127.0.0.1:9090`.
+- cAdvisor started.
+- node_exporter started.
+- postgres_exporter started.
+- Prometheus health reported `healthy`.
+
+Container status:
+
+```text
+dune-prometheus          Up 2 seconds                      127.0.0.1:9090->9090/tcp
+dune-cadvisor            Up 2 seconds (health: starting)   8080/tcp
+dune-node-exporter       Up 2 seconds                      9100/tcp
+dune-postgres-exporter   Up 2 seconds                      9187/tcp
+```
+
+Remaining issue observed:
+
+- The status command printed the `=== Prometheus targets ===` header but no target rows.
+
+Conclusion:
+
+- Container startup and Prometheus health are now passing.
+- Empty target output is not a complete validation pass. Prometheus should report active scrape targets for the configured jobs.
+
+Fix applied after this observation:
+
+- `metrics-stack.sh` now waits briefly for Prometheus targets after `start` and `restart`.
+- `metrics-stack.sh status` now prints `active_targets=<count>`.
+- Empty target output now renders an explicit message instead of silently passing.
+- Metrics compose now uses a separate project name and ignores orphan warnings from the main game/web stack.
+
 ## Required Re-Test
 
-Re-run the validation commands after the mount propagation fix:
+Re-run the validation commands after the target reporting fix:
 
 ```bash
 docker compose -f docker-compose.metrics.yml config
@@ -176,6 +226,17 @@ curl -fsS http://127.0.0.1:9090/api/v1/targets
 curl -fsS http://127.0.0.1:9090/api/v1/rules
 ```
 
+Passing target validation should show at least these jobs as active targets:
+
+```text
+dune-prometheus
+dune-node
+dune-cadvisor
+dune-postgres
+```
+
+RabbitMQ jobs may be down or unavailable if the game RabbitMQ containers are not running, but they should still be present as configured targets once Prometheus has loaded the scrape config.
+
 ## Regression Expectations
 
 R1 should not alter normal game startup behavior.
@@ -193,9 +254,10 @@ Full game-stack runtime validation remains required before marking R1 complete.
 
 ## Remaining R1 Work
 
-- Re-run Docker Compose validation locally after the node exporter mount fix.
+- Re-run Docker Compose validation locally after the target reporting fix.
 - Re-run start/status/stop on a real host.
-- Confirm RabbitMQ `15692` endpoints are reachable from Prometheus on `dune-net`.
+- Confirm Prometheus reports configured active targets.
+- Confirm RabbitMQ `15692` endpoints are reachable from Prometheus on `dune-net` when RabbitMQ is running.
 - Confirm postgres_exporter connects to `dune-postgres` with the active `.env` credentials.
 - Confirm cAdvisor works under WSL/Docker Desktop host constraints.
 - Confirm alert rules load cleanly in Prometheus.
