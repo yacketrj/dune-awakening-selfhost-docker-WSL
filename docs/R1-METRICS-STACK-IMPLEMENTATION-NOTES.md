@@ -221,38 +221,38 @@ Conclusion:
 - Prometheus rule loading is validated.
 - The previous blank target output issue is resolved.
 
-RabbitMQ note:
+## Validation Result: 2026-06-30, metric query pass
 
-- RabbitMQ scrape jobs may appear down if the game RabbitMQ containers are not running.
-- RabbitMQ endpoint health should be validated with `dune-rmq-admin` and `dune-rmq-game` running before closing all R1 runtime validation.
-
-## Recommended Additional Checks
-
-Prometheus API checks:
-
-```bash
-curl -fsS http://127.0.0.1:9090/-/healthy
-curl -fsS http://127.0.0.1:9090/api/v1/targets
-curl -fsS http://127.0.0.1:9090/api/v1/rules
-```
-
-Optional metric-level checks:
+Commands run:
 
 ```bash
 curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up'
 curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=pg_up'
 ```
 
-Expected always-present jobs:
+Observed `up == 1` targets:
 
 ```text
-dune-prometheus
-dune-node
-dune-cadvisor
-dune-postgres
+dune-postgres-exporter:9187  job=dune-postgres       service=postgres-exporter
+dune-cadvisor:8080           job=dune-cadvisor       service=cadvisor
+dune-rmq-admin:15692         job=dune-rabbitmq-admin service=rabbitmq-admin
+dune-rmq-game:15692          job=dune-rabbitmq-game  service=rabbitmq-game
+dune-prometheus:9090         job=dune-prometheus     service=prometheus
+dune-node-exporter:9100      job=dune-node           service=node-exporter
 ```
 
-RabbitMQ jobs are expected only when the relevant RabbitMQ containers and Prometheus plugin endpoints are reachable.
+Observed `pg_up == 1` target:
+
+```text
+dune-postgres-exporter:9187 job=dune-postgres service=postgres-exporter
+```
+
+Conclusion:
+
+- All configured Prometheus scrape targets are reachable and healthy.
+- RabbitMQ admin and game metrics endpoints are reachable from Prometheus on `dune-net`.
+- postgres_exporter is connected successfully to Postgres.
+- R1 metrics startup, target loading, rule loading, RabbitMQ scrape reachability, and Postgres exporter connectivity are validated.
 
 ## Regression Expectations
 
@@ -271,8 +271,6 @@ Full game-stack runtime validation remains required before marking R1 complete.
 
 ## Remaining R1 Work
 
-- Confirm RabbitMQ `15692` endpoints are reachable from Prometheus on `dune-net` when RabbitMQ is running.
-- Confirm postgres_exporter reports `pg_up == 1` against the active `.env` credentials.
 - Confirm cAdvisor transitions from `health: starting` to healthy under WSL/Docker Desktop host constraints.
 - Run regression checks for normal game-stack CLI commands.
 - Run security/static checks before marking PR ready for review.
