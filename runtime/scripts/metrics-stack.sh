@@ -8,7 +8,7 @@ compose_file="docker-compose.metrics.yml"
 prometheus_port="${METRICS_PROMETHEUS_PORT:-}"
 
 if [ -z "$prometheus_port" ] && [ -f .env ]; then
-  prometheus_port="$(awk -F= '/^METRICS_PROMETHEUS_PORT=/ {print $2; exit}' .env | tr -d '[:space:]"'\'' || true)"
+  prometheus_port="$(awk -F= '/^METRICS_PROMETHEUS_PORT=/ {print $2; exit}' .env | sed 's/[[:space:]"]//g' || true)"
 fi
 prometheus_port="${prometheus_port:-9090}"
 
