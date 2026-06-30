@@ -1,0 +1,90 @@
+name: Security Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+jobs:
+  shell-and-metrics-tests:
+    name: Shell static checks and metrics unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Shell syntax checks
+        run: |
+          bash -n runtime/scripts/dune
+          bash -n runtime/scripts/metrics-stack.sh
+          bash -n runtime/scripts/metrics-status.sh
+          bash -n tests/metrics-stack-unit.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck runtime/scripts/dune \
+            runtime/scripts/metrics-stack.sh \
+            runtime/scripts/metrics-status.sh \
+            tests/metrics-stack-unit.sh
+
+      - name: Metrics unit tests
+        run: bash tests/metrics-stack-unit.sh
+
+      - name: Metrics compose config
+        run: docker compose -f docker-compose.metrics.yml config
+
+  gitleaks:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/default
+
+  trivy:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
