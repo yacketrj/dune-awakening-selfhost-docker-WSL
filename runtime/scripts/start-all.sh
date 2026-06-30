@@ -61,6 +61,10 @@ else
   run_timed_step "Ensuring Database Is Up To Date" runtime/scripts/update-db.sh
 fi
 
+run_timed_step "Applying Spice Field Overrides" runtime/scripts/spicefield-overrides.sh apply
+
+run_timed_step "Synchronizing Public IP" runtime/scripts/ensure-public-ip.sh sync
+
 run_timed_step "Reconciling Network Advertisement Addresses" bash -c '
 runtime/scripts/network-addresses.sh reconcile || {
   echo "Network address reconciliation could not run yet. Startup will retry after game servers register."
@@ -88,6 +92,12 @@ run_timed_step "Starting Survival_1" runtime/scripts/start-server-survival-1.sh
 
 run_timed_step "Starting Overmap" runtime/scripts/start-server-overmap.sh
 
+run_timed_step "Reconciling Survival Sietches" bash -c '
+runtime/scripts/sietches.sh reconcile Survival_1 || {
+  echo "Survival_1 Sietch reconcile could not complete yet. Deferred reconcile will retry after core maps are ready."
+}
+'
+
 run_timed_step "Repairing Chat Exchanges" bash -c '
 runtime/scripts/repair-chat-exchanges.sh || {
   echo "Guild chat exchange repair could not complete. Guild chat may be unavailable until the next repair pass."
@@ -112,10 +122,8 @@ runtime/scripts/publish-deepdesert-overrides.sh restart || {
 }
 '
 
-run_timed_step "Starting Network Server-State Publisher" bash -c '
-runtime/scripts/publish-network-server-state-overrides.sh restart || {
-  echo "Network server-state publisher did not start. Non-Survival maps may advertise the local bind IP until the next restart."
-}
+run_timed_step "Stopping Legacy Network Server-State Rewriter" bash -c '
+runtime/scripts/publish-network-server-state-overrides.sh stop || true
 '
 
 if [ -f runtime/generated/director-deepdesert-dual.ini ]; then
@@ -141,12 +149,6 @@ runtime/scripts/publish-sietch-overrides.sh once || {
 run_timed_step "Publishing Deep Desert Warm-Up State" bash -c '
 runtime/scripts/publish-deepdesert-overrides.sh once || {
   echo "Could not publish the latest Deep Desert warm-up snapshot."
-}
-'
-
-run_timed_step "Publishing Network Server-State Snapshot" bash -c '
-runtime/scripts/publish-network-server-state-overrides.sh once || {
-  echo "Could not publish the latest non-Survival network server-state snapshot."
 }
 '
 

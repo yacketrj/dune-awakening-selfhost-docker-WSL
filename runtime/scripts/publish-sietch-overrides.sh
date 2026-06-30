@@ -8,8 +8,13 @@ LOG_FILE="runtime/generated/sietch-overrides.log"
 LOG_POINTER_FILE="runtime/generated/sietch-overrides-current.log"
 TEXT_ROUTER_LOG="runtime/text-router/director-current.log"
 CONFIG_FILE="runtime/generated/sietch-config.json"
+RMQ_CREDS_FILE="runtime/generated/sietch-rmq-admin-creds"
 TIMESTAMP_LEAD_SECONDS="${DUNE_SIETCH_OVERRIDE_TIMESTAMP_LEAD_SECONDS:-0}"
 RMQ_TIMEOUT_SECONDS="${DUNE_SIETCH_OVERRIDE_RMQ_TIMEOUT_SECONDS:-8}"
+RMQ_CREDS_TTL_SECONDS="${DUNE_SIETCH_OVERRIDE_RMQ_CREDS_TTL_SECONDS:-300}"
+FORWARD_POLL_SECONDS="${DUNE_SIETCH_OVERRIDE_FORWARD_POLL_SECONDS:-5}"
+ROUTE_REFRESH_SECONDS="${DUNE_SIETCH_OVERRIDE_ROUTE_REFRESH_SECONDS:-300}"
+SNAPSHOT_REFRESH_SECONDS="${DUNE_SIETCH_OVERRIDE_SNAPSHOT_REFRESH_SECONDS:-10}"
 
 SOURCE_EXCHANGE="completions"
 SOURCE_ROUTING_KEY="server_state.Survival_1"
@@ -18,11 +23,37 @@ SINK_QUEUE="serverStateSink_Survival_1"
 FILTER_EXCHANGE="sietchOverrideFilteredState"
 
 loop_pids() {
-  pgrep -f "publish-sietch-overrides.sh loop" 2>/dev/null || true
+  ps -eo pid=,args= 2>/dev/null \
+    | awk -v self="$$" '$1 != self && $0 ~ /(^|[[:space:]])bash[[:space:]].*publish-sietch-overrides[.]sh[[:space:]]+loop([[:space:]]|$)/ { print $1 }' \
+    || true
 }
 
 loop_running() {
   [ -n "$(loop_pids)" ]
+}
+
+stop_loop_processes() {
+  local pid
+  clear_stale_pidfile
+  if [ -f "$PID_FILE" ]; then
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ]; then
+      kill -- "-$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill -- "-$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+  done < <(loop_pids)
+  sleep 1
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill -9 -- "-$pid" 2>/dev/null || true
+    kill -9 "$pid" 2>/dev/null || true
+  done < <(loop_pids)
+  rm -f "$PID_FILE"
 }
 
 write_live_pidfile() {
@@ -36,6 +67,17 @@ clear_stale_pidfile() {
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
     rm -f "$PID_FILE"
+  fi
+}
+
+print_status() {
+  clear_stale_pidfile
+  if [ -f "$PID_FILE" ]; then
+    printf 'running pid=%s log=%s\n' "$(cat "$PID_FILE" 2>/dev/null || true)" "$(cat "$LOG_POINTER_FILE" 2>/dev/null || printf '%s' "$LOG_FILE")"
+  elif loop_running; then
+    printf 'orphan-running pid=%s log=%s\n' "$(loop_pids | tr '\n' ',' | sed 's/,$//')" "$(cat "$LOG_POINTER_FILE" 2>/dev/null || printf '%s' "$LOG_FILE")"
+  else
+    printf 'stopped\n'
   fi
 }
 
@@ -65,8 +107,18 @@ ensure_text_router_log() {
 }
 
 load_rmq_admin_creds() {
+  local now mtime creds
+  if [ -f "$RMQ_CREDS_FILE" ]; then
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "$RMQ_CREDS_FILE" 2>/dev/null || echo 0)"
+    if [ $((now - mtime)) -lt "$RMQ_CREDS_TTL_SECONDS" ] && [ "$(wc -l < "$RMQ_CREDS_FILE" | tr -d '[:space:]')" -ge 2 ]; then
+      cat "$RMQ_CREDS_FILE"
+      return 0
+    fi
+  fi
+
   ensure_text_router_log
-  python3 - <<'PY'
+  creds="$(python3 - <<'PY'
 from pathlib import Path
 import re
 import subprocess
@@ -111,15 +163,27 @@ username, password = matches[-1]
 print(username)
 print(password)
 PY
+)"
+  [ -n "$creds" ] || return 1
+  printf '%s\n' "$creds" >"$RMQ_CREDS_FILE"
+  chmod 600 "$RMQ_CREDS_FILE" 2>/dev/null || true
+  printf '%s\n' "$creds"
 }
 
 rmq_admin() {
-  local rmq_user rmq_password
-  mapfile -t rmq_creds < <(load_rmq_admin_creds)
-  [ "${#rmq_creds[@]}" -ge 2 ] || return 1
-  rmq_user="${rmq_creds[0]}"
-  rmq_password="${rmq_creds[1]}"
-  timeout --kill-after=2s "${RMQ_TIMEOUT_SECONDS}s" docker exec dune-rmq-admin rabbitmqadmin -q -u "$rmq_user" -p "$rmq_password" "$@"
+  local rmq_user rmq_password attempt rc
+  for attempt in 1 2; do
+    mapfile -t rmq_creds < <(load_rmq_admin_creds)
+    [ "${#rmq_creds[@]}" -ge 2 ] || return 1
+    rmq_user="${rmq_creds[0]}"
+    rmq_password="${rmq_creds[1]}"
+    if timeout --kill-after=2s "${RMQ_TIMEOUT_SECONDS}s" docker exec dune-rmq-admin rabbitmqadmin -q -u "$rmq_user" -p "$rmq_password" "$@"; then
+      return 0
+    fi
+    rc=$?
+    rm -f "$RMQ_CREDS_FILE"
+  done
+  return "$rc"
 }
 
 rmq_delete_binding_exact() {
@@ -439,22 +503,27 @@ start_loop() {
   write_live_pidfile
   trap 'rm -f "$PID_FILE"' EXIT
   local route_refresh_at=0
+  local snapshot_refresh_at=0
   ensure_route
   publish_snapshot_once >>"$LOG_FILE" 2>&1 || true
   while true; do
     if [ "$(date +%s)" -ge "$route_refresh_at" ]; then
       ensure_route >>"$LOG_FILE" 2>&1 || true
+      route_refresh_at=$(( $(date +%s) + ROUTE_REFRESH_SECONDS ))
+    fi
+    if [ "$(date +%s)" -ge "$snapshot_refresh_at" ]; then
       publish_snapshot_once >>"$LOG_FILE" 2>&1 || true
-      route_refresh_at=$(( $(date +%s) + 10 ))
+      snapshot_refresh_at=$(( $(date +%s) + SNAPSHOT_REFRESH_SECONDS ))
     fi
     if rows="$(forward_batch_once)"; then
       while IFS= read -r payload; do
         [ -n "$payload" ] || continue
         publish_payload "$payload" >>"$LOG_FILE" 2>&1 || true
       done <<< "$rows"
+      sleep "$FORWARD_POLL_SECONDS"
       continue
     fi
-    sleep 1
+    sleep "$FORWARD_POLL_SECONDS"
   done
 }
 
@@ -474,10 +543,10 @@ case "${1:-start}" in
   start)
     clear_stale_pidfile
     if loop_running; then
+      loop_pids | head -n 1 >"$PID_FILE"
       exit 0
     fi
-    pkill -f "publish-sietch-overrides.sh loop" 2>/dev/null || true
-    rm -f "$PID_FILE"
+    stop_loop_processes
     prepare_runtime_generated_files
     setsid "$0" loop >>"$LOG_FILE" 2>&1 </dev/null &
     echo $! >"$PID_FILE"
@@ -487,20 +556,18 @@ case "${1:-start}" in
     start_loop
     ;;
   stop)
-    clear_stale_pidfile
-    if [ -f "$PID_FILE" ]; then
-      kill "$(cat "$PID_FILE")" 2>/dev/null || true
-    fi
-    pkill -f "publish-sietch-overrides.sh loop" 2>/dev/null || true
-    rm -f "$PID_FILE"
+    stop_loop_processes
     restore_route || true
     ;;
   restart)
     "$0" stop
     "$0" start
     ;;
+  status)
+    print_status
+    ;;
   *)
-    echo "Usage: $0 [once|start|stop|restart]"
+    echo "Usage: $0 [once|start|stop|restart|status]"
     exit 2
     ;;
 esac

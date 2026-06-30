@@ -21,7 +21,9 @@ DIRECTOR_HEAL_COOLDOWN_SECONDS="${DUNE_AUTOSCALER_DIRECTOR_HEAL_COOLDOWN_SECONDS
 DYNAMIC_READY_HEAL_STALE_SECONDS="${DUNE_AUTOSCALER_DYNAMIC_READY_HEAL_STALE_SECONDS:-20}"
 DIRECTOR_BROWSER_SCAN_SECONDS="${DUNE_AUTOSCALER_DIRECTOR_BROWSER_SCAN_SECONDS:-30}"
 DYNAMIC_READY_HEAL_SCAN_SECONDS="${DUNE_AUTOSCALER_DYNAMIC_READY_HEAL_SCAN_SECONDS:-30}"
-CHAT_EXCHANGE_REPAIR_SECONDS="${DUNE_AUTOSCALER_CHAT_EXCHANGE_REPAIR_SECONDS:-15}"
+CHAT_EXCHANGE_REPAIR_SECONDS="${DUNE_AUTOSCALER_CHAT_EXCHANGE_REPAIR_SECONDS:-300}"
+CHAT_EXCHANGE_REPAIR_TIMEOUT_SECONDS="${DUNE_AUTOSCALER_CHAT_EXCHANGE_REPAIR_TIMEOUT_SECONDS:-60}"
+CHAT_EXCHANGE_REPAIR_PID_FILE="${DUNE_AUTOSCALER_CHAT_EXCHANGE_REPAIR_PID_FILE:-runtime/generated/autoscaler-chat-repair.pid}"
 IGWO_UNAVAILABLE_SCAN_SECONDS="${DUNE_AUTOSCALER_IGWO_UNAVAILABLE_SCAN_SECONDS:-10}"
 IGWO_UNAVAILABLE_COOLDOWN_SECONDS="${DUNE_AUTOSCALER_IGWO_UNAVAILABLE_COOLDOWN_SECONDS:-60}"
 STALE_SERVER_STATE_SCAN_SECONDS="${DUNE_AUTOSCALER_STALE_SERVER_STATE_SCAN_SECONDS:-15}"
@@ -46,6 +48,7 @@ echo "Dynamic mode-change grace: ${DESPAWN_GRACE_SECONDS}s"
 echo "Travel grace: ${TRAVEL_GRACE_SECONDS}s"
 echo "Director browser heal scan: ${DIRECTOR_BROWSER_SCAN_SECONDS}s"
 echo "Dynamic ready heal scan: ${DYNAMIC_READY_HEAL_SCAN_SECONDS}s"
+echo "Chat exchange repair scan: ${CHAT_EXCHANGE_REPAIR_SECONDS}s"
 echo "IGWO unavailable heal scan: ${IGWO_UNAVAILABLE_SCAN_SECONDS}s"
 echo "Stale server-state heal scan: ${STALE_SERVER_STATE_SCAN_SECONDS}s"
 echo "State file: ${STATE_FILE}"
@@ -390,10 +393,24 @@ director_heal_due() {
 }
 
 repair_chat_exchanges_due() {
+  local pid
+
   director_heal_due chat_exchanges "$CHAT_EXCHANGE_REPAIR_SECONDS" || return 0
-  runtime/scripts/repair-chat-exchanges.sh >/dev/null 2>&1 || {
-    echo "WARN chat exchange repair failed"
-  }
+
+  if [ -f "$CHAT_EXCHANGE_REPAIR_PID_FILE" ]; then
+    pid="$(cat "$CHAT_EXCHANGE_REPAIR_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  (
+    timeout --kill-after=5s "${CHAT_EXCHANGE_REPAIR_TIMEOUT_SECONDS}s" runtime/scripts/repair-chat-exchanges.sh >/dev/null 2>&1 || {
+      echo "WARN chat exchange repair failed"
+    }
+    rm -f "$CHAT_EXCHANGE_REPAIR_PID_FILE"
+  ) &
+  printf '%s\n' "$!" >"$CHAT_EXCHANGE_REPAIR_PID_FILE"
 }
 
 dynamic_container_name_for_partition() {
@@ -484,6 +501,16 @@ remember_map_demand() {
   tmp="$(mktemp)"
   awk -F '\t' -v map="$map" '$1 != map { print }' "$DEMAND_FILE" > "$tmp"
   printf '%s\t%s\n' "$map" "$ts" >> "$tmp"
+  mv "$tmp" "$DEMAND_FILE"
+}
+
+forget_map_demand() {
+  local map="$1"
+  local tmp
+
+  [ -n "$map" ] || return 0
+  tmp="$(mktemp)"
+  awk -F '\t' -v map="$map" '$1 != map { print }' "$DEMAND_FILE" > "$tmp"
   mv "$tmp" "$DEMAND_FILE"
 }
 
@@ -580,6 +607,64 @@ forget_deepdesert_travel() {
   tmp="$(mktemp)"
   awk -F '\t' -v flow="$flow_id" '$1 != flow { print }' "$DEEPDESERT_TRAVEL_FILE" > "$tmp"
   mv "$tmp" "$DEEPDESERT_TRAVEL_FILE"
+}
+
+prepare_deepdesert_travel_actors() {
+  local player_id="$1" target_partition="$2"
+  local player_sql partition_sql prepared
+
+  [ -n "$player_id" ] || return 0
+  [ -n "$target_partition" ] || return 0
+  printf '%s' "$target_partition" | grep -Eq '^[0-9]+$' || return 0
+
+  player_sql="${player_id//\'/\'\'}"
+  partition_sql="$target_partition"
+
+  prepared="$(psql_value "
+    with matched_player as (
+      select ps.player_pawn_id
+      from dune.player_state ps
+      left join dune.accounts ac on ac.id = ps.account_id
+      left join dune.encrypted_accounts ea on ea.id = ps.account_id
+      where ps.character_state::text = 'Active'
+        and (
+          ac.\"user\" = '${player_sql}'
+          or ac.funcom_id = '${player_sql}'
+          or convert_from(ea.encrypted_funcom_id, 'UTF8') = '${player_sql}'
+          or coalesce(ea.\"user\"::text, '') = '${player_sql}'
+        )
+      order by ps.online_status::text = 'Online' desc, ps.last_login_time desc nulls last
+      limit 1
+    ),
+    linked_vehicle as (
+      select mp.player_pawn_id, op.vehicle_id
+      from matched_player mp
+      join dune.overmap_players op on op.player_id = mp.player_pawn_id
+      join dune.actors vehicle_actor on vehicle_actor.id = op.vehicle_id
+      join dune.vehicles v on v.id = op.vehicle_id
+      where vehicle_actor.map = 'DeepDesert'
+        and vehicle_actor.partition_id = ${partition_sql}
+        and vehicle_actor.transform is not null
+      limit 1
+    ),
+    actor_ids as (
+      select player_pawn_id as actor_id from linked_vehicle
+      union
+      select vehicle_id as actor_id from linked_vehicle
+    ),
+    inserted as (
+      insert into dune.actor_state(actor_id, state)
+      select actor_id, 'Travel'::dune.actorstate
+      from actor_ids
+      on conflict (actor_id) do nothing
+      returning actor_id
+    )
+    select count(*) from inserted;
+  " 2>/dev/null | tr -d '\r[:space:]' || true)"
+
+  if [ -n "$prepared" ] && [ "$prepared" != "0" ]; then
+    echo "DEEPDESERT-ACTORS-PREPARED player=${player_id:0:4}... partition=$target_partition actor_state_rows=$prepared"
+  fi
 }
 
 deepdesert_target_json() {
@@ -1044,6 +1129,12 @@ PY
 import json
 from pathlib import Path
 print(json.dumps(json.loads(Path("/tmp/deepdesert-progress.json").read_text())["grant"], separators=(",", ":"), ensure_ascii=False))
+PY
+)"
+      prepare_deepdesert_travel_actors "$player_id" "$(TARGET_JSON="$target_json" python3 - <<'PY'
+import json
+import os
+print(json.loads(os.environ["TARGET_JSON"])["partition_id"])
 PY
 )"
       publish_rmq_json "heartbeats" "$origin_server_id" "$grant_json" "travel-grant-dd-${flow_id}" || true
@@ -1877,7 +1968,7 @@ for line in sys.stdin:
 }
 
 scan_igwo_unavailable_maps() {
-  local rows now map event_id last_seen
+  local rows now map event_id last_seen assigned running
 
   director_heal_due igwo_unavailable "$IGWO_UNAVAILABLE_SCAN_SECONDS" || return 0
   now="$(date +%s)"
@@ -1924,6 +2015,15 @@ for line in sys.stdin:
     if map_is_always_on "$map"; then
       echo "HEAL igwo-unavailable map=$map mode=always-on"
       reconcile_always_on_map "$map"
+    elif map_is_overmap_active "$map" && ! map_has_active_presence "Overmap"; then
+      assigned="$(map_assigned_count "$map")"
+      running="$(container_count_for_map "$map")"
+      echo "SKIP igwo-unavailable map=$map mode=overmap-active overmap=idle assigned=$assigned containers=$running"
+      forget_map_demand "$map"
+    elif map_is_dynamic "$map"; then
+      assigned="$(map_assigned_count "$map")"
+      running="$(container_count_for_map "$map")"
+      echo "SKIP igwo-unavailable map=$map mode=dynamic assigned=$assigned containers=$running"
     else
       echo "HEAL igwo-unavailable map=$map mode=dynamic-demand"
       handle_demand "$map" 1 "igwo:${event_id}"
@@ -2146,14 +2246,15 @@ scan_director_browser_state() {
 
 follow_director_hagga_handoffs &
 reconcile_always_on_maps
+scan_travel_demand
 repair_chat_exchanges_due
 
 while true; do
   reconcile_always_on_maps
-  repair_chat_exchanges_due
   scan_deepdesert_loading_responses
   ensure_overmap_travel_maps_prewarmed
   scan_travel_demand
+  repair_chat_exchanges_due
   scan_igwo_unavailable_maps
   scan_stale_server_state
   scan_unscoped_stale_server_state

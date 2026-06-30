@@ -31,6 +31,7 @@ import { handleDiscordAdapterRoute, isDiscordAdapterRoute } from "./services/dis
 import { liveItemGrantOk, liveItemGrantWarning } from "./grantResults.js";
 import { primeMessageOfTheDayOnlineState, readMessageOfTheDay, restoreMessageOfTheDay, runMessageOfTheDayScan, saveMessageOfTheDay } from "./services/messageOfTheDay.js";
 import { primePlayerAnnouncementOnlineState, readPlayerAnnouncements, restorePlayerAnnouncements, runPlayerAnnouncementScan, savePlayerAnnouncements } from "./services/playerAnnouncements.js";
+import { persistSpicefieldOverride } from "./services/spicefieldOverrides.js";
 
 const config = loadConfig();
 const auth = createAuth(config);
@@ -466,6 +467,8 @@ async function handleApi(req, res) {
   if (path === "/api/maps/memory/balancer") return json(res, 200, memoryBalancer.publicState());
   if (path === "/api/maps/memory/live") return liveMapMemoryRoute(res);
   if (path === "/api/maps/memory") return commandJson(res, "memoryStatus");
+  if (path.match(/^\/api\/maps\/spicefields\/[^/]+$/) && req.method === "PATCH") return mapsSpicefieldUpdateRoute(req, res, path);
+  if (path === "/api/maps/spicefields") return dbJson(res, () => duneDb.listSpicefieldTypes(db));
   if (path === "/api/maps/user-settings/schema") return userSettingsSchemaRoute(res);
   if (path === "/api/maps/user-settings/raw" && req.method === "POST") return userSettingsRawWriteRoute(req, res);
   if (path === "/api/maps/user-settings/raw") return userSettingsRawRoute(res, url);
@@ -714,6 +717,17 @@ async function mapStatusRoute(res) {
     safeCommand("autoscalerStatus")
   ]);
   return json(res, 200, { maps, services, readiness, autoscaler });
+}
+
+async function mapsSpicefieldUpdateRoute(req, res, path) {
+  const typeId = decodeURIComponent(path.split("/").pop());
+  const body = await readJson(req);
+  audit(config, req, "maps.spicefields.update", { typeId, columns: Object.keys(body || {}) });
+  return dbJson(res, async () => {
+    const result = await duneDb.updateSpicefieldType(db, typeId, body);
+    if (result.row) result.persistence = persistSpicefieldOverride(config, result.row);
+    return result;
+  });
 }
 
 async function safeCommand(operation, payload = {}) {

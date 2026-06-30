@@ -25,8 +25,43 @@ SOURCE_FILTER_PREFIX="networkStateOverrideSource_"
 SINK_QUEUE_PREFIX="serverStateSink_"
 EXCLUDED_MAPS_RE="^$"
 
+stop_loop_processes() {
+  local pid
+  clear_stale_pidfile
+  if [ -f "$PID_FILE" ]; then
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ]; then
+      kill -- "-$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill -- "-$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+  done < <(loop_pids)
+  sleep 1
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill -9 -- "-$pid" 2>/dev/null || true
+    kill -9 "$pid" 2>/dev/null || true
+  done < <(loop_pids)
+  rm -f "$PID_FILE"
+}
+
+stop_loop_and_restore_routes() {
+  stop_loop_processes
+  timeout --kill-after=2s "${STOP_RESTORE_TIMEOUT_SECONDS}s" "$0" restore-routes || true
+}
+
+disabled_notice() {
+  echo "Network server-state rewriter is retired; using game container EXTERNAL_ADDRESS_OVERRIDE instead."
+}
+
 loop_pids() {
-  pgrep -f "publish-network-server-state-overrides.sh loop" 2>/dev/null || true
+  ps -eo pid=,args= 2>/dev/null \
+    | awk -v self="$$" '$1 != self && $0 ~ /(^|[[:space:]])bash[[:space:]].*publish-network-server-state-overrides[.]sh[[:space:]]+loop([[:space:]]|$)/ { print $1 }' \
+    || true
 }
 
 loop_running() {
@@ -44,6 +79,17 @@ clear_stale_pidfile() {
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
     rm -f "$PID_FILE"
+  fi
+}
+
+print_status() {
+  clear_stale_pidfile
+  if [ -f "$PID_FILE" ]; then
+    printf 'legacy-running pid=%s log=%s\n' "$(cat "$PID_FILE" 2>/dev/null || true)" "$(cat "$LOG_POINTER_FILE" 2>/dev/null || printf '%s' "$LOG_FILE")"
+  elif loop_running; then
+    printf 'legacy-orphan-running pid=%s log=%s\n' "$(loop_pids | tr '\n' ',' | sed 's/,$//')" "$(cat "$LOG_POINTER_FILE" 2>/dev/null || printf '%s' "$LOG_FILE")"
+  else
+    printf 'retired stopped\n'
   fi
 }
 
@@ -538,8 +584,7 @@ start_loop() {
 
 case "${1:-start}" in
   once)
-    ensure_routes
-    forward_once || true
+    disabled_notice
     ;;
   map)
     map_name="${2:-}"
@@ -547,49 +592,30 @@ case "${1:-start}" in
       echo "Usage: $0 map <map-name>"
       exit 2
     fi
-    ensure_route_for_map "$map_name"
-    forward_map_once "$map_name" || true
+    exit 0
     ;;
   start)
-    clear_stale_pidfile
-    if loop_running; then
-      kick_priority_maps_once
-      exit 0
-    fi
-    pkill -f "publish-network-server-state-overrides.sh loop" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    prepare_runtime_generated_files
-    setsid "$0" loop >>"$LOG_FILE" 2>&1 </dev/null &
-    echo $! >"$PID_FILE"
-    kick_priority_maps_once
+    stop_loop_and_restore_routes
+    disabled_notice
     ;;
   loop)
-    prepare_runtime_generated_files
-    start_loop
+    disabled_notice
     ;;
   stop)
-    clear_stale_pidfile
-    if [ -f "$PID_FILE" ]; then
-      kill "$(cat "$PID_FILE")" 2>/dev/null || true
-    fi
-    pkill -f "publish-network-server-state-overrides.sh loop" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    timeout --kill-after=2s "${STOP_RESTORE_TIMEOUT_SECONDS}s" "$0" restore-routes || true
+    stop_loop_and_restore_routes
     ;;
   restore-routes)
     restore_routes || true
     ;;
   restart)
-    clear_stale_pidfile
-    if [ -f "$PID_FILE" ]; then
-      kill "$(cat "$PID_FILE")" 2>/dev/null || true
-    fi
-    pkill -f "publish-network-server-state-overrides.sh loop" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    "$0" start
+    stop_loop_and_restore_routes
+    disabled_notice
+    ;;
+  status)
+    print_status
     ;;
   *)
-    echo "Usage: $0 [once|map <map-name>|start|stop|restart]"
+    echo "Usage: $0 [once|map <map-name>|start|stop|restart|status]"
     exit 2
     ;;
 esac
