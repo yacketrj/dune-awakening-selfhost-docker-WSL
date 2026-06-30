@@ -254,6 +254,47 @@ Conclusion:
 - postgres_exporter is connected successfully to Postgres.
 - R1 metrics startup, target loading, rule loading, RabbitMQ scrape reachability, and Postgres exporter connectivity are validated.
 
+PromQL selector curl note:
+
+`curl` can return HTTP 400 when a PromQL selector is passed directly in the URL without URL encoding. Use `--data-urlencode` or an encoded URL for selector queries.
+
+Correct examples:
+
+```bash
+curl -fsS -G 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=up{job=~"dune-rabbitmq-.*"}'
+curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D~%22dune-rabbitmq-.*%22%7D'
+```
+
+## Validation Result: 2026-06-30, game-stack regression pass
+
+Commands run:
+
+```bash
+bash runtime/scripts/dune --help
+bash runtime/scripts/dune status
+bash runtime/scripts/dune ready
+bash runtime/scripts/dune ps
+```
+
+Observed results:
+
+- CLI help renders and includes `dune metrics [start|stop|restart|status|logs|config|pull]`.
+- `dune status` reports `Overall: READY`.
+- `dune status` reports RabbitMQ admin listener OK.
+- `dune status` reports RabbitMQ game listener OK.
+- `dune ready` reports all core container checks OK.
+- `dune ready` reports all listener checks OK.
+- `dune ready` reports RabbitMQ game user connections OK.
+- `dune ready` reports the stack as READY.
+- `dune ps` shows metrics containers and game containers running.
+- `dune ps` shows `dune-cadvisor` healthy after the initial startup period.
+
+Conclusion:
+
+- R1 did not break normal game-stack CLI status, readiness, or process listing checks.
+- cAdvisor health settles to healthy under the tested WSL/Docker Desktop environment.
+- Game/admin RabbitMQ runtime checks pass through existing CLI readiness and listener checks.
+
 ## Regression Expectations
 
 R1 should not alter normal game startup behavior.
@@ -267,10 +308,8 @@ bash runtime/scripts/dune ready
 bash runtime/scripts/dune ps
 ```
 
-Full game-stack runtime validation remains required before marking R1 complete.
+Current result: passed locally on 2026-06-30.
 
 ## Remaining R1 Work
 
-- Confirm cAdvisor transitions from `health: starting` to healthy under WSL/Docker Desktop host constraints.
-- Run regression checks for normal game-stack CLI commands.
 - Run security/static checks before marking PR ready for review.
