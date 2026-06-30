@@ -349,6 +349,45 @@ survival_state="$(map_state dune-server-survival-1 'Server farm is READY .*parti
 overmap_state="$(map_state dune-server-overmap 'Server farm is READY .*partition 2')"
 
 active="$(latest_number_from_director_logs 'BattlegroupCurrentActive' || true)"
+database_active=""
+if is_running dune-postgres; then
+  database_active="$(docker exec dune-postgres psql -U dune -d dune -Atc "
+    select case
+      when to_regclass('dune.actors') is null or to_regclass('dune.player_state') is null then null
+      else (
+        select count(distinct a.id)::text
+        from dune.actors a
+        left join dune.player_state ps on ps.account_id = a.owner_account_id
+        left join dune.accounts ac on ac.id = ps.account_id
+        where a.class ilike '%PlayerCharacter%'
+          and coalesce(ps.online_status::text, '') = 'Online'
+          and (
+            not exists (
+              select 1
+              from information_schema.columns
+              where table_schema = 'dune'
+                and table_name = 'player_state'
+                and column_name = 'player_pawn_id'
+            )
+            or ps.player_pawn_id is null
+            or ps.player_pawn_id = 0
+            or ps.player_pawn_id = a.id
+          )
+          and coalesce(ac.\"user\", '') <> 'A5C0DE5E12A00001'
+          and coalesce(ac.\"user\", '') <> 'A5C0DE5E12A00002'
+          and coalesce(ac.funcom_id, '') <> 'Server#0001'
+          and coalesce(ac.funcom_id, '') <> 'MessageOfTheDay#0001'
+          and coalesce(ps.character_name, '') <> 'Server'
+          and coalesce(ps.character_name, '') <> 'Message of the Day'
+      )
+    end;
+  " 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [ "${database_active:-}" -ge 0 ] 2>/dev/null; then
+  if ! [ "${active:-}" -ge 0 ] 2>/dev/null || [ "$database_active" -gt "${active:-0}" ]; then
+    active="$database_active"
+  fi
+fi
 capacity="$(latest_number_from_director_logs 'BattlegroupMaxPlayerCapacity' || true)"
 configured_capacity="$(awk '
   function flush_section(    effective_update, effective_cap) {

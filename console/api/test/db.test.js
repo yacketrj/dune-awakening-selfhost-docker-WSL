@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertIdentifier, discoverDbConfig, isReadOnlySql, quoteQualified, redactDbError, rowsResult } from "../src/db.js";
-import { addCurrency, addFactionReputation, addIntel, addonLeadershipPlayers, completeJourneyNode, completeTutorial, deleteInventoryItem, giveItemToPlayer, giveItemToStorage, listPlayers, listTables, liveMapPlayers, liveMapServices, playerCraftingRecipes, playerJourney, playerPosition, playerResearchItems, resetJourneyNode, resetTutorial, runSql, tablePreview, unlockCraftingRecipe, unlockResearchItem, updateTableRow, UnsupportedCapabilityError } from "../src/duneDb.js";
+import { addCurrency, addFactionReputation, addIntel, addonLeadershipPlayers, completeJourneyNode, completeTutorial, deleteInventoryItem, giveItemToPlayer, giveItemToStorage, listPlayers, listSpicefieldTypes, listTables, liveMapPlayers, liveMapServices, playerCraftingRecipes, playerJourney, playerPosition, playerResearchItems, resetJourneyNode, resetTutorial, runSql, tablePreview, unlockCraftingRecipe, unlockResearchItem, updateSpicefieldType, updateTableRow, UnsupportedCapabilityError } from "../src/duneDb.js";
 
 test("discovers RedBlink Postgres defaults and env overrides", () => {
   assert.deepEqual(discoverDbConfig({}), {
@@ -101,6 +101,108 @@ test("manual row edit uses stable primary key row identifiers when available", a
   assert.ok(updateCall);
   assert.match(updateCall.text, /where "id" = \$3$/);
   assert.deepEqual(updateCall.values, ["1", "70001", 1]);
+});
+
+test("manual row edit preserves Postgres arrays instead of JSON stringifying them", async () => {
+  const calls = [];
+  const rowId = JSON.stringify({ pk: { id: 42 } });
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("pg_index")) return { rows: [{ name: "id" }] };
+      if (text.includes("information_schema.columns")) {
+        return { rows: [
+          { name: "id" },
+          { name: "authorized_fls_ids", data_type: "ARRAY" },
+          { name: "metadata", data_type: "jsonb" },
+          { name: "json_array", data_type: "jsonb" }
+        ] };
+      }
+      return { fields: [], rows: [], rowCount: 1, command: "UPDATE" };
+    }
+  };
+  const result = await updateTableRow(db, "dune", "totems", rowId, {
+    authorized_fls_ids: ["A5C0DE5E12A00001", "B5C0DE5E12A00002"],
+    metadata: { name: "Totem" },
+    json_array: ["kept", "as json"]
+  });
+  assert.equal(result.updatedRows, 1);
+  const updateCall = calls.find((call) => String(call.text).startsWith("update"));
+  assert.ok(updateCall);
+  assert.deepEqual(updateCall.values, [
+    ["A5C0DE5E12A00001", "B5C0DE5E12A00002"],
+    JSON.stringify({ name: "Totem" }),
+    JSON.stringify(["kept", "as json"]),
+    42
+  ]);
+});
+
+test("manual row edit accepts JSON array text for Postgres array columns", async () => {
+  const calls = [];
+  const rowId = JSON.stringify({ pk: { id: 72 } });
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("pg_index")) return { rows: [{ name: "id" }] };
+      if (text.includes("information_schema.columns")) {
+        return { rows: [
+          { name: "id" },
+          { name: "landclaim_original_global_location", data_type: "ARRAY" }
+        ] };
+      }
+      return { fields: [], rows: [], rowCount: 1, command: "UPDATE" };
+    }
+  };
+  const result = await updateTableRow(db, "dune", "totems", rowId, {
+    landclaim_original_global_location: "[123.45,678.9,11]"
+  });
+  assert.equal(result.updatedRows, 1);
+  const updateCall = calls.find((call) => String(call.text).startsWith("update"));
+  assert.ok(updateCall);
+  assert.deepEqual(updateCall.values, [[123.45, 678.9, 11], 72]);
+});
+
+test("spicefield controls list live DB rows", async () => {
+  const calls = [];
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("to_regclass")) return { rows: [{ exists: true }] };
+      return { rows: [{ spicefield_type_id: 25, map_name: "DeepDesert", field_type: "Large", max_globally_active: 1 }] };
+    }
+  };
+  const result = await listSpicefieldTypes(db);
+  assert.equal(result.capabilities.spicefields, true);
+  assert.equal(result.rows[0].field_type, "Large");
+  assert.ok(calls.some((call) => String(call.text).includes("from dune.spicefield_types")));
+});
+
+test("spicefield controls update only editable tuning columns", async () => {
+  const calls = [];
+  const db = {
+    query: async (text, values = []) => {
+      calls.push({ text, values });
+      if (text.includes("to_regclass")) return { rows: [{ exists: true }] };
+      return { rows: [{ spicefield_type_id: 25, map_name: "DeepDesert", field_type: "Large", max_globally_active: 2 }], rowCount: 1 };
+    }
+  };
+  const result = await updateSpicefieldType(db, 25, {
+    max_globally_active: 2,
+    max_globally_primed: 3,
+    is_spawning_active: false,
+    global_spawn_weight: 1.5,
+    current_globally_active: 999
+  });
+  assert.equal(result.updatedRows, 1);
+  const updateCall = calls.find((call) => String(call.text).includes("update dune.spicefield_types"));
+  assert.ok(updateCall);
+  assert.match(updateCall.text, /max_globally_active/);
+  assert.match(updateCall.text, /max_globally_primed/);
+  assert.match(updateCall.text, /is_spawning_active/);
+  assert.match(updateCall.text, /global_spawn_weight/);
+  assert.doesNotMatch(updateCall.text, /current_globally_active\s*=/);
+  assert.deepEqual(updateCall.values, [2, 3, false, 1.5, 25]);
+  await assert.rejects(() => updateSpicefieldType(db, 25, { max_globally_active: -1 }), /Invalid max active/);
 });
 
 test("database table list returns exact row counts", async () => {
@@ -292,6 +394,7 @@ test("players query uses parameterized search input", async () => {
     query: async (text, values) => {
       calls.push({ text, values });
       if (text.includes("to_regclass")) return { rows: [{ exists: true }] };
+      if (text.includes("information_schema.columns")) return { rows: [] };
       return { rows: [{ actor_id: 82, player_pawn_id: 82, account_id: 276, funcom_id: "RedBlink#75570", fls_id: "RedBlink#75570", action_player_id: "RedBlink#75570" }] };
     }
   };
@@ -311,6 +414,25 @@ test("players query uses parameterized search input", async () => {
   assert.equal(result.rows[0].funcom_id, "RedBlink#75570");
   assert.equal(result.rows[0].fls_id, "RedBlink#75570");
   assert.equal(result.rows[0].action_player_id, "RedBlink#75570");
+});
+
+test("players query filters stale actor rows when player_state has current pawn id", async () => {
+  const calls = [];
+  const db = {
+    query: async (text, values) => {
+      calls.push({ text, values });
+      if (text.includes("to_regclass")) return { rows: [{ exists: true }] };
+      if (text.includes("information_schema.columns")) return { rows: ["player_pawn_id", "last_login_time", "online_status"].map((column_name) => ({ column_name })) };
+      return { rows: [{ actor_id: 78, player_pawn_id: 78, account_id: 2, character_name: "RedBlink", map: "HaggaBasin", online_status: "Online" }] };
+    }
+  };
+
+  const result = await listPlayers(db, { online: true });
+  const playerQuery = calls.find((call) => call.text.includes("from dune.actors"));
+  assert.ok(playerQuery);
+  assert.match(playerQuery.text, /ps\.player_pawn_id = a\.id/);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].actor_id, 78);
 });
 
 test("addon leadership players include level and faction summaries", async () => {
