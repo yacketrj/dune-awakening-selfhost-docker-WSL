@@ -295,6 +295,44 @@ Conclusion:
 - cAdvisor health settles to healthy under the tested WSL/Docker Desktop environment.
 - Game/admin RabbitMQ runtime checks pass through existing CLI readiness and listener checks.
 
+## Validation Result: 2026-06-30, unit and live metrics validator pass
+
+Commands run:
+
+```bash
+git pull
+bash tests/metrics-stack-unit.sh
+bash runtime/scripts/dune metrics validate
+```
+
+Observed unit test result:
+
+- TAP output rendered visibly.
+- Test harness created isolated fake command directory.
+- Fake Docker command installed.
+- Fake curl/Prometheus command installed.
+- Happy-path validation printed full metrics validator output.
+- Happy-path assertions passed for Prometheus health, six targets, RabbitMQ admin/game targets, rule groups, `pg_up`, READY summary, and URL-encoded `up` / `pg_up` queries.
+- Failure-path validation intentionally removed the required `dune-node` target.
+- Failure-path assertions passed for missing target detection and failure summary.
+- Final TAP plan reported `1..16`.
+
+Observed live validator result:
+
+- Prometheus health passed.
+- Active targets reported: `6`.
+- Live targets up: `dune-cadvisor`, `dune-node`, `dune-postgres`, `dune-prometheus`, `dune-rabbitmq-admin`, `dune-rabbitmq-game`.
+- Rule groups reported: `4`.
+- `up == 1` for all six live targets.
+- `pg_up == 1` for `dune-postgres-exporter:9187`.
+- Live validator ended with `READY: metrics validation passed.`
+
+Conclusion:
+
+- Metrics unit coverage is now visible and useful in local and CI logs.
+- The live metrics validator passes against the running stack.
+- The metrics validation command and unit harness are ready to be used as PR gates.
+
 ## Regression Expectations
 
 R1 should not alter normal game startup behavior.
