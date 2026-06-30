@@ -34,7 +34,8 @@ services:
       - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|pstore|rpc_pipefs|securityfs|sysfs|tracefs)$$
     pid: host
     volumes:
-      - /:/host:ro,rslave
+      # Avoid :rslave by default because WSL/Docker Desktop root mounts may not be shared/slave mounts.
+      - /:/host:ro
     security_opt:
       - no-new-privileges:true
 
