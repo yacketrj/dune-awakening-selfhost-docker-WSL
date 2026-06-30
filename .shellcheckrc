@@ -1,0 +1,3 @@
+# Runtime .env is intentionally local and not committed.
+# Retry loop counters may be intentionally ignored in simple shell loops.
+disable=SC1091,SC2034
