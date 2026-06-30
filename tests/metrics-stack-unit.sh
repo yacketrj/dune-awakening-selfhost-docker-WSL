@@ -3,26 +3,70 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+test_no=0
+
+note() {
+  printf '# %s\n' "$*"
+}
+
+ok() {
+  test_no=$((test_no + 1))
+  printf 'ok %02d - %s\n' "$test_no" "$*"
+}
+
 fail() {
-  echo "FAIL: $*" >&2
+  test_no=$((test_no + 1))
+  printf 'not ok %02d - %s\n' "$test_no" "$*" >&2
   exit 1
 }
 
 assert_contains() {
   local file="$1"
   local expected="$2"
-  grep -Fq -- "$expected" "$file" || {
-    echo "Expected to find: $expected" >&2
-    echo "--- output ---" >&2
-    cat "$file" >&2
-    echo "--------------" >&2
-    exit 1
-  }
+  local label="$3"
+
+  if grep -Fq -- "$expected" "$file"; then
+    ok "$label"
+    return 0
+  fi
+
+  echo "Expected to find: $expected" >&2
+  echo "--- output ---" >&2
+  cat "$file" >&2
+  echo "--------------" >&2
+  fail "$label"
 }
+
+assert_command_fails() {
+  local output_file="$1"
+  local label="$2"
+  shift 2
+
+  if "$@" >"$output_file" 2>&1; then
+    echo "--- unexpected success output ---" >&2
+    cat "$output_file" >&2
+    echo "-------------------------------" >&2
+    fail "$label"
+  fi
+
+  ok "$label"
+}
+
+show_output_block() {
+  local title="$1"
+  local file="$2"
+
+  note "$title"
+  sed 's/^/#   /' "$file"
+}
+
+echo "TAP version 13"
+note "metrics-stack unit tests"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 mkdir -p "$tmpdir/bin"
+ok "created isolated test harness directory"
 
 cat >"$tmpdir/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -70,6 +114,7 @@ PS
 esac
 EOF
 chmod +x "$tmpdir/bin/docker"
+ok "installed fake docker command"
 
 cat >"$tmpdir/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -148,28 +193,34 @@ echo "unexpected curl args: $*" >&2
 exit 1
 EOF
 chmod +x "$tmpdir/bin/curl"
+ok "installed fake curl/Prometheus command"
 
 export PATH="$tmpdir/bin:$PATH"
 export FAKE_CURL_LOG="$tmpdir/curl.log"
+ok "wired fake commands into PATH"
 
+note "running happy-path metrics validation"
 pass_output="$tmpdir/pass.out"
 : >"$FAKE_CURL_LOG"
 METRICS_PROMETHEUS_PORT=9090 bash runtime/scripts/metrics-stack.sh validate >"$pass_output"
-assert_contains "$pass_output" "OK   Prometheus health"
-assert_contains "$pass_output" "active_targets=6"
-assert_contains "$pass_output" "dune-rabbitmq-admin"
-assert_contains "$pass_output" "dune-rabbitmq-game"
-assert_contains "$pass_output" "pg_up=1"
-assert_contains "$pass_output" "READY: metrics validation passed."
-assert_contains "$FAKE_CURL_LOG" "--data-urlencode query=up"
-assert_contains "$FAKE_CURL_LOG" "--data-urlencode query=pg_up"
+show_output_block "happy-path validator output" "$pass_output"
+assert_contains "$pass_output" "OK   Prometheus health" "validator reports Prometheus health"
+assert_contains "$pass_output" "active_targets=6" "validator counts all six active targets"
+assert_contains "$pass_output" "dune-rabbitmq-admin" "validator includes RabbitMQ admin target"
+assert_contains "$pass_output" "dune-rabbitmq-game" "validator includes RabbitMQ game target"
+assert_contains "$pass_output" "rule_groups=5" "validator reports loaded rule groups"
+assert_contains "$pass_output" "pg_up=1" "validator confirms Postgres exporter connectivity"
+assert_contains "$pass_output" "READY: metrics validation passed." "validator returns READY on healthy fixtures"
+assert_contains "$FAKE_CURL_LOG" "--data-urlencode query=up" "validator URL-encodes the up query"
+assert_contains "$FAKE_CURL_LOG" "--data-urlencode query=pg_up" "validator URL-encodes the pg_up query"
 
+note "running required-target failure validation"
 missing_output="$tmpdir/missing.out"
-if FAKE_PROMETHEUS_MODE=missing-target METRICS_PROMETHEUS_PORT=9090 bash runtime/scripts/metrics-stack.sh validate >"$missing_output" 2>&1; then
-  cat "$missing_output" >&2
-  fail "validate should fail when a required target is missing"
-fi
-assert_contains "$missing_output" "Missing required jobs: dune-node"
-assert_contains "$missing_output" "FAIL: metrics validation failed."
+assert_command_fails "$missing_output" "validator fails when required target is missing" \
+  env FAKE_PROMETHEUS_MODE=missing-target METRICS_PROMETHEUS_PORT=9090 bash runtime/scripts/metrics-stack.sh validate
+show_output_block "missing-target validator output" "$missing_output"
+assert_contains "$missing_output" "Missing required jobs: dune-node" "validator names missing required target"
+assert_contains "$missing_output" "FAIL: metrics validation failed." "validator prints failure summary"
 
-echo "metrics-stack unit tests passed"
+echo "1..$test_no"
+note "metrics-stack unit tests completed"
